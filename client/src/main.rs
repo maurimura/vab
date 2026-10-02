@@ -14,6 +14,7 @@ mod shuffleboard;
 #[cfg(feature = "test-hooks")]
 mod testing;
 mod touch;
+mod voice;
 
 use bevy::asset::AssetId;
 use bevy::asset::AssetMetaCheck;
@@ -30,6 +31,7 @@ use room::RoomPlugin;
 use settings::SettingsPlugin;
 use shuffleboard::{ShuffleboardPlugin, ShuffleboardTables};
 use touch::TouchPlugin;
+use voice::VoicePlugin;
 use world::{Map, MapPlugin, map_sprite};
 
 /// All text is in Fira Mono cut down to Latin-1, so names and chat can have accents and ñ
@@ -72,6 +74,7 @@ fn main() {
         RoomPlugin,
         SettingsPlugin,
         TouchPlugin,
+        VoicePlugin,
     ))
     .init_state::<Mode>()
     .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.08)))

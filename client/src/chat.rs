@@ -3,7 +3,8 @@
 //! while typing). `/name <name>` sets the name shown above your head and next to what you say;
 //! the page keeps it in a cookie (web/index.html). `/help` shows the controls, `/settings` what
 //! can be tuned (settings.rs), and `/netstats` how an air hockey match's connection is doing. On a touch screen the line is typed in the
-//! page instead, with the phone's keyboard, and comes in through `chat_typed`.
+//! page instead, with the phone's keyboard, and comes in through `chat_typed`. `/mute <name>`
+//! and `/unmute <name>` stop or start hearing someone's voice (voice.rs), remembered by name.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -52,6 +53,10 @@ extern "C" {
     /// Sets the player's name in the room and remembers it for next time.
     #[wasm_bindgen(js_name = roomName)]
     fn room_name(name: &str);
+    /// Mutes or unmutes someone's voice by name and remembers it; returns their name as the
+    /// room has it.
+    #[wasm_bindgen(js_name = voiceMute)]
+    fn voice_mute(name: &str, on: bool) -> String;
 }
 
 pub struct ChatPlugin;
@@ -133,9 +138,25 @@ impl Chat {
                     self.add(format!("* You're {name} now."), now);
                 }
             }
+            Some(command @ ("/mute" | "/unmute")) => {
+                let name = line[command.len()..]
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let mute = command == "/mute";
+                let said = match (name.is_empty(), mute) {
+                    (true, true) => "* To stop hearing someone: /mute <their name>".into(),
+                    (true, false) => "* To hear someone again: /unmute <their name>".into(),
+                    (false, true) => {
+                        format!("* Muted {}: you won't hear them.", voice_mute(&name, true))
+                    }
+                    (false, false) => format!("* You'll hear {} again.", voice_mute(&name, false)),
+                };
+                self.add(said, now);
+            }
             Some(_) => self.add(
                 "* Commands: /name Mauri sets your name, /help shows the controls, /settings \
-                 tunes the games"
+                 tunes the games, /mute and /unmute someone's voice"
                     .into(),
                 now,
             ),
