@@ -55,7 +55,9 @@ make dev        # builds the client, serves everything at http://localhost:8787
 
 - The palette is every PNG in `assets/tiles/floor/` and `assets/tiles/objects/`. Floor tiles are
   32×16 diamonds drawn centered on their cell. Objects are 32 px wide and any height: the bottom
-  point of the image sits on the bottom point of the cell's diamond.
+  point of the image sits on the bottom point of the cell's diamond. An object covering several
+  cells (the pool table) is listed in `assets/objects.ron` with its size, is (x + y) × 16 px wide,
+  and stands on the whole area from the cell it's placed on.
 - Left click paints, right click erases, scroll / arrows / WASD pan, `+` / `-` zoom,
   Cmd+S saves `assets/maps/bar.ron`.
 - Cabinets get the ROM set typed in "Cabinet game" (e.g. `mk2`).

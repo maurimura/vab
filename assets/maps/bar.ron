@@ -1576,5 +1576,10 @@
             tile: "objects/cabinet",
             game: Some("wboy"),
         ),
+        (
+            x: -5,
+            y: -1,
+            tile: "objects/pool_table",
+        ),
     ],
 )

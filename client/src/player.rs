@@ -46,7 +46,7 @@ pub struct Walkable(HashSet<IVec2>);
 
 impl Walkable {
     pub fn from_map(map: &Map) -> Self {
-        let blocked: HashSet<IVec2> = map.objects.iter().map(|p| IVec2::new(p.x, p.y)).collect();
+        let blocked: HashSet<IVec2> = map.objects.iter().flat_map(|p| p.cells()).collect();
         Self(
             map.floor
                 .iter()

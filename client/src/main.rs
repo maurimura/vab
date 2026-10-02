@@ -3,6 +3,7 @@ mod chat;
 mod emulator;
 mod help;
 mod player;
+mod pool;
 mod room;
 mod touch;
 
@@ -14,6 +15,7 @@ use chat::ChatPlugin;
 use emulator::EmulatorPlugin;
 use help::HelpPlugin;
 use player::{PlayerPlugin, Walkable, spawn_player};
+use pool::{PoolPlugin, PoolTables};
 use room::RoomPlugin;
 use touch::TouchPlugin;
 use world::{Map, map_sprite};
@@ -52,6 +54,7 @@ fn main() {
         ChatPlugin,
         EmulatorPlugin,
         HelpPlugin,
+        PoolPlugin,
         RoomPlugin,
         TouchPlugin,
     ))
@@ -88,4 +91,5 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     spawn_player(&mut commands, &asset_server, &walkable);
     commands.insert_resource(walkable);
     commands.insert_resource(Cabinets::from_map(&map));
+    commands.insert_resource(PoolTables::from_map(&map));
 }
