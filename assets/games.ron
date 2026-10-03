@@ -2,13 +2,14 @@
 // `rom` is the ROM set in R2 (/roms/<rom>.zip, plus the optional <rom>.state), `core` the FBNeo
 // core that runs it (emulator/build.sh), and `bios` a BIOS set loaded next to it. `players` is
 // how many play at once (2 if not said, up to 4); `turns` games take turns on player 1's
-// controls.
+// controls. `cabinets` names the cabinet skins drawn for the game (tiles/objects/cabinet_<skin>_*):
+// the editor gives a cabinet in one of them the game.
 [
-    (rom: "mk2", core: "midway", title: "Mortal Kombat II"),
+    (rom: "mk2", core: "midway", title: "Mortal Kombat II", cabinets: ["mk2", "mk2_v2"]),
     (rom: "mslug", core: "neogeo", title: "Metal Slug", bios: Some("neogeo")),
-    (rom: "snowbrosb", core: "snowbros", title: "Snow Bros."),
+    (rom: "snowbrosb", core: "snowbros", title: "Snow Bros.", cabinets: ["snowbros"]),
     (rom: "mvscu", core: "capcom", title: "Marvel vs. Capcom"),
-    (rom: "ssriders", core: "konami", title: "Sunset Riders", players: 4),
+    (rom: "ssriders", core: "konami", title: "Sunset Riders", players: 4, cabinets: ["sunsetriders"]),
     (rom: "sf2ce", core: "capcom", title: "Street Fighter II' Champion Edition"),
     (rom: "pacman", core: "classics", title: "Pac-Man", turns: true),
     (rom: "atetris", core: "classics", title: "Tetris"),

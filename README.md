@@ -76,7 +76,10 @@ the web](#editor-on-the-web).
   and stands on the whole area from the cell it's placed on.
 - Left click paints, right click erases, scroll / arrows / WASD pan, `+` / `-` zoom,
   Cmd+S saves `assets/maps/bar.ron`.
-- Cabinets get the ROM set typed in "Cabinet game" (e.g. `mk2`).
+- Cabinets are one entry per skin (`assets/tiles/objects/cabinet_<skin>_<facing>.png`, made in
+  draw mode), and R turns the one about to be placed through its four views. A skin's cabinets
+  run the game that names the skin in `cabinets` in `assets/games.ron`; the plain cabinet runs
+  whatever "Cabinet game" says, or nothing.
 - Images reload when their files change, so you can edit art in a pixel-art app with the editor
   open. The current tiles are placeholders.
 

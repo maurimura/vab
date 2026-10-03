@@ -100,6 +100,10 @@ pub struct Game {
     /// How many can play at once, each in their own seat (up to 4).
     #[serde(default = "two")]
     pub players: u32,
+    /// The cabinet skins drawn for it (tiles/objects/cabinet_<skin>_<facing>.png), which the
+    /// editor gives this game.
+    #[serde(default)]
+    pub cabinets: Vec<String>,
 }
 
 fn two() -> u32 {
@@ -242,6 +246,9 @@ mod tests {
         let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
         let mslug = games.iter().find(|g| g.rom == "mslug").unwrap();
         assert_eq!(mslug.bios.as_deref(), Some("neogeo"));
+        assert!(mslug.cabinets.is_empty());
+        let mk2 = games.iter().find(|g| g.rom == "mk2").unwrap();
+        assert_eq!(mk2.cabinets, ["mk2", "mk2_v2"]);
         assert!(
             games
                 .iter()
