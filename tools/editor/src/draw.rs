@@ -21,7 +21,8 @@ use serde::{Deserialize, Serialize};
 use world::{Map, TILE_HEIGHT, TILE_WIDTH};
 
 use crate::history::History;
-use crate::{ART, ASSETS, scaffold, tiles_in};
+use crate::store::tiles_in;
+use crate::{ART, ASSETS, scaffold};
 /// Screen points per image pixel, at most.
 const MAX_ZOOM: f32 = 64.0;
 /// Zoom from which lines between pixels are drawn.

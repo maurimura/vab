@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Bar editor</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #141419;
+      }
+      canvas {
+        display: block;
+        outline: none;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- The editor (tools/editor/src/main.rs) draws here; make editor-web builds pkg/. -->
+    <canvas id="bevy"></canvas>
+    <script type="module">
+      import init from "./pkg/editor.js";
+
+      await init().catch((error) => {
+        // winit ends its web event loop by throwing this on purpose.
+        if (!error.message.startsWith("Using exceptions for control flow")) {
+          throw error;
+        }
+      });
+      document.getElementById("bevy").focus();
+    </script>
+  </body>
+</html>

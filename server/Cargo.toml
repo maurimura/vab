@@ -12,3 +12,9 @@ worker = { version = "0.8" }
 worker-macros = { version = "0.8" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The map format, to check a map the editor saves before storing it.
+world = { path = "../world", default-features = false }
+# Cloudflare Access tokens on requests that save the map (the editor Worker).
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+# jsonwebtoken's crypto pulls this in; it only builds for wasm with its "js" feature on.
+getrandom = { version = "0.2", features = ["js"] }

@@ -1,10 +1,21 @@
 use std::collections::BTreeMap;
 
+use jsonwebtoken::jwk::JwkSet;
+use jsonwebtoken::{decode, decode_header, errors::ErrorKind, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use worker::*;
+use world::Map;
+
+/// Where the client and the editor load the bar's map from (`asset_server.load("maps/bar.ron")`)
+/// and where the editor saves it. wrangler.toml sends this path here before looking for a file.
+const MAP_PATH: &str = "/assets/maps/bar.ron";
+/// The map in R2, once the editor has saved one.
+const MAP_KEY: &str = "maps/bar.ron";
+/// A map is a few KB; nothing near this is one.
+const MAX_MAP_SIZE: usize = 1 << 20;
 
 /// Files in `web/` are served before this runs (`[assets]` in wrangler.toml), so only
-/// requests without a matching file land here.
+/// requests without a matching file land here, plus the map.
 #[event(fetch)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     Router::new()
@@ -24,8 +35,118 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         // FBNeo cores (/fbneo/<core>/fbneo.wasm) and ROM sets (/roms/mk2.zip) live in R2.
         .get_async("/fbneo/*file", |req, ctx| serve_from_r2(req, ctx, "fbneo"))
         .get_async("/roms/*file", |req, ctx| serve_from_r2(req, ctx, "roms"))
+        // The bar's map: the one last saved from the editor, or the one built with the site.
+        .get_async(MAP_PATH, serve_map)
+        .put_async(MAP_PATH, save_map)
         .run(req, env)
         .await
+}
+
+/// The map from R2, or the site's own copy until the editor has saved one. Browsers keep it
+/// but ask each time whether it changed, since a save changes it without a deploy.
+async fn serve_map(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let response = match from_r2(&req, &ctx, MAP_KEY).await? {
+        Some(response) => response,
+        None => ctx.env.assets("ASSETS")?.fetch_request(req).await?,
+    };
+    // A fetched response's headers can't be changed in place; `Headers::clone` copies.
+    let headers = response.headers().clone();
+    headers.set("cache-control", "no-cache")?;
+    Ok(response.with_headers(headers))
+}
+
+/// Stores the map the editor sends, once it's a map and the request came through Cloudflare
+/// Access (`access_email`).
+async fn save_map(mut req: Request, ctx: RouteContext<()>) -> Result<Response> {
+    let email = match access_email(&req, &ctx.env).await? {
+        Ok(email) => email,
+        Err(refused) => return Ok(refused),
+    };
+    let text = req.text().await?;
+    if text.len() > MAX_MAP_SIZE {
+        return Response::error("Too big for a map", 413);
+    }
+    let map = match Map::from_ron(&text) {
+        Ok(map) => map,
+        Err(error) => return Response::error(format!("Not a map: {error}"), 400),
+    };
+    ctx.bucket("BUCKET")?
+        .put(MAP_KEY, map.to_ron())
+        .http_metadata(HttpMetadata {
+            content_type: Some("text/plain; charset=utf-8".into()),
+            ..Default::default()
+        })
+        .execute()
+        .await?;
+    console_log!("{email} saved the map");
+    Response::empty()
+}
+
+/// What an Access token says about its user.
+#[derive(Deserialize)]
+struct Claims {
+    /// Missing on a service token.
+    email: Option<String>,
+}
+
+/// Who sent the request, from the Cloudflare Access token on it. The editor Worker sits behind
+/// Access (README, Editor on the web), which signs a token onto every request it lets through;
+/// the ACCESS_TEAM and ACCESS_AUD vars say whose tokens to trust, so a Worker without them
+/// (the site itself) refuses to save.
+async fn access_email(req: &Request, env: &Env) -> Result<std::result::Result<String, Response>> {
+    // `wrangler dev` (make editor-dev) has no Access in front of it. A deployed Worker only
+    // gets requests addressed to its own hostnames.
+    if req.url()?.host_str() == Some("localhost") {
+        return Ok(Ok("localhost".into()));
+    }
+    let var = |name: &str| {
+        env.var(name)
+            .map(|var| var.to_string())
+            .ok()
+            .filter(|value| !value.is_empty())
+    };
+    let (Some(team), Some(aud)) = (var("ACCESS_TEAM"), var("ACCESS_AUD")) else {
+        let why = "Saving needs Cloudflare Access on this Worker: ACCESS_TEAM and ACCESS_AUD in wrangler.toml";
+        return Ok(Err(Response::error(why, 503)?));
+    };
+    let Some(token) = req.headers().get("cf-access-jwt-assertion")? else {
+        return Ok(Err(Response::error(
+            "Not signed in to Cloudflare Access",
+            401,
+        )?));
+    };
+    // https://developers.cloudflare.com/cloudflare-one/identity/authorization-cookie/validating-json/
+    let issuer = format!("https://{team}.cloudflareaccess.com");
+    let certs = Url::parse(&format!("{issuer}/cdn-cgi/access/certs"))?;
+    let keys: JwkSet = Fetch::Url(certs).send().await?.json().await?;
+    match verify_access_token(&token, &keys, &issuer, &aud) {
+        Ok(claims) => Ok(Ok(claims.email.unwrap_or_else(|| "A service token".into()))),
+        Err(error) => {
+            console_error!("Access token refused: {error}");
+            Ok(Err(Response::error(
+                "Cloudflare Access token refused",
+                403,
+            )?))
+        }
+    }
+}
+
+fn verify_access_token(
+    token: &str,
+    keys: &JwkSet,
+    issuer: &str,
+    aud: &str,
+) -> jsonwebtoken::errors::Result<Claims> {
+    let header = decode_header(token)?;
+    let key = header
+        .kid
+        .as_deref()
+        .and_then(|kid| keys.find(kid))
+        .ok_or(ErrorKind::InvalidToken)?;
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&[issuer]);
+    validation.set_audience(&[aud]);
+    Ok(decode::<Claims>(token, &DecodingKey::from_jwk(key)?, &validation)?.claims)
 }
 
 /// STUN, plus Cloudflare TURN once a TURN key is set up (the TURN_KEY_ID and TURN_KEY_API_TOKEN
@@ -64,19 +185,28 @@ async fn ice_servers(env: &Env) -> Result<Response> {
     json(response.text().await?)
 }
 
-/// Streams `<prefix>/<file>` from the R2 bucket, with the content type it was uploaded with.
-/// Answers 304 when the browser's copy (If-None-Match) is still current.
+/// Streams `<prefix>/<file>` from the R2 bucket.
 async fn serve_from_r2(req: Request, ctx: RouteContext<()>, prefix: &str) -> Result<Response> {
     let Some(file) = ctx.param("file") else {
         return not_found();
     };
+    match from_r2(&req, &ctx, &format!("{prefix}/{file}")).await? {
+        Some(response) => Ok(response),
+        None => not_found(),
+    }
+}
+
+/// Streams `key` from the R2 bucket, with the content type it was uploaded with, or `None`
+/// when there's no such object. Answers 304 when the browser's copy (If-None-Match) is still
+/// current.
+async fn from_r2(req: &Request, ctx: &RouteContext<()>, key: &str) -> Result<Option<Response>> {
     let cached_etag = req
         .headers()
         .get("if-none-match")?
         .map(|etag| etag.trim_matches('"').to_string());
     let Some(object) = ctx
         .bucket("BUCKET")?
-        .get(format!("{prefix}/{file}"))
+        .get(key)
         .only_if(Conditional {
             etag_does_not_match: cached_etag,
             ..Default::default()
@@ -84,7 +214,7 @@ async fn serve_from_r2(req: Request, ctx: RouteContext<()>, prefix: &str) -> Res
         .execute()
         .await?
     else {
-        return not_found();
+        return Ok(None);
     };
     // `Headers::clone` copies; share the underlying JS object so the metadata
     // (content-type: application/wasm) lands on the response.
@@ -93,9 +223,13 @@ async fn serve_from_r2(req: Request, ctx: RouteContext<()>, prefix: &str) -> Res
     headers.set("etag", &object.http_etag())?;
     // R2 leaves out the body when the etag matched: the browser's copy is current.
     let Some(body) = object.body() else {
-        return Ok(Response::empty()?.with_status(304).with_headers(headers));
+        return Ok(Some(
+            Response::empty()?.with_status(304).with_headers(headers),
+        ));
     };
-    Ok(Response::from_body(body.response_body()?)?.with_headers(headers))
+    Ok(Some(
+        Response::from_body(body.response_body()?)?.with_headers(headers),
+    ))
 }
 
 /// A 404 browsers must not cache: the file may be uploaded later.

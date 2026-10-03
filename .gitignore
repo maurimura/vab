@@ -8,6 +8,8 @@
 /web/pkg
 /web/netplay
 /web/assets
+/tools/editor/web/pkg
+/tools/editor/web/assets
 
 # FBNeo build output (served from R2)
 /emulator/dist
