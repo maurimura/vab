@@ -23,14 +23,17 @@ $(WASM_OPT):
 	./emulator/emsdk.sh
 
 # Bevy client -> web/pkg/ (https://github.com/bevyengine/bevy/tree/latest/examples#wasm),
-# plus its art -> web/assets/.
+# plus its art -> web/assets/. wasm-release is shrunk with wasm-opt. Any other build is too big
+# to serve (Workers static assets take files up to 25 MiB), so it's gzipped instead, and the
+# page unpacks it as it loads: web/pkg/build.js tells it which.
 client: $(WASM_BINDGEN) $(WASM_OPT)
 	rm -rf web/assets && cp -R assets web/assets
 	cargo build -p client --profile $(PROFILE) --target wasm32-unknown-unknown
+	rm -rf web/pkg
 	$(WASM_BINDGEN) --out-dir web/pkg --target web \
 		target/wasm32-unknown-unknown/$(PROFILE_DIR)/client.wasm
-	$(if $(filter wasm-release,$(PROFILE)),$(WASM_OPT) -Oz --output web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm)
-	$(if $(filter wasm-release,$(PROFILE)),mv web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm)
+	$(if $(filter wasm-release,$(PROFILE)),$(WASM_OPT) -Oz --output web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm && mv web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm,gzip -1 web/pkg/client_bg.wasm)
+	echo "export const gzipped = $(if $(filter wasm-release,$(PROFILE)),false,true);" > web/pkg/build.js
 
 # GGRS rollback for the emulator worker (netplay/src/lib.rs) -> web/netplay/.
 netplay: $(WASM_BINDGEN) $(WASM_OPT)
