@@ -2031,6 +2031,8 @@ dependencies = [
  "bevy",
  "billiards",
  "log",
+ "serde",
+ "serde_json",
  "tracing",
  "wasm-bindgen",
  "world",

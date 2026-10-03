@@ -80,6 +80,8 @@
         player_left,
         player_moved,
         players_reset,
+        pool_message,
+        pool_seats,
         push_frame,
       } from "./pkg/client.js";
       // Whether the client was built gzipped (any build but wasm-release: see the Makefile).
@@ -142,10 +144,13 @@
         remember("name", name);
         room?.setName(name);
         own_name(name);
+        myName = name;
+        poolSeatsChanged();
       };
 
-      // Everyone else's names, for saying who plays a game.
+      // Everyone else's names, for saying who plays a game, and this player's own.
       const names = new Map();
+      let myName = "";
       const list = (items) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 
       /** An emulator worker for a cabinet's game, its sound going to the speaker. */
@@ -493,6 +498,25 @@
       };
       window.emulatorInput = (mask) => play?.input(mask);
 
+      // Pool tables (client/src/pool/online.rs): a place with two seats in the room, as a
+      // cabinet is ("pool:x,y"). The players at one send each other what they do as messages
+      // with `pool` set to the table; Bevy plays the game and says what to send.
+      window.poolSit = (table) => joined.then(() => room.sit(table, 2));
+      window.poolStand = () => room?.stand();
+      window.poolSend = (to, json) => room?.message(to, JSON.parse(json));
+      /** Tells Bevy who sits at a pool table (`players`, an id or null per seat) and their names. */
+      function poolSeats(table, players) {
+        // An empty seat is 0, an id no player has; ids go past 2^31, so unsigned.
+        const ids = players.map((id) => id ?? 0);
+        const seatNames = players.map((id) => (id === null ? "" : id === room.id ? myName : names.get(id) ?? ""));
+        pool_seats(table, room.id, Uint32Array.from(ids), seatNames);
+      }
+      /** Again for every pool table, after a name changed. */
+      function poolSeatsChanged() {
+        if (!room) return;
+        for (const [table, players] of room.seats) if (table.startsWith("pool:")) poolSeats(table, players);
+      }
+
       // A gzipped client is unpacked as it downloads.
       const gunzipped = () =>
         fetch("./pkg/client_bg.wasm.gz").then(
@@ -514,10 +538,13 @@
         welcome(name) {
           players_reset();
           own_name(name);
+          myName = name;
         },
         moved(id, x, y, flip, name) {
+          const renamed = names.has(id) && names.get(id) !== name;
           names.set(id, name);
           player_moved(id, x, y, flip, name);
+          if (renamed) poolSeatsChanged();
         },
         left(id) {
           names.delete(id);
@@ -526,6 +553,7 @@
         said: (id, name, text) => chat_said(name, text),
         seats(cabinet, players) {
           cabinet_seats(cabinet, players.filter((id) => id !== null).length);
+          if (cabinet.startsWith("pool:")) poolSeats(cabinet, players);
           if (play?.cabinet === cabinet) play.seated(players);
         },
         full(cabinet) {
@@ -535,7 +563,7 @@
           cabinet_watchers(cabinet, players.length);
           if (play?.cabinet === cabinet) play.watchers?.(players);
         },
-        message: (from, data) => play?.message?.(from, data),
+        message: (from, data) => (data.pool ? pool_message(from, JSON.stringify(data)) : play?.message?.(from, data)),
         handover: (from, epoch, bytes) => play?.handover?.(from, epoch, bytes),
         watchState: (from, stream, bytes) => play?.watchState?.(from, stream, bytes),
         watchInputs: (from, stream, frame, inputs) => play?.watchInputs?.(from, stream, frame, inputs),
