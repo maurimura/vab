@@ -1,7 +1,9 @@
-//! Pool tables (objects/pool_table, two cells long): next to one, a hint says so, and E (or
-//! the Pool button on a touch screen) sits the player at it to play (game.rs).
+//! Pool tables (objects/pool_table, two cells long): next to one, a hint says so and how many
+//! play at it, and E (or the Pool button on a touch screen) sits the player at it to play
+//! (game.rs), against whoever sits at the other seat (online.rs).
 
 mod game;
+mod online;
 
 use bevy::prelude::*;
 use world::{Map, Placed, world_to_cell};
@@ -103,6 +105,10 @@ fn show_hint(
 ) {
     let (mut text, mut node, mut visibility, computed) = hint.into_inner();
     let near = tables.next_to(player.feet);
+    // A table with both seats taken has no seat to offer.
+    let near = near.filter(|table| {
+        online::seated(&online::table_id(IVec2::new(table.x, table.y))) < 2 || !touch.is_on()
+    });
     for (button, mut shown) in &mut buttons {
         if *button == TouchButton::Pool {
             shown.set_if_neq(if near.is_some() {
@@ -116,10 +122,17 @@ fn show_hint(
         *visibility = Visibility::Hidden;
         return;
     };
+    let seated = online::seated(&online::table_id(IVec2::new(table.x, table.y)));
     // The button says what to press.
-    let label = if touch.is_on() { "Pool" } else { "E  Pool" };
+    let label = match (seated, touch.is_on()) {
+        (0, true) => "Pool".to_string(),
+        (0, false) => "E  Pool".to_string(),
+        (1, true) => "Pool - 1 of 2 playing".to_string(),
+        (1, false) => "E  Pool - 1 of 2 playing, join in".to_string(),
+        _ => "Pool - 2 playing".to_string(),
+    };
     place_hint(
-        label,
+        &label,
         table.center() + Vec2::Y * HINT_HEIGHT,
         *camera,
         (&mut text, &mut node, &mut visibility, computed),
@@ -127,6 +140,7 @@ fn show_hint(
 }
 
 fn sit(
+    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     touch: Res<Touch>,
     tables: Res<PoolTables>,
@@ -134,9 +148,16 @@ fn sit(
     mut mode: ResMut<NextState<Mode>>,
 ) {
     let sit = keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Pool);
-    if sit && tables.next_to(player.feet).is_some() {
-        mode.set(Mode::Pool);
+    let Some(table) = tables.next_to(player.feet).filter(|_| sit) else {
+        return;
+    };
+    let id = online::table_id(IVec2::new(table.x, table.y));
+    // Both seats taken: nowhere to sit (watching comes later).
+    if online::seated(&id) >= 2 {
+        return;
     }
+    commands.insert_resource(game::AtTable(id));
+    mode.set(Mode::Pool);
 }
 
 fn hide_hint(

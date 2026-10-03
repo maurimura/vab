@@ -2,14 +2,16 @@
 //! the screen at a whole-number zoom. The cue follows the mouse (or the finger) around the cue
 //! ball. Holding the button pulls it back, further the longer it's held, and letting go shoots:
 //! once pulled, the shot is coming. Esc goes back to the bar, and the table stays as it was
-//! for next time. It's 8-ball, the player taking both sides in turn as the rules say, and a
-//! panel for each player under the table, player 1's on the left and player 2's on the right,
-//! shows their group and their balls that are down, in order, the player at the table lit up;
-//! between them a line says what the last shot did. After a foul the next
-//! player has ball in hand: the cue ball follows the pointer (or the arrow keys) until a click,
-//! a tap or Space puts it down. The physics and the
-//! rules are the billiards crate's, and how it plays can be tuned with `/settings`
-//! (settings.rs).
+//! for next time.
+//!
+//! It's 8-ball. Alone at the table, the player takes both sides in turn; when someone sits at
+//! the other seat, they play each other (online.rs), each shooting on their own turn and
+//! watching the other's cue on theirs. A panel for each player under the table, player 1's on
+//! the left and player 2's on the right, shows their group and their balls that are down, in
+//! order, the player at the table lit up; between them a line says what the last shot did.
+//! After a foul the next player has ball in hand: the cue ball follows the pointer (or the
+//! arrow keys) until a click, a tap or Space puts it down. The physics and the rules are the
+//! billiards crate's, and how it plays can be tuned with `/settings` (settings.rs).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -20,6 +22,7 @@ use billiards::{BALL_RADIUS, HEIGHT, Pocket, RAIL, STEP, Table, WIDTH, pockets};
 
 use wasm_bindgen::prelude::*;
 
+use super::online::{self, Message};
 use crate::Mode;
 use crate::chat::{Chat, chat_closed};
 use crate::help::Help;
@@ -68,6 +71,8 @@ const TURN_SPEED: f32 = 1.2;
 const FINE_TURN_SPEED: f32 = 0.15;
 /// Moving the cue ball with the arrow keys for ball in hand, in pixels per second.
 const PLACE_SPEED: f32 = 60.0;
+/// How often the cue (or a ball in hand) goes to the other player while it moves, in seconds.
+const AIM_SEND_EVERY: f32 = 1.0 / 15.0;
 /// At most this much time is caught up on in one frame, after the tab was in the background.
 const MAX_CATCH_UP: f32 = 0.1;
 
@@ -120,10 +125,51 @@ extern "C" {
     fn random() -> f64;
 }
 
-/// The balls racked again, each time a little differently: the browser picks the seed.
-fn new_rack() -> Table {
-    Table::racked((random() * f64::from(u32::MAX)) as u32)
+/// A seed for a new rack, so each is a little different: the browser picks it.
+fn new_seed() -> u32 {
+    (random() * f64::from(u32::MAX)) as u32
 }
+
+/// The balls racked again, each time a little differently.
+fn new_rack() -> Table {
+    Table::racked(new_seed())
+}
+
+/// A table's settings as they go in a shot, and back.
+fn settings_to_message(settings: &billiards::Settings) -> [f32; 6] {
+    [
+        settings.min_speed,
+        settings.max_speed,
+        settings.friction,
+        settings.ball_restitution,
+        settings.cushion_restitution,
+        settings.pocket_mouth,
+    ]
+}
+
+fn settings_from_message(values: [f32; 6]) -> billiards::Settings {
+    let [
+        min_speed,
+        max_speed,
+        friction,
+        ball_restitution,
+        cushion_restitution,
+        pocket_mouth,
+    ] = values;
+    billiards::Settings {
+        min_speed,
+        max_speed,
+        friction,
+        ball_restitution,
+        cushion_restitution,
+        pocket_mouth,
+    }
+}
+
+/// The pool table the player sits at, as the room names it (online::table_id). Set before
+/// switching to `Mode::Pool`.
+#[derive(Resource)]
+pub struct AtTable(pub String);
 
 pub struct GamePlugin;
 
@@ -134,8 +180,10 @@ impl Plugin for GamePlugin {
                 Update,
                 (
                     fit_canvas,
+                    sync,
                     aim,
                     play,
+                    send_aim,
                     draw,
                     show_status,
                     place_text,
@@ -162,6 +210,28 @@ struct Game {
     dropping: Vec<Drop>,
     /// The game of 8-ball being played on the table, by players 0 and 1.
     rules: rules::Game,
+    /// The table, as the room names it, while the player sits at it.
+    table_id: Option<String>,
+    /// The other player at the table, when there is one: the game is between them.
+    opponent: Option<Opponent>,
+    /// Player 2, waiting for player 1 to rack the first game.
+    waiting_for_start: bool,
+    /// The settings the other player shot with, while their shot rolls here.
+    their_settings: Option<billiards::Settings>,
+    /// Where the other player's shot ended on their table, when it came in before it stopped
+    /// rolling here.
+    their_result: Option<Message>,
+    /// The cue (or ball in hand) as last sent to the other player, and how long ago.
+    sent: (Message, f32),
+}
+
+/// Who the player is playing against.
+struct Opponent {
+    /// The player's own seat (0 for player 1), and the other player's id in the room.
+    me: usize,
+    id: u32,
+    /// Both seats' names.
+    names: [String; 2],
 }
 
 /// A ball falling into a pocket: from where it went down to the hole's middle.
@@ -182,19 +252,91 @@ impl Default for Game {
             pending: 0.0,
             dropping: Vec::new(),
             rules: rules::Game::new(0),
+            table_id: None,
+            opponent: None,
+            waiting_for_start: false,
+            their_settings: None,
+            their_result: None,
+            sent: (Message::Place { at: [0.0; 2] }, 0.0),
         }
     }
 }
 
 impl Game {
-    /// A new game on a fresh rack, the other player breaking this time.
+    /// A new game on the rack from `seed`, `breaker` to break.
+    fn begin(&mut self, seed: u32, breaker: usize) {
+        self.table = Table::racked(seed);
+        self.rules = rules::Game::new(breaker);
+        self.cue = Cue::Aiming;
+        self.pending = 0.0;
+        self.dropping.clear();
+        self.waiting_for_start = false;
+        self.their_settings = None;
+        self.their_result = None;
+    }
+
+    /// A new game on a fresh rack, the other player breaking this time. Against someone, only
+    /// player 1 starts games, and tells player 2.
     fn start_over(&mut self) {
         let breaker = 1 - self.rules.breaker;
-        *self = Self {
-            rules: rules::Game::new(breaker),
-            aim: self.aim,
-            ..default()
+        let seed = new_seed();
+        match &self.opponent {
+            None => self.begin(seed, breaker),
+            Some(opponent) if opponent.me == 0 => {
+                let id = opponent.id;
+                self.begin(seed, breaker);
+                self.send(id, Message::Start { seed, breaker });
+            }
+            Some(_) => {}
+        }
+    }
+
+    fn send(&self, to: u32, message: Message) {
+        if let Some(table) = &self.table_id {
+            online::send(table, to, message);
+        }
+    }
+
+    /// Whether this player takes the next shot: always when alone, on their turn when playing
+    /// someone.
+    fn my_turn(&self) -> bool {
+        !self.waiting_for_start
+            && self
+                .opponent
+                .as_ref()
+                .is_none_or(|opponent| self.rules.turn == opponent.me)
+    }
+
+    /// Both players' names: their names in the room when playing someone.
+    fn names(&self) -> [String; 2] {
+        match &self.opponent {
+            Some(opponent) => opponent.names.clone(),
+            None => ["Player 1".to_string(), "Player 2".to_string()],
+        }
+    }
+
+    /// Where the other player's shot ended, on their table: everything goes there, and the
+    /// rules judge it from there, as they did on that table.
+    fn take_their_result(&mut self, result: Message) {
+        let Message::Settled {
+            balls,
+            first_hit,
+            pocketed,
+        } = result
+        else {
+            return;
         };
+        for (ball, [x, y, down]) in self.table.balls.iter_mut().zip(balls) {
+            ball.position = Vec2::new(x, y);
+            ball.velocity = Vec2::ZERO;
+            ball.pocketed = down != 0.0;
+        }
+        self.table.shot = billiards::Shot {
+            first_hit,
+            pocketed,
+        };
+        self.their_settings = None;
+        self.finish_shot();
     }
 
     /// Once the balls have stopped: the rules judge the shot, and a pocketed cue ball comes back.
@@ -230,6 +372,9 @@ enum Cue {
     Placing {
         held: bool,
     },
+    /// Away: the other player's shot has stopped here, and waits for where it ended on their
+    /// table.
+    Waiting,
 }
 
 impl Cue {
@@ -355,6 +500,135 @@ fn fit_canvas(window: Single<&Window>, mut canvas: Single<&mut Node, With<Canvas
     }
 }
 
+/// Sits at the table in the room, starts a game when someone sits at the other seat (player 1
+/// racks it), goes back to both sides when they leave, and follows what they do on their turn.
+fn sync(at: Option<Res<AtTable>>, mut game: ResMut<Game>) {
+    let Some(at) = at else {
+        return;
+    };
+    let game = &mut *game;
+    if game.table_id.as_deref() != Some(at.0.as_str()) {
+        game.table_id = Some(at.0.clone());
+        online::sit(&at.0);
+    }
+
+    let now = online::seats_at(&at.0).and_then(|seats| {
+        let me = seats.mine()?;
+        let (_, id) = seats.opponent()?;
+        let names = [0, 1].map(|seat| {
+            let name = seats.name(seat).unwrap_or_default();
+            if name.is_empty() {
+                format!("Player {}", seat + 1)
+            } else {
+                name.to_string()
+            }
+        });
+        Some((me, id, names))
+    });
+    match (&mut game.opponent, now) {
+        (Some(opponent), Some((me, id, names))) if opponent.id == id && opponent.me == me => {
+            opponent.names = names;
+        }
+        (_, Some((me, id, names))) => {
+            game.opponent = Some(Opponent { me, id, names });
+            if me == 0 {
+                let seed = new_seed();
+                game.begin(seed, 0);
+                game.send(id, Message::Start { seed, breaker: 0 });
+            } else {
+                game.waiting_for_start = true;
+            }
+        }
+        (Some(_), None) => {
+            // They left: the player takes both sides, from where the game is. Their shot, if
+            // it's still rolling, ends here.
+            game.opponent = None;
+            game.waiting_for_start = false;
+            game.their_settings = None;
+            game.their_result = None;
+            if let Cue::Waiting = game.cue {
+                game.finish_shot();
+            }
+        }
+        (None, None) => {}
+    }
+
+    let messages = online::take_messages();
+    let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
+        return;
+    };
+    for (_, message) in messages.into_iter().filter(|(from, _)| *from == id) {
+        let theirs = !game.my_turn();
+        let cue_free = matches!(
+            game.cue,
+            Cue::Aiming | Cue::Pulling(_) | Cue::Placing { .. }
+        );
+        match message {
+            Message::Start { seed, breaker } => game.begin(seed, breaker),
+            Message::Aim { aim, pull } if theirs && cue_free => {
+                game.aim = Vec2::from(aim);
+                game.cue = if pull > 0.0 {
+                    Cue::Pulling(pull)
+                } else {
+                    Cue::Aiming
+                };
+            }
+            Message::Place { at } if theirs && cue_free => {
+                game.table.balls[0].position = Vec2::from(at);
+                game.cue = Cue::Placing { held: false };
+            }
+            Message::Shot {
+                cue,
+                aim,
+                power,
+                settings,
+            } if theirs => {
+                game.table.balls[0].position = Vec2::from(cue);
+                game.aim = Vec2::from(aim);
+                game.their_settings = Some(settings_from_message(settings));
+                game.cue = Cue::Striking {
+                    pull: power,
+                    time: 0.0,
+                };
+            }
+            result @ Message::Settled { .. } if theirs => {
+                if let Cue::Waiting = game.cue {
+                    game.take_their_result(result);
+                } else {
+                    game.their_result = Some(result);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// On this player's turn against someone: where their cue points, or where they have the cue
+/// ball, goes to the other player as it changes, a few times a second.
+fn send_aim(time: Res<Time>, mut game: ResMut<Game>) {
+    let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
+        return;
+    };
+    if !game.my_turn() {
+        return;
+    }
+    game.sent.1 += time.delta_secs();
+    let message = match game.cue {
+        Cue::Aiming | Cue::Pulling(_) => Message::Aim {
+            aim: game.aim.into(),
+            pull: game.cue.pull(),
+        },
+        Cue::Placing { .. } => Message::Place {
+            at: game.table.cue_ball().position.into(),
+        },
+        _ => return,
+    };
+    if message != game.sent.0 && game.sent.1 >= AIM_SEND_EVERY {
+        game.sent = (message.clone(), 0.0);
+        game.send(id, message);
+    }
+}
+
 /// Points the cue where the mouse or finger is, or turns it with the arrow keys, and reads
 /// whether the player is holding it.
 #[allow(clippy::too_many_arguments)]
@@ -388,7 +662,19 @@ fn aim(
         let corner = transform.translation - size / 2.0;
         (at * window.scale_factor() - corner) / size * CANVAS.as_vec2() - FELT
     };
-    let pointer = touch.finger().or(window.cursor_position());
+    // Until the canvas has been laid out it has no size, and nowhere on it to point at.
+    let pointer = touch
+        .finger()
+        .or(window.cursor_position())
+        .filter(|_| node.size().min_element() > 0.0);
+    if !game.my_turn() {
+        // The other player's turn: hands off the cue.
+        *last_pointer = pointer;
+        holding.now = mouse.pressed(MouseButton::Left)
+            || keys.pressed(KeyCode::Space)
+            || touch.finger().is_some();
+        return;
+    }
     if let Cue::Placing { .. } = game.cue {
         let mut to = pointer.filter(|at| Some(*at) != *last_pointer).map(to_felt);
         let way = [
@@ -412,6 +698,7 @@ fn aim(
         // Kept on the felt; where it would sit on another ball, it stays where it was.
         let margin = Vec2::splat(BALL_RADIUS);
         if let Some(to) = to.map(|to| to.clamp(margin, Vec2::new(WIDTH, HEIGHT) - margin))
+            && to.is_finite()
             && game.table.cue_ball_fits(to)
         {
             game.table.balls[0].position = to;
@@ -426,7 +713,7 @@ fn aim(
         && let Some(at) = pointer
     {
         let towards = to_felt(at) - game.table.cue_ball().position;
-        if towards.length() > 1.0 {
+        if towards.length() > 1.0 && towards.is_finite() {
             game.aim = towards.normalize();
         }
     }
@@ -458,13 +745,17 @@ fn aim(
 fn play(time: Res<Time>, holding: Res<Holding>, settings: Res<Settings>, mut game: ResMut<Game>) {
     let game = &mut *game;
     let delta = time.delta_secs();
-    game.table.settings = settings.pool();
+    // The other player's shot plays out with their settings.
+    game.table.settings = game.their_settings.unwrap_or_else(|| settings.pool());
+    let mine = game.my_turn();
     for drop in &mut game.dropping {
         drop.age += delta;
     }
     game.dropping.retain(|drop| drop.age < DROP_TIME);
     let full_pull = settings.get(Knob::FullPull);
     game.cue = match game.cue {
+        // The other player's turn: their cue moves as they say (sync).
+        cue @ (Cue::Aiming | Cue::Pulling(_) | Cue::Placing { .. }) if !mine => cue,
         // Typing or tuning: a cue being aimed or pulled back, or a ball in hand, stays put.
         Cue::Aiming | Cue::Pulling(_) | Cue::Placing { .. } if holding.blocked => game.cue,
         Cue::Placing { held: false } if holding.now && !holding.before => {
@@ -480,6 +771,15 @@ fn play(time: Res<Time>, holding: Res<Holding>, settings: Res<Settings>, mut gam
             time: 0.0,
         },
         Cue::Striking { pull, time } if time + delta >= STRIKE_TIME => {
+            if let Some(opponent) = game.opponent.as_ref().filter(|_| mine) {
+                let shot = Message::Shot {
+                    cue: game.table.cue_ball().position.into(),
+                    aim: game.aim.into(),
+                    power: pull,
+                    settings: settings_to_message(&game.table.settings),
+                };
+                game.send(opponent.id, shot);
+            }
             game.table.shoot(game.aim, pull);
             game.pending = 0.0;
             Cue::Rolling
@@ -518,16 +818,42 @@ fn play(time: Res<Time>, holding: Res<Holding>, settings: Res<Settings>, mut gam
             }
             if game.table.is_moving() {
                 Cue::Rolling
+            } else if game.their_settings.is_some() {
+                // The other player's shot: it's judged where it ended on their table.
+                match game.their_result.take() {
+                    Some(result) => {
+                        game.take_their_result(result);
+                        game.cue
+                    }
+                    None => Cue::Waiting,
+                }
             } else {
+                if let Some(opponent) = &game.opponent {
+                    let settled = Message::Settled {
+                        balls: game
+                            .table
+                            .balls
+                            .iter()
+                            .map(|ball| {
+                                let down = if ball.pocketed { 1.0 } else { 0.0 };
+                                [ball.position.x, ball.position.y, down]
+                            })
+                            .collect(),
+                        first_hit: game.table.shot.first_hit,
+                        pocketed: game.table.shot.pocketed.clone(),
+                    };
+                    game.send(opponent.id, settled);
+                }
                 game.finish_shot();
                 game.cue
             }
         }
+        // A new game, if this player may start one (player 1, against someone).
         Cue::Over if holding.now && !holding.before && !holding.blocked => {
             game.start_over();
-            Cue::Aiming
+            game.cue
         }
-        cue @ (Cue::Aiming | Cue::Over) => cue,
+        cue @ (Cue::Aiming | Cue::Over | Cue::Waiting) => cue,
     };
 }
 
@@ -572,7 +898,10 @@ fn draw(
             IN_HAND,
         );
     }
-    if !matches!(game.cue, Cue::Rolling | Cue::Over | Cue::Placing { .. }) {
+    if !matches!(
+        game.cue,
+        Cue::Rolling | Cue::Over | Cue::Placing { .. } | Cue::Waiting
+    ) {
         let cue_ball = game.table.cue_ball().position + FELT;
         let pull_back = settings.get(Knob::PullBack);
         let gap = BALL_RADIUS + CUE_GAP + game.cue.pull() * pull_back;
@@ -695,8 +1024,22 @@ fn show_status(
     mut status: Single<&mut Text, (With<Status>, Without<Label>)>,
     mut labels: Query<(&Label, &mut Text, &mut TextColor), Without<Status>>,
 ) {
-    let placing = matches!(game.cue, Cue::Placing { .. });
-    let line = describe(&game.rules, placing, touch.is_on());
+    let placing = matches!(game.cue, Cue::Placing { .. }) && game.my_turn();
+    let names = game.names();
+    let line = if game.waiting_for_start {
+        format!("Waiting for {} to rack...", names[0])
+    } else {
+        // Against someone, only player 1 starts the next game.
+        let can_start_over = game
+            .opponent
+            .as_ref()
+            .is_none_or(|opponent| opponent.me == 0);
+        let mut line = describe(&game.rules, &names, placing, touch.is_on(), can_start_over);
+        if game.rules.win.is_some() && !can_start_over {
+            line.push_str(&format!(" Waiting for {} to rack again.", names[0]));
+        }
+        line
+    };
     if status.0 != line {
         status.0 = line;
     }
@@ -708,11 +1051,12 @@ fn show_status(
             Some(Group::Stripes) => "stripes",
             None => "table open",
         };
-        let mut line = format!("Player {} · {group}", player + 1);
+        let name = &names[*player];
+        let mut line = format!("{name} · {group}");
         if *player == lit && rules.win.is_none() {
             if rules.breaking {
-                line = format!("Player {} · to break", player + 1);
-            } else if placing {
+                line = format!("{name} · to break");
+            } else if matches!(game.cue, Cue::Placing { .. }) {
                 line.push_str(" · ball in hand");
             }
         }
@@ -733,8 +1077,14 @@ fn show_status(
 
 /// What the status line says: what the last shot did (and how to put the cue ball down, with
 /// ball in hand), or who won; how to play before anything has happened.
-fn describe(game: &rules::Game, placing: bool, touch: bool) -> String {
-    let name = |player: usize| format!("Player {}", player + 1);
+fn describe(
+    game: &rules::Game,
+    names: &[String; 2],
+    placing: bool,
+    touch: bool,
+    can_start_over: bool,
+) -> String {
+    let name = |player: usize| names[player].clone();
     let group_name = |group: Group| match group {
         Group::Solids => "solids",
         Group::Stripes => "stripes",
@@ -746,8 +1096,12 @@ fn describe(game: &rules::Game, placing: bool, touch: bool) -> String {
             WinBy::EarlyEight => format!("{loser} sank the 8 too early"),
             WinBy::FoulOnEight => format!("{loser} fouled on the 8"),
         };
-        let again = if touch { "Tap" } else { "Click" };
-        return format!("{} wins: {why}! {again} for a new game.", name(win.winner));
+        let again = match (can_start_over, touch) {
+            (false, _) => "",
+            (true, true) => " Tap for a new game.",
+            (true, false) => " Click for a new game.",
+        };
+        return format!("{} wins: {why}!{again}", name(win.winner));
     }
     let mut said = Vec::new();
     if let Some(last) = game.last {
@@ -799,6 +1153,14 @@ fn hide_table(
     mut game: ResMut<Game>,
     overlays: Query<Entity, With<Overlay>>,
 ) {
+    // Up from the table: whoever is left there plays both sides, and so does this player when
+    // they come back alone.
+    online::stand();
+    game.table_id = None;
+    game.opponent = None;
+    game.waiting_for_start = false;
+    game.their_settings = None;
+    game.their_result = None;
     // A shot half taken is put down, and one rolling finishes where nobody sees.
     match game.cue {
         Cue::Rolling => {
@@ -807,6 +1169,7 @@ fn hide_table(
             }
             game.finish_shot();
         }
+        Cue::Waiting => game.finish_shot(),
         Cue::Pulling(_) | Cue::Striking { .. } => game.cue = Cue::Aiming,
         Cue::Placing { .. } => game.cue = Cue::Placing { held: false },
         Cue::Aiming | Cue::Over => {}

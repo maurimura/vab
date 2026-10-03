@@ -10,9 +10,11 @@ seat is taken (see [Watching](#watching)). Esc stands up. Y opens the chat for e
 show on a first visit and with `/help`; when a game starts, a card lists its buttons as the game
 names them (the core reports them, e.g. "Z  Low Punch").
 
-E next to the pool table plays pool, alone for now: the table seen from above, the cue
-following the mouse (or a finger) around the cue ball. Holding the button pulls the cue back,
-further the longer it's held, and letting go shoots. `/settings` in the chat tunes how it plays
+E next to the pool table plays 8-ball: the table seen from above, the cue following the mouse
+(or a finger) around the cue ball. Holding the button pulls the cue back, further the longer
+it's held, and letting go shoots. Alone at the table, you take both sides in turn; when someone
+sits at the other seat, you play each other, each shooting on their own turn and watching the
+other's cue on theirs (`client/src/pool/online.rs`). `/settings` in the chat tunes how it plays
 (shot speeds, friction, bounce, pocket size, how the cue pulls back) and racks the balls again.
 
 On a phone or tablet (a screen whose main pointer is a finger) the controls are on the screen
