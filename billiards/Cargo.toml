@@ -1,0 +1,10 @@
+[package]
+name = "billiards"
+version = "0.1.0"
+edition = "2024"
+
+# Pool physics, without Bevy, so it tests natively and every player's table can run the same
+# shot the same way (client/src/pool).
+[dependencies]
+# The vector math Bevy uses, the same version.
+glam = "0.32"

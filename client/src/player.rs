@@ -12,6 +12,7 @@ use crate::Mode;
 use crate::chat::chat_closed;
 use crate::help::help_closed;
 use crate::room;
+use crate::settings::settings_closed;
 use crate::touch::Touch;
 
 /// Walking speed in world pixels per second.
@@ -31,7 +32,8 @@ impl Plugin for PlayerPlugin {
                 walk.run_if(
                     in_state(Mode::Walking)
                         .and_then(chat_closed)
-                        .and_then(help_closed),
+                        .and_then(help_closed)
+                        .and_then(settings_closed),
                 ),
                 follow,
             )
@@ -46,7 +48,7 @@ pub struct Walkable(HashSet<IVec2>);
 
 impl Walkable {
     pub fn from_map(map: &Map) -> Self {
-        let blocked: HashSet<IVec2> = map.objects.iter().map(|p| IVec2::new(p.x, p.y)).collect();
+        let blocked: HashSet<IVec2> = map.objects.iter().flat_map(|p| p.cells()).collect();
         Self(
             map.floor
                 .iter()

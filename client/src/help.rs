@@ -267,7 +267,7 @@ fn row(parent: &mut ChildSpawnerCommands, key: &str, what: &str, key_width: f32,
 }
 
 /// Any key or tap closes the welcome panel, and does nothing else.
-fn close_panel(
+pub fn close_panel(
     mut keyboard: MessageReader<KeyboardInput>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     touches: Res<Touches>,

@@ -56,6 +56,8 @@ extern "C" {
 pub enum TouchButton {
     Play,
     Watch,
+    /// Sits at the pool table next to the player.
+    Pool,
     Leave,
     /// One of the game's, by RetroPad id.
     Pad(u16),
@@ -89,6 +91,12 @@ impl Touch {
     /// A finger just landed on `button`.
     pub fn tapped(&self, button: TouchButton) -> bool {
         self.tapped.contains(&button)
+    }
+
+    /// Where the finger that landed off the buttons is, while it's down: the stick in the bar,
+    /// the cue at the pool table.
+    pub fn finger(&self) -> Option<Vec2> {
+        self.thumb.as_ref().map(|thumb| thumb.at)
     }
 
     fn pressed(&self, button: TouchButton) -> bool {
@@ -316,10 +324,18 @@ fn spawn_stick(mut commands: Commands) {
     }
 }
 
-fn show_stick(touch: Res<Touch>, mut parts: Query<(&StickPart, &mut Node, &mut Visibility)>) {
+fn show_stick(
+    touch: Res<Touch>,
+    mode: Res<State<Mode>>,
+    mut parts: Query<(&StickPart, &mut Node, &mut Visibility)>,
+) {
     for (part, mut node, mut visibility) in &mut parts {
-        // The d-pad shows itself.
-        let Some(thumb) = touch.thumb.as_ref().filter(|thumb| !thumb.on_dpad) else {
+        // The d-pad shows itself, and at the pool table the finger aims the cue instead.
+        let Some(thumb) = touch
+            .thumb
+            .as_ref()
+            .filter(|thumb| !thumb.on_dpad && *mode.get() != Mode::Pool)
+        else {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };

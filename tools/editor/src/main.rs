@@ -18,8 +18,8 @@ use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
 use draw::Studio;
 use history::History;
 use world::{
-    Game, Map, MapSprite, Placed, TILE_HEIGHT, TILE_WIDTH, cell_to_world, games_from_ron,
-    map_sprite, world_to_cell,
+    Game, Map, MapSprite, Placed, TILE_HEIGHT, TILE_WIDTH, cell_to_world, footprint,
+    games_from_ron, map_sprite, world_to_cell,
 };
 
 /// The repo's assets/ folder (this crate lives in tools/editor).
@@ -245,6 +245,16 @@ fn brush_cells(center: IVec2, size: i32) -> impl Iterator<Item = IVec2> {
     (0..size).flat_map(move |x| (0..size).map(move |y| start + IVec2::new(x, y)))
 }
 
+/// Where the brush places tiles: every brush cell, except that an object covering several
+/// cells is placed once, on the hovered cell.
+fn brush_anchors(center: IVec2, brush: &str, size: i32) -> Vec<IVec2> {
+    if footprint(brush) == IVec2::ONE {
+        brush_cells(center, size).collect()
+    } else {
+        vec![center]
+    }
+}
+
 /// Left click paints the brush on the hovered cells, right click erases them (objects first).
 fn paint(
     buttons: Res<ButtonInput<MouseButton>>,
@@ -282,7 +292,7 @@ fn paint(
         } else {
             &mut editor.map.floor
         };
-        for cell in brush_cells(center, editor.brush_size) {
+        for cell in brush_anchors(center, &editor.brush, editor.brush_size) {
             let placed = Placed {
                 x: cell.x,
                 y: cell.y,
@@ -290,7 +300,9 @@ fn paint(
                 game: game.clone(),
             };
             if !layer.contains(&placed) {
-                layer.retain(|p| (p.x, p.y) != (cell.x, cell.y));
+                // Whatever it would overlap goes, objects covering several cells included.
+                let covered: Vec<IVec2> = placed.cells().collect();
+                layer.retain(|p| !covered.iter().any(|&c| p.covers(c)));
                 layer.push(placed);
                 editor.map_changed = true;
             }
@@ -299,7 +311,7 @@ fn paint(
 
     if buttons.pressed(MouseButton::Right) {
         for cell in brush_cells(center, editor.brush_size) {
-            let at_cell = |p: &Placed| (p.x, p.y) == (cell.x, cell.y);
+            let at_cell = |p: &Placed| p.covers(cell);
             for layer in [&mut editor.map.objects, &mut editor.map.floor] {
                 if layer.iter().any(at_cell) {
                     layer.retain(|p| !at_cell(p));
@@ -352,8 +364,14 @@ fn draw_grid(mut gizmos: Gizmos, editor: Res<Editor>) {
         }
     }
     if let Some(center) = editor.hovered {
-        for cell in brush_cells(center, editor.brush_size) {
-            gizmos.linestrip_2d(diamond(cell.x, cell.y), Color::srgb(1.0, 0.85, 0.2));
+        let size = footprint(&editor.brush);
+        for anchor in brush_anchors(center, &editor.brush, editor.brush_size) {
+            for dx in 0..size.x {
+                for dy in 0..size.y {
+                    let cell = anchor + IVec2::new(dx, dy);
+                    gizmos.linestrip_2d(diamond(cell.x, cell.y), Color::srgb(1.0, 0.85, 0.2));
+                }
+            }
         }
     }
     // A dot above each cabinet that has a game.
@@ -524,11 +542,7 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.small("Paint a cabinet to place or reassign it.");
     ui.separator();
     if let Some(cell) = editor.hovered {
-        let object = editor
-            .map
-            .objects
-            .iter()
-            .find(|p| (p.x, p.y) == (cell.x, cell.y));
+        let object = editor.map.objects.iter().find(|p| p.covers(cell));
         let text = match object {
             Some(Placed {
                 tile,

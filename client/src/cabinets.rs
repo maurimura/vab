@@ -15,6 +15,7 @@ use crate::chat::chat_closed;
 use crate::emulator;
 use crate::help::help_closed;
 use crate::player::Player;
+use crate::settings::settings_closed;
 use crate::touch::{self, Touch, TouchButton};
 
 /// The games cabinets can run, built into the client like the map.
@@ -55,7 +56,12 @@ impl Plugin for CabinetsPlugin {
         app.add_systems(Startup, spawn_hint)
             .add_systems(
                 Update,
-                (show_hint, play.run_if(chat_closed).run_if(help_closed))
+                (
+                    show_hint,
+                    play.run_if(chat_closed)
+                        .run_if(help_closed)
+                        .run_if(settings_closed),
+                )
                     .run_if(in_state(Mode::Walking)),
             )
             .add_systems(OnEnter(Mode::Playing), hide_hint);
@@ -121,8 +127,12 @@ fn spawn_hint(mut commands: Commands, touch: Res<Touch>) {
             ],
         ));
     }
-    commands.spawn((
-        Hint,
+    commands.spawn((Hint, hint_label()));
+}
+
+/// A label shown above something the player can use, hidden until they're next to it.
+pub fn hint_label() -> impl Bundle {
+    (
         Text::new(""),
         TextFont {
             font_size: FontSize::Px(14.0),
@@ -136,7 +146,27 @@ fn spawn_hint(mut commands: Commands, touch: Res<Touch>) {
         },
         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
         Visibility::Hidden,
-    ));
+    )
+}
+
+/// Shows a hint label with `label`, centered just above `above` (in world pixels).
+pub fn place_hint(
+    label: &str,
+    above: Vec2,
+    camera: (&Camera, &GlobalTransform),
+    (text, node, visibility, computed): (&mut Text, &mut Node, &mut Visibility, &ComputedNode),
+) {
+    let (camera, camera_transform) = camera;
+    let Ok(on_screen) = camera.world_to_viewport(camera_transform, above.extend(0.0)) else {
+        return;
+    };
+    if text.0 != label {
+        text.0 = label.to_string();
+    }
+    let size = computed.size() * computed.inverse_scale_factor();
+    node.left = Val::Px((on_screen.x - size.x / 2.0).round());
+    node.top = Val::Px((on_screen.y - size.y).round());
+    *visibility = Visibility::Visible;
 }
 
 /// Shows the hint above the cabinet next to the player, centered on it, and on a touch screen
@@ -150,7 +180,6 @@ fn show_hint(
     mut buttons: Query<(&TouchButton, &mut Visibility), Without<Hint>>,
 ) {
     let (mut text, mut node, mut visibility, computed) = hint.into_inner();
-    let (camera, camera_transform) = *camera;
     let near = cabinets.next_to(player.feet);
     for (button, mut shown) in &mut buttons {
         let offered = near.is_some_and(|(cell, game)| {
@@ -170,10 +199,6 @@ fn show_hint(
     }
     let Some((cell, game)) = near else {
         *visibility = Visibility::Hidden;
-        return;
-    };
-    let above = cell_to_world(cell.x, cell.y) + Vec2::Y * HINT_HEIGHT;
-    let Ok(on_screen) = camera.world_to_viewport(camera_transform, above.extend(0.0)) else {
         return;
     };
     let (seated, watching) = people_at(*cell);
@@ -199,13 +224,13 @@ fn show_hint(
             game.players
         ),
     };
-    if text.0 != label {
-        text.0 = label;
-    }
-    let size = computed.size() * computed.inverse_scale_factor();
-    node.left = Val::Px((on_screen.x - size.x / 2.0).round());
-    node.top = Val::Px((on_screen.y - size.y).round());
-    *visibility = Visibility::Visible;
+    let above = cell_to_world(cell.x, cell.y) + Vec2::Y * HINT_HEIGHT;
+    place_hint(
+        &label,
+        above,
+        *camera,
+        (&mut text, &mut node, &mut visibility, computed),
+    );
 }
 
 fn play(

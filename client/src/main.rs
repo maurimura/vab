@@ -3,7 +3,9 @@ mod chat;
 mod emulator;
 mod help;
 mod player;
+mod pool;
 mod room;
+mod settings;
 mod touch;
 
 use bevy::asset::AssetId;
@@ -14,7 +16,9 @@ use chat::ChatPlugin;
 use emulator::EmulatorPlugin;
 use help::HelpPlugin;
 use player::{PlayerPlugin, Walkable, spawn_player};
+use pool::{PoolPlugin, PoolTables};
 use room::RoomPlugin;
+use settings::SettingsPlugin;
 use touch::TouchPlugin;
 use world::{Map, map_sprite};
 
@@ -52,7 +56,9 @@ fn main() {
         ChatPlugin,
         EmulatorPlugin,
         HelpPlugin,
+        PoolPlugin,
         RoomPlugin,
+        SettingsPlugin,
         TouchPlugin,
     ))
     .init_state::<Mode>()
@@ -66,12 +72,13 @@ fn main() {
     app.run();
 }
 
-/// Walking around the bar, or playing a cabinet's game.
+/// Walking around the bar, playing a cabinet's game, or playing pool.
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Mode {
     #[default]
     Walking,
     Playing,
+    Pool,
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
@@ -88,4 +95,5 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
     spawn_player(&mut commands, &asset_server, &walkable);
     commands.insert_resource(walkable);
     commands.insert_resource(Cabinets::from_map(&map));
+    commands.insert_resource(PoolTables::from_map(&map));
 }
