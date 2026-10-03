@@ -20,6 +20,17 @@ codegen-units = 1
 # Do a second optimization pass over the entire program, including dependencies.
 lto = "thin"
 
+# Local builds of the site (make client, make dev): quick to rebuild after a change, and still
+# quick to run, since dependencies are optimized (above, for dev). No debug info, which would
+# make the client hundreds of MB. What players download is wasm-release, below.
+[profile.wasm-dev]
+inherits = "dev"
+debug = false
+strip = "debuginfo"
+
+[profile.wasm-dev.package."*"]
+opt-level = 3
+
 # Optimize for size in the wasm-release profile to reduce load times and bandwidth usage on web.
 # "z" + fat LTO + one codegen unit is the smallest row in Bevy's wasm size table
 # (https://github.com/bevyengine/bevy/tree/latest/examples#optimizing). `make client` then

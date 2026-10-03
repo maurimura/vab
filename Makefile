@@ -1,7 +1,11 @@
 # Build pipeline. Outputs land in web/, which the Worker serves as static assets.
 
-PROFILE ?= wasm-release
-PROFILE_DIR := $(if $(filter dev,$(PROFILE)),debug,$(PROFILE))
+# Local builds are wasm-dev: a change rebuilds in seconds (Cargo.toml says why). What players
+# download is wasm-release, small but minutes to build: deploy and preview build it whatever
+# PROFILE says, and so does CI. `make dev PROFILE=wasm-release` tries it locally.
+PROFILE ?= wasm-dev
+# Worked out when used (=, not :=), so deploy's and preview's own PROFILE counts.
+PROFILE_DIR = $(if $(filter dev,$(PROFILE)),debug,$(PROFILE))
 
 # wasm-bindgen-cli must match the wasm-bindgen crate in Cargo.lock, so install it locally, one
 # folder per version: a version bump installs the new one, other Cargo.lock changes don't.
@@ -25,10 +29,8 @@ client: $(WASM_BINDGEN) $(WASM_OPT)
 	cargo build -p client --profile $(PROFILE) --target wasm32-unknown-unknown
 	$(WASM_BINDGEN) --out-dir web/pkg --target web \
 		target/wasm32-unknown-unknown/$(PROFILE_DIR)/client.wasm
-ifeq ($(PROFILE),wasm-release)
-	$(WASM_OPT) -Oz --output web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm
-	mv web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm
-endif
+	$(if $(filter wasm-release,$(PROFILE)),$(WASM_OPT) -Oz --output web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm)
+	$(if $(filter wasm-release,$(PROFILE)),mv web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm)
 
 # GGRS rollback for the emulator worker (netplay/src/lib.rs) -> web/netplay/.
 netplay: $(WASM_BINDGEN) $(WASM_OPT)
@@ -69,11 +71,13 @@ upload-emulator:
 dev: client netplay
 	cd server && npx wrangler dev
 
+deploy: PROFILE = wasm-release
 deploy: client netplay
 	cd server && npx wrangler deploy
 
 # The preview Worker (server/wrangler.toml). Its bucket gets cores and ROMs like the main one:
 # make emulator-remote R2_BUCKET=vab-preview, make upload-rom R2_TARGET=--remote R2_BUCKET=vab-preview ...
+preview: PROFILE = wasm-release
 preview: client netplay
 	cd server && npx wrangler deploy --env preview
 

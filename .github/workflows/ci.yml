@@ -100,7 +100,7 @@ jobs:
           echo "WASM_OPT=$RUNNER_TEMP/binaryen-version_133/bin/wasm-opt" >> "$GITHUB_ENV"
 
       - name: Build the site
-        run: make client netplay WASM_BINDGEN="$(command -v wasm-bindgen)" WASM_OPT="$WASM_OPT"
+        run: make client netplay PROFILE=wasm-release WASM_BINDGEN="$(command -v wasm-bindgen)" WASM_OPT="$WASM_OPT"
       - uses: actions/upload-artifact@v4
         with:
           name: site
