@@ -42,6 +42,9 @@ const ART: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../art");
 const MAP_FILE: &str = "maps/bar.ron";
 /// The games cabinets can run.
 const GAMES: &str = include_str!("../../../assets/games.ron");
+/// A cabinet's four views, each a quarter turn from the last, as scaffold.rs renders them and
+/// objects/cabinet_<skin>_<facing> tiles are named. R turns the brush through them.
+const FACINGS: [&str; 4] = ["down_right", "down_left", "up_left", "up_right"];
 /// Grid lines drawn around the origin, in cells.
 const GRID_RADIUS: i32 = 16;
 /// Largest brush, in cells per side.
@@ -109,14 +112,18 @@ enum Mode {
 struct Editor {
     map: Map,
     floor_tiles: Vec<String>,
+    /// Objects other than cabinets.
     object_tiles: Vec<String>,
-    /// The tile left click paints.
-    brush: String,
+    /// Cabinet skins with views to paint (`None` is the plain one), and each one's game.
+    cabinets: Vec<Cabinet>,
+    /// What left click paints.
+    brush: Brush,
     /// Cells per side of the square the brush paints and erases.
     brush_size: i32,
     /// The games cabinets can run (assets/games.ron).
     games: Vec<Game>,
-    /// ROM set given to cabinets as they are painted; empty for none.
+    /// ROM set given to plain cabinets as they are painted; empty for none. A skin's cabinets
+    /// get the skin's game.
     game: String,
     hovered: Option<IVec2>,
     zoom: f32,
@@ -136,13 +143,61 @@ struct Editor {
     saving: Option<Receiver<Saved>>,
 }
 
+/// What left click paints: a tile, or a cabinet in the view R has turned it to.
+#[derive(Clone, PartialEq, Eq)]
+enum Brush {
+    None,
+    Tile(String),
+    Cabinet { skin: Option<String>, facing: usize },
+}
+
+impl Brush {
+    /// The tile it paints: for a cabinet, the view it faces. Empty for none.
+    fn tile(&self) -> String {
+        match self {
+            Self::None => String::new(),
+            Self::Tile(tile) => tile.clone(),
+            Self::Cabinet { skin, facing } => cabinet_tile(skin.as_deref(), FACINGS[*facing]),
+        }
+    }
+}
+
+/// A cabinet skin in the palette: the game its cabinets run, from assets/games.ron.
+#[derive(Clone, PartialEq)]
+struct Cabinet {
+    skin: Option<String>,
+    game: Option<Game>,
+}
+
+/// The tile of a cabinet skin (`None` for the plain one) facing one way.
+fn cabinet_tile(skin: Option<&str>, facing: &str) -> String {
+    match skin {
+        Some(skin) => format!("objects/cabinet_{skin}_{facing}"),
+        None => format!("objects/cabinet_{facing}"),
+    }
+}
+
+/// The skin of a cabinet view tile: `Some(None)` for the plain one, `None` for any other tile,
+/// including the old single-view objects/cabinet.
+fn cabinet_skin(tile: &str) -> Option<Option<String>> {
+    let rest = tile.strip_prefix("objects/cabinet")?;
+    let facing = FACINGS
+        .iter()
+        .find(|facing| rest.ends_with(&format!("_{facing}")))?;
+    match &rest[..rest.len() - facing.len() - 1] {
+        "" => Some(None),
+        skin => Some(Some(skin.strip_prefix('_')?.to_owned())),
+    }
+}
+
 impl Default for Editor {
     fn default() -> Self {
         Self {
             map: Map::default(),
-            floor_tiles: tiles_in("floor"),
-            object_tiles: tiles_in("objects"),
-            brush: String::new(),
+            floor_tiles: Vec::new(),
+            object_tiles: Vec::new(),
+            cabinets: Vec::new(),
+            brush: Brush::None,
             brush_size: 1,
             games: Vec::new(),
             game: String::new(),
@@ -163,13 +218,58 @@ impl Default for Editor {
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut editor: ResMut<Editor>) {
     commands.spawn(Camera2d);
-    editor.brush = editor.floor_tiles.first().cloned().unwrap_or_default();
     match games_from_ron(GAMES) {
         Ok(games) => editor.games = games,
         Err(error) => editor.status = format!("Could not read games.ron: {error}\n"),
     }
+    load_palette(&mut editor);
+    editor.brush = editor
+        .floor_tiles
+        .first()
+        .map_or(Brush::None, |tile| Brush::Tile(tile.clone()));
     editor.loading = Some(asset_server.load(MAP_FILE));
     editor.status += &format!("Loading {MAP_FILE}");
+}
+
+/// Reads which tiles there are: floor, objects, and the cabinet skins among them, one entry for
+/// a skin's four views, with the game assets/games.ron gives the skin. A tile the brush was
+/// painting may be gone (deleted in draw mode); the brush then goes back to the first floor tile.
+fn load_palette(editor: &mut Editor) {
+    editor.floor_tiles = tiles_in("floor");
+    editor.object_tiles = Vec::new();
+    editor.cabinets = Vec::new();
+    for tile in tiles_in("objects") {
+        match cabinet_skin(&tile) {
+            Some(skin) => {
+                if !editor.cabinets.iter().any(|cabinet| cabinet.skin == skin) {
+                    let game = editor
+                        .games
+                        .iter()
+                        .find(|game| {
+                            skin.as_ref()
+                                .is_some_and(|skin| game.cabinets.contains(skin))
+                        })
+                        .cloned();
+                    editor.cabinets.push(Cabinet { skin, game });
+                }
+            }
+            None if tile == "objects/cabinet" => {} // The single view from before skins.
+            None => editor.object_tiles.push(tile),
+        }
+    }
+    let gone = match &editor.brush {
+        Brush::None => false,
+        Brush::Tile(tile) => {
+            !editor.floor_tiles.contains(tile) && !editor.object_tiles.contains(tile)
+        }
+        Brush::Cabinet { skin, .. } => !editor.cabinets.iter().any(|c| &c.skin == skin),
+    };
+    if gone {
+        editor.brush = editor
+            .floor_tiles
+            .first()
+            .map_or(Brush::None, |tile| Brush::Tile(tile.clone()));
+    }
 }
 
 /// Takes the map once it has loaded: from assets/ on the desktop, from the Worker on the web,
@@ -258,7 +358,7 @@ fn move_camera(
     }
 }
 
-/// [ and ] shrink and grow the brush.
+/// [ and ] shrink and grow the brush; R turns a cabinet a quarter turn.
 fn resize_brush(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>) {
     if editor.typing_in_panel {
         return;
@@ -268,6 +368,11 @@ fn resize_brush(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>) {
     }
     if keys.just_pressed(KeyCode::BracketRight) {
         editor.brush_size = (editor.brush_size + 1).min(MAX_BRUSH_SIZE);
+    }
+    if keys.just_pressed(KeyCode::KeyR)
+        && let Brush::Cabinet { facing, .. } = &mut editor.brush
+    {
+        *facing = (*facing + 1) % FACINGS.len();
     }
 }
 
@@ -317,20 +422,27 @@ fn paint(
 
     // A click over in one frame is pressed and released before this runs: paint on the press too.
     let held = |button| buttons.pressed(button) || buttons.just_pressed(button);
-    if held(MouseButton::Left) && !editor.brush.is_empty() {
-        let is_object = editor.brush.starts_with("objects/");
-        let game = (is_object && editor.brush.contains("cabinet") && !editor.game.is_empty())
-            .then(|| editor.game.clone());
+    let tile = editor.brush.tile();
+    if held(MouseButton::Left) && !tile.is_empty() {
+        let is_object = tile.starts_with("objects/");
+        // A skin's cabinets run the skin's game; a plain one, the game picked in the panel.
+        let game = match &editor.brush {
+            Brush::Cabinet { skin: Some(_), .. } => brush_game(editor).map(|game| game.rom.clone()),
+            Brush::Cabinet { skin: None, .. } => {
+                (!editor.game.is_empty()).then(|| editor.game.clone())
+            }
+            _ => None,
+        };
         let layer = if is_object {
             &mut editor.map.objects
         } else {
             &mut editor.map.floor
         };
-        for cell in brush_anchors(center, &editor.brush, editor.brush_size) {
+        for cell in brush_anchors(center, &tile, editor.brush_size) {
             let placed = Placed {
                 x: cell.x,
                 y: cell.y,
-                tile: editor.brush.clone(),
+                tile: tile.clone(),
                 game: game.clone(),
             };
             if !layer.contains(&placed) {
@@ -398,8 +510,9 @@ fn draw_grid(mut gizmos: Gizmos, editor: Res<Editor>) {
         }
     }
     if let Some(center) = editor.hovered {
-        let size = footprint(&editor.brush);
-        for anchor in brush_anchors(center, &editor.brush, editor.brush_size) {
+        let tile = editor.brush.tile();
+        let size = footprint(&tile);
+        for anchor in brush_anchors(center, &tile, editor.brush_size) {
             for dx in 0..size.x {
                 for dy in 0..size.y {
                     let cell = anchor + IVec2::new(dx, dy);
@@ -449,11 +562,20 @@ fn forget_tile(editor: &mut Editor, tile: &str) {
         editor.status = format!("Cleared {tile} from the map; save to keep that");
     }
     record_undo(editor, before);
-    editor.floor_tiles = tiles_in("floor");
-    editor.object_tiles = tiles_in("objects");
-    if editor.brush == tile {
-        editor.brush = editor.floor_tiles.first().cloned().unwrap_or_default();
-    }
+    load_palette(editor);
+}
+
+/// The game a skin's cabinets get: the brush's skin's, from assets/games.ron.
+fn brush_game(editor: &Editor) -> Option<&Game> {
+    let Brush::Cabinet { skin, .. } = &editor.brush else {
+        return None;
+    };
+    editor
+        .cabinets
+        .iter()
+        .find(|cabinet| &cabinet.skin == skin)?
+        .game
+        .as_ref()
 }
 
 /// Keeps `before` for undo if the map has changed since.
@@ -513,14 +635,13 @@ fn panel(
                     {
                         *mode = Mode::Map;
                         // Pick up assets made in draw mode.
-                        editor.floor_tiles = tiles_in("floor");
-                        editor.object_tiles = tiles_in("objects");
+                        load_palette(editor);
                     }
                     if ui.selectable_label(*mode == Mode::Draw, "Draw").clicked()
                         && *mode != Mode::Draw
                     {
                         *mode = Mode::Draw;
-                        studio.enter(&editor.brush);
+                        studio.enter(&editor.brush.tile());
                     }
                 });
                 ui.separator();
@@ -561,29 +682,65 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
         ui.heading(heading);
         for tile in tiles {
             let name = tile.split_once('/').map_or(tile.as_str(), |(_, name)| name);
-            if ui.selectable_label(editor.brush == *tile, name).clicked() {
-                editor.brush = tile.clone();
+            let selected = editor.brush == Brush::Tile(tile.clone());
+            if ui.selectable_label(selected, name).clicked() {
+                editor.brush = Brush::Tile(tile.clone());
             }
         }
         ui.add_space(8.0);
     }
+    ui.heading("Cabinets");
+    // Picking a skin keeps the way the brush faces.
+    let facing = match editor.brush {
+        Brush::Cabinet { facing, .. } => facing,
+        _ => 0,
+    };
+    for cabinet in &editor.cabinets {
+        let name = match (&cabinet.skin, &cabinet.game) {
+            (Some(skin), Some(game)) => format!("{skin}: {}", game.title),
+            (Some(skin), None) => skin.clone(),
+            (None, _) => "plain".into(),
+        };
+        let selected =
+            matches!(&editor.brush, Brush::Cabinet { skin, .. } if skin == &cabinet.skin);
+        if ui.selectable_label(selected, name).clicked() {
+            editor.brush = Brush::Cabinet {
+                skin: cabinet.skin.clone(),
+                facing,
+            };
+        }
+    }
+    if let Brush::Cabinet { facing, .. } = editor.brush {
+        ui.small(format!("Facing {} (R turns it)", FACINGS[facing]));
+    }
+    ui.add_space(8.0);
     ui.add(egui::Slider::new(&mut editor.brush_size, 1..=MAX_BRUSH_SIZE).text("Brush size"));
     ui.separator();
-    ui.label("Cabinet game");
-    let selected = editor
-        .games
-        .iter()
-        .find(|game| game.rom == editor.game)
-        .map_or("(none)", |game| game.title.as_str());
-    egui::ComboBox::from_id_salt("game")
-        .selected_text(selected)
-        .show_ui(ui, |ui| {
-            ui.selectable_value(&mut editor.game, String::new(), "(none)");
-            for game in &editor.games {
-                ui.selectable_value(&mut editor.game, game.rom.clone(), &game.title);
-            }
-        });
-    ui.small("Paint a cabinet to place or reassign it.");
+    match &editor.brush {
+        Brush::Cabinet { skin: Some(_), .. } => {
+            let title = brush_game(editor).map_or("none in games.ron", |game| &game.title);
+            ui.label(format!("Game: {title}"));
+            ui.small("The skin's, from assets/games.ron.");
+        }
+        Brush::Cabinet { skin: None, .. } => {
+            ui.label("Cabinet game");
+            let selected = editor
+                .games
+                .iter()
+                .find(|game| game.rom == editor.game)
+                .map_or("(none)", |game| game.title.as_str());
+            egui::ComboBox::from_id_salt("game")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut editor.game, String::new(), "(none)");
+                    for game in &editor.games {
+                        ui.selectable_value(&mut editor.game, game.rom.clone(), &game.title);
+                    }
+                });
+            ui.small("Paint a cabinet to place or reassign it.");
+        }
+        _ => {}
+    }
     ui.separator();
     if let Some(cell) = editor.hovered {
         let object = editor.map.objects.iter().find(|p| p.covers(cell));
@@ -636,6 +793,6 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.label(&editor.status);
     ui.separator();
     ui.small(
-                "Left click: paint\nRight click: erase\n[ / ]: brush size\nScroll, arrows, WASD: pan\n+ / -, pinch: zoom",
+                "Left click: paint\nRight click: erase\n[ / ]: brush size\nR: turn a cabinet\nScroll, arrows, WASD: pan\n+ / -, pinch: zoom",
             );
 }

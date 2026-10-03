@@ -22,15 +22,12 @@ use std::path::Path;
 
 use bevy::math::Vec3;
 
-use crate::ART;
 use crate::draw::{CLEAR, Rgba, read_png};
+use crate::{ART, FACINGS};
 
 const CELL: f32 = 16.0;
 pub const WIDTH: u32 = 32;
 pub const HEIGHT: u32 = 48;
-
-/// Views by the direction the screen faces on screen, each a quarter turn from the last.
-const FACINGS: [&str; 4] = ["down_right", "down_left", "up_left", "up_right"];
 
 // The model: depth along x from the back, width along y between the side panels, height z.
 const BACK: f32 = 2.0;
