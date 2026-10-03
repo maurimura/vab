@@ -82,6 +82,8 @@
         players_reset,
         push_frame,
       } from "./pkg/client.js";
+      // Whether the client was built gzipped (any build but wasm-release: see the Makefile).
+      import { gzipped } from "./pkg/build.js";
       import { Room } from "./room.js";
 
       // A phone or tablet: Bevy shows controls for fingers (client/src/touch.rs).
@@ -491,7 +493,15 @@
       };
       window.emulatorInput = (mask) => play?.input(mask);
 
-      await init().catch((error) => {
+      // A gzipped client is unpacked as it downloads.
+      const gunzipped = () =>
+        fetch("./pkg/client_bg.wasm.gz").then(
+          (response) =>
+            new Response(response.body.pipeThrough(new DecompressionStream("gzip")), {
+              headers: { "content-type": "application/wasm" },
+            }),
+        );
+      await init(gzipped ? { module_or_path: gunzipped() } : undefined).catch((error) => {
         // winit ends its web event loop by throwing this on purpose.
         if (!error.message.startsWith("Using exceptions for control flow")) {
           throw error;

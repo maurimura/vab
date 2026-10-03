@@ -54,7 +54,9 @@ make dev        # builds the client, serves everything at http://localhost:8787
 ```
 
 Local builds (`make client`, `make dev`) use the `wasm-dev` profile: a change rebuilds in
-seconds, and the client is big (about 85 MB) but quick on localhost. What players download is
+seconds. The client comes out big (about 85 MB), past the 25 MiB a static asset may be, so it's
+served gzipped (about 16 MB) and the page unpacks it as it loads. After switching between
+`wasm-dev` and `wasm-release`, restart `make dev`: the files it serves change names. What players download is
 `wasm-release`, about 15 MB but minutes to build, as it optimizes the whole program, Bevy
 included, for size: `make deploy`, `make preview` and CI always build that, and
 `make dev PROFILE=wasm-release` tries it locally.
