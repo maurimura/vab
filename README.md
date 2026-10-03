@@ -53,7 +53,11 @@ make upload-rom ROM=emulator/dist/mk2.state
 make dev        # builds the client, serves everything at http://localhost:8787
 ```
 
-`make client PROFILE=dev` skips the size optimizations for faster iteration.
+Local builds (`make client`, `make dev`) use the `wasm-dev` profile: a change rebuilds in
+seconds, and the client is big (about 85 MB) but quick on localhost. What players download is
+`wasm-release`, about 15 MB but minutes to build, as it optimizes the whole program, Bevy
+included, for size: `make deploy`, `make preview` and CI always build that, and
+`make dev PROFILE=wasm-release` tries it locally.
 
 ## Dev tools
 
