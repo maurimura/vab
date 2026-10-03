@@ -9,6 +9,8 @@
 //! nothing here depends on the frame rate or on anything but the shot, so the same shot on the
 //! same table always ends the same way.
 
+pub mod rules;
+
 use glam::Vec2;
 
 /// The felt between the cushions.
@@ -36,9 +38,18 @@ pub const STEP: f32 = 1.0 / 480.0;
 
 /// Where the cue ball starts and comes back to, and where the rack's front ball sits.
 pub const HEAD_SPOT: Vec2 = Vec2::new(WIDTH / 4.0, HEIGHT / 2.0);
-pub const FOOT_SPOT: Vec2 = Vec2::new(WIDTH * 3.0 / 4.0, HEIGHT / 2.0);
-/// The rack, front to back and top to bottom in each row: the 8 in the middle.
-const RACK: [u8; 15] = [1, 10, 2, 11, 8, 3, 12, 4, 13, 9, 15, 14, 6, 7, 5];
+/// The rack sits a ball short of three quarters down the table: right on that mark, a full
+/// break straight at it sinks a back corner ball two times out of three.
+pub const FOOT_SPOT: Vec2 = Vec2::new(WIDTH * 3.0 / 4.0 - BALL_RADIUS * 2.0, HEIGHT / 2.0);
+/// Places in the rack, counted front to back and top to bottom in each row: the middle,
+/// where the 8 goes, and the two back corners, one solid and one stripe.
+const RACK_MIDDLE: usize = 4;
+const RACK_CORNERS: [usize; 2] = [10, 14];
+/// How far apart racked balls are, and how far each may sit off its place: tiny, but enough
+/// that no two breaks go alike. The gap is wide enough that two balls nudged towards each
+/// other still don't touch.
+const RACK_GAP: f32 = 0.06;
+const RACK_WOBBLE: f32 = 0.02;
 /// How the table plays.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
@@ -169,29 +180,44 @@ pub struct Table {
     /// The cue ball first, then the others.
     pub balls: Vec<Ball>,
     pub settings: Settings,
+    /// What has happened since the last shot was taken, for the rules to judge.
+    pub shot: Shot,
+}
+
+/// What a shot did: the ball the cue ball hit first, and every ball that dropped, in order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Shot {
+    pub first_hit: Option<u8>,
+    pub pocketed: Vec<u8>,
 }
 
 impl Table {
-    /// The cue ball on the head spot and the other fifteen in a triangle on the foot spot.
-    pub fn racked() -> Self {
-        // A hair apart, so nothing starts out touching.
-        let spacing = BALL_RADIUS * 2.0 + 0.02;
+    /// The cue ball on the head spot and the other fifteen in a triangle on the foot spot,
+    /// racked as for 8-ball: the 8 in the middle, a solid and a stripe in the back corners, the
+    /// rest anywhere, and every ball a tiny bit off its place. `seed` decides all of that, so
+    /// the same seed always racks the same way (on every player's table).
+    pub fn racked(seed: u32) -> Self {
+        let mut random = Random::new(seed);
+        let spacing = BALL_RADIUS * 2.0 + RACK_GAP;
         let row_step = spacing * 3f32.sqrt() / 2.0;
         let mut balls = vec![Ball::new(0, HEAD_SPOT)];
-        let mut numbers = RACK.iter();
+        let numbers = rack_order(&mut random);
+        let mut numbers = numbers.iter();
         for row in 0..5 {
             for i in 0..=row {
-                let offset = Vec2::new(
+                let place = Vec2::new(
                     row as f32 * row_step,
                     (i as f32 - row as f32 / 2.0) * spacing,
                 );
+                let wobble = Vec2::new(random.between(-1.0, 1.0), random.between(-1.0, 1.0));
                 let number = *numbers.next().expect("the rack has 15 balls");
-                balls.push(Ball::new(number, FOOT_SPOT + offset));
+                balls.push(Ball::new(number, FOOT_SPOT + place + wobble * RACK_WOBBLE));
             }
         }
         Self {
             balls,
             settings: Settings::default(),
+            shot: Shot::default(),
         }
     }
 
@@ -208,6 +234,7 @@ impl Table {
         } = self.settings;
         let speed = min_speed + (max_speed - min_speed) * power.clamp(0.0, 1.0);
         self.balls[0].velocity = direction.normalize_or_zero() * speed;
+        self.shot = Shot::default();
     }
 
     /// Something on the table is still rolling.
@@ -222,24 +249,50 @@ impl Table {
         self.balls[1..].iter().all(|ball| ball.pocketed)
     }
 
+    /// Whether the cue ball could be put at `at`: on the felt, clear of every other ball.
+    pub fn cue_ball_fits(&self, at: Vec2) -> bool {
+        let on_felt = (BALL_RADIUS..=WIDTH - BALL_RADIUS).contains(&at.x)
+            && (BALL_RADIUS..=HEIGHT - BALL_RADIUS).contains(&at.y);
+        on_felt
+            && self.balls[1..]
+                .iter()
+                .all(|ball| ball.pocketed || ball.position.distance(at) >= BALL_RADIUS * 2.0 + 0.02)
+    }
+
     /// Brings a pocketed cue ball back to the head spot, or the nearest free place along the
     /// table's middle line from there.
     pub fn respot_cue_ball(&mut self) {
-        if !self.balls[0].pocketed {
-            return;
+        if self.balls[0].pocketed {
+            self.respot(0);
         }
+    }
+
+    /// Puts a ball back on the table: the cue ball on the head spot and any other on the foot
+    /// spot, or the nearest free place along the table's middle line from there, towards the
+    /// near end for the cue ball and the far end for the others.
+    pub fn respot(&mut self, number: u8) {
+        let Some(index) = self.balls.iter().position(|ball| ball.number == number) else {
+            return;
+        };
         let free = |at: Vec2| {
-            self.balls[1..]
-                .iter()
-                .all(|ball| ball.pocketed || ball.position.distance(at) >= BALL_RADIUS * 2.0 + 0.02)
+            self.balls.iter().enumerate().all(|(other, ball)| {
+                other == index
+                    || ball.pocketed
+                    || ball.position.distance(at) >= BALL_RADIUS * 2.0 + 0.02
+            })
+        };
+        let (spot, onwards) = if number == 0 {
+            (HEAD_SPOT, -1.0)
+        } else {
+            (FOOT_SPOT, 1.0)
         };
         let spot = (0..WIDTH as i32)
-            .flat_map(|step| [-step, step])
-            .map(|step| HEAD_SPOT + Vec2::X * step as f32)
+            .flat_map(|step| [step, -step])
+            .map(|step| spot + Vec2::X * step as f32 * onwards)
             .filter(|at| (BALL_RADIUS..=WIDTH - BALL_RADIUS).contains(&at.x))
             .find(|&at| free(at))
-            .unwrap_or(HEAD_SPOT);
-        self.balls[0] = Ball::new(0, spot);
+            .unwrap_or(spot);
+        self.balls[index] = Ball::new(number, spot);
     }
 
     /// Moves time on by one step.
@@ -263,6 +316,7 @@ impl Table {
             if falls_in(ball.position, &pockets) {
                 ball.pocketed = true;
                 ball.velocity = Vec2::ZERO;
+                self.shot.pocketed.push(ball.number);
             }
         }
     }
@@ -291,6 +345,9 @@ impl Table {
                 self.balls[j].position += push;
                 let closing = (self.balls[i].velocity - self.balls[j].velocity).dot(normal);
                 if closing > 0.0 {
+                    if i == 0 && self.shot.first_hit.is_none() {
+                        self.shot.first_hit = Some(self.balls[j].number);
+                    }
                     let restitution = self.settings.ball_restitution;
                     let impulse = normal * closing * (1.0 + restitution) / 2.0;
                     self.balls[i].velocity -= impulse;
@@ -298,6 +355,58 @@ impl Table {
                 }
             }
         }
+    }
+}
+
+/// The fifteen balls in their places in the rack (see `RACK_MIDDLE` and `RACK_CORNERS`).
+fn rack_order(random: &mut Random) -> [u8; 15] {
+    let mut solids: Vec<u8> = (1..=7).collect();
+    let mut stripes: Vec<u8> = (9..=15).collect();
+    let solid = solids.remove(random.below(solids.len()));
+    let stripe = stripes.remove(random.below(stripes.len()));
+    let corners = if random.below(2) == 0 {
+        [solid, stripe]
+    } else {
+        [stripe, solid]
+    };
+    // The other twelve, shuffled (Fisher-Yates), into the places left.
+    let mut rest: Vec<u8> = solids.into_iter().chain(stripes).collect();
+    for i in (1..rest.len()).rev() {
+        rest.swap(i, random.below(i + 1));
+    }
+    let mut rest = rest.into_iter();
+    std::array::from_fn(|place| match place {
+        RACK_MIDDLE => 8,
+        _ if place == RACK_CORNERS[0] => corners[0],
+        _ if place == RACK_CORNERS[1] => corners[1],
+        _ => rest.next().expect("twelve balls for twelve places"),
+    })
+}
+
+/// Numbers that look random but follow from the seed alone (SplitMix32), so every player's
+/// table can rack the same way from it.
+struct Random(u32);
+
+impl Random {
+    fn new(seed: u32) -> Self {
+        Self(seed)
+    }
+
+    fn next(&mut self) -> u32 {
+        self.0 = self.0.wrapping_add(0x9e37_79b9);
+        let mut z = self.0;
+        z = (z ^ (z >> 16)).wrapping_mul(0x85eb_ca6b);
+        z = (z ^ (z >> 13)).wrapping_mul(0xc2b2_ae35);
+        z ^ (z >> 16)
+    }
+
+    /// From 0 up to, not including, `n`.
+    fn below(&mut self, n: usize) -> usize {
+        ((self.next() as u64 * n as u64) >> 32) as usize
+    }
+
+    fn between(&mut self, low: f32, high: f32) -> f32 {
+        low + (high - low) * (self.next() >> 8) as f32 / (1u32 << 24) as f32
     }
 }
 
@@ -350,6 +459,7 @@ mod tests {
                 .map(|(number, &at)| Ball::new(number as u8, at))
                 .collect(),
             settings: Settings::default(),
+            shot: Shot::default(),
         }
     }
 
@@ -374,6 +484,7 @@ mod tests {
         assert!(object.x > 200.0, "{object}");
         assert!(object.y.abs() < 1e-3);
         assert!(cue.x.abs() < object.x * 0.05, "{cue} {object}");
+        assert_eq!(table.shot.first_hit, Some(1));
     }
 
     #[test]
@@ -395,6 +506,7 @@ mod tests {
         corner.shoot(Vec2::new(-1.0, -1.0), 0.3);
         run_until_still(&mut corner);
         assert!(corner.balls[0].pocketed);
+        assert_eq!(corner.shot.pocketed, [0]);
 
         let mut side = table_with(&[Vec2::new(WIDTH / 2.0, HEIGHT / 2.0)]);
         side.shoot(Vec2::Y, 0.3);
@@ -441,7 +553,7 @@ mod tests {
 
     #[test]
     fn a_break_comes_to_rest_with_every_ball_on_the_felt_or_down() {
-        let mut table = Table::racked();
+        let mut table = Table::racked(7);
         table.shoot(Vec2::X, 1.0);
         run_until_still(&mut table);
         let on_table: Vec<&Ball> = table.balls.iter().filter(|ball| !ball.pocketed).collect();
@@ -465,9 +577,33 @@ mod tests {
             table.shoot(Vec2::new(1.0, 0.03), 0.9);
             run_until_still(table)
         };
-        let (mut a, mut b) = (Table::racked(), Table::racked());
+        let (mut a, mut b) = (Table::racked(3), Table::racked(3));
         assert_eq!(shot(&mut a), shot(&mut b));
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn racks_follow_the_rules_and_differ_by_seed() {
+        for seed in 0..200 {
+            let table = Table::racked(seed);
+            let rack = &table.balls[1..];
+            let mut numbers: Vec<u8> = rack.iter().map(|ball| ball.number).collect();
+            assert_eq!(rack[RACK_MIDDLE].number, 8);
+            let corners = RACK_CORNERS.map(|place| rack[place].number);
+            assert_eq!(corners.iter().filter(|&&n| n < 8).count(), 1, "{corners:?}");
+            numbers.sort();
+            assert_eq!(numbers, (1..=15).collect::<Vec<u8>>());
+            for (i, a) in table.balls.iter().enumerate() {
+                for b in &table.balls[i + 1..] {
+                    assert!(
+                        a.position.distance(b.position) > BALL_RADIUS * 2.0,
+                        "{seed}"
+                    );
+                }
+            }
+        }
+        assert_ne!(Table::racked(1), Table::racked(2));
+        assert_eq!(Table::racked(5), Table::racked(5));
     }
 
     #[test]
