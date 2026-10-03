@@ -15,6 +15,7 @@ use world::Game;
 
 use crate::Mode;
 use crate::chat::{Chat, chat_closed};
+use crate::settings::Settings;
 use crate::touch::{self, Touch, TouchButton};
 
 /// Keys and the RetroPad button ids (libretro.h) they press. FBNeo maps MK's panel to
@@ -297,13 +298,15 @@ fn show_status(mut status: Single<&mut Text, With<Status>>) {
 fn send_input(
     keys: Res<ButtonInput<KeyCode>>,
     chat: Res<Chat>,
+    settings: Res<Settings>,
     touch: Res<Touch>,
     mut sent: Local<u16>,
 ) {
-    // While typing in the chat, the player's hands are off the controls.
+    // While typing in the chat or tuning settings, the player's hands are off the controls.
+    let busy = chat.is_open() || settings.is_open();
     let mask = KEYS
         .iter()
-        .filter(|(key, _)| !chat.is_open() && keys.pressed(*key))
+        .filter(|(key, _)| !busy && keys.pressed(*key))
         .fold(touch.pad(), |mask, (_, id)| mask | 1 << id);
     if mask != *sent {
         emulator_input(mask);

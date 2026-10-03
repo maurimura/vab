@@ -15,6 +15,7 @@ use crate::chat::chat_closed;
 use crate::emulator;
 use crate::help::help_closed;
 use crate::player::Player;
+use crate::settings::settings_closed;
 use crate::touch::{self, Touch, TouchButton};
 
 /// The games cabinets can run, built into the client like the map.
@@ -55,7 +56,12 @@ impl Plugin for CabinetsPlugin {
         app.add_systems(Startup, spawn_hint)
             .add_systems(
                 Update,
-                (show_hint, play.run_if(chat_closed).run_if(help_closed))
+                (
+                    show_hint,
+                    play.run_if(chat_closed)
+                        .run_if(help_closed)
+                        .run_if(settings_closed),
+                )
                     .run_if(in_state(Mode::Walking)),
             )
             .add_systems(OnEnter(Mode::Playing), hide_hint);
