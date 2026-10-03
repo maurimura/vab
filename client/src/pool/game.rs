@@ -2,14 +2,23 @@
 //! the screen at a whole-number zoom. The cue follows the mouse (or the finger) around the cue
 //! ball. Holding the button pulls it back, further the longer it's held, and letting go shoots:
 //! once pulled, the shot is coming. Esc goes back to the bar, and the table stays as it was
-//! for next time. The physics is the billiards crate's, and how it plays can be tuned with
-//! `/settings` (settings.rs).
+//! for next time. It's 8-ball, the player taking both sides in turn as the rules say, and a
+//! panel for each player under the table, player 1's on the left and player 2's on the right,
+//! shows their group and their balls that are down, in order, the player at the table lit up;
+//! between them a line says what the last shot did. After a foul the next
+//! player has ball in hand: the cue ball follows the pointer (or the arrow keys) until a click,
+//! a tap or Space puts it down. The physics and the
+//! rules are the billiards crate's, and how it plays can be tuned with `/settings`
+//! (settings.rs).
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::ui::UiGlobalTransform;
+use billiards::rules::{self, Foul, Group, WinBy};
 use billiards::{BALL_RADIUS, HEIGHT, Pocket, RAIL, STEP, Table, WIDTH, pockets};
+
+use wasm_bindgen::prelude::*;
 
 use crate::Mode;
 use crate::chat::{Chat, chat_closed};
@@ -19,7 +28,30 @@ use crate::touch::{self, Touch, TouchButton};
 
 /// The image the table is drawn into, and where the felt's corner is in it.
 const CANVAS: UVec2 = UVec2::new(320, 180);
-const FELT: Vec2 = Vec2::new(32.0, 26.0);
+const FELT: Vec2 = Vec2::new(32.0, 15.0);
+/// The players' panels under the table, lined up with its outer edges: from their left edge to
+/// their right, and from their top to their bottom. Their name and group on top, and a tray of
+/// their balls that are down below.
+const PANELS: [(i32, i32); 2] = [(17, 83), (237, 303)];
+const PANEL_TOP: i32 = 159;
+const PANEL_BOTTOM: i32 = 173;
+/// Where each panel's name line starts (player 1's) or ends (player 2's), and its top.
+const LABEL_EDGES: [f32; 2] = [23.0, 297.0];
+const LABEL_TOP: f32 = 159.5;
+/// The trays: where each starts, the middle of their balls, how far apart they are, and the
+/// extra room before the 8's place at the end. Their balls are the small ones, 5 across.
+const TRAY_LEFT: [f32; 2] = [23.0, 248.0];
+const TRAY_MIDDLE: f32 = 169.5;
+const TRAY_SLOT: f32 = 6.0;
+const TRAY_EIGHT_GAP: f32 = 2.0;
+const TRAY_BALL_RADIUS: f32 = 2.5;
+/// The line between the panels, from its left edge to its right.
+const STATUS_SPAN: (f32, f32) = (87.0, 233.0);
+/// Text heights, in canvas pixels, and the smallest they get on a small screen, in logical
+/// pixels.
+const LABEL_SIZE: f32 = 3.5;
+const STATUS_SIZE: f32 = 3.0;
+const SMALLEST_TEXT: f32 = 7.0;
 /// How thick the cushions are, in pixels. The rail is the rest of the way out to the
 /// physics' edge of the table.
 const CUSHION: i32 = 3;
@@ -34,6 +66,8 @@ const CUE_LENGTH: f32 = 110.0;
 /// Turning the cue with the arrow keys, in radians per second (holding Shift: slowly).
 const TURN_SPEED: f32 = 1.2;
 const FINE_TURN_SPEED: f32 = 0.15;
+/// Moving the cue ball with the arrow keys for ball in hand, in pixels per second.
+const PLACE_SPEED: f32 = 60.0;
 /// At most this much time is caught up on in one frame, after the tab was in the background.
 const MAX_CATCH_UP: f32 = 0.1;
 
@@ -50,6 +84,14 @@ const SHINE: [u8; 4] = [255, 255, 255, 255];
 const CUE_TIP: [u8; 4] = [80, 130, 200, 255];
 const CUE_SHAFT: [u8; 4] = [226, 196, 140, 255];
 const CUE_BUTT: [u8; 4] = [92, 50, 26, 255];
+/// The ring around a cue ball that can be moved (ball in hand).
+const IN_HAND: [u8; 4] = [150, 200, 160, 255];
+/// The panels: the player at the table's and the other's, an empty place in a tray, and the
+/// arrow by the name of the player at the table.
+const PANEL_ACTIVE: [u8; 4] = [78, 64, 44, 255];
+const PANEL_IDLE: [u8; 4] = [30, 26, 22, 235];
+const TRAY_EMPTY: [u8; 4] = [14, 12, 10, 255];
+const ARROW: [u8; 4] = [244, 204, 84, 255];
 /// Balls 1 to 8; 9 to 15 are 1 to 7's colors with a white band each side.
 const BALL_COLORS: [[u8; 3]; 8] = [
     [240, 196, 32],
@@ -72,6 +114,17 @@ const TINY_BALL_SHAPE: [&str; 3] = [".#.", "###", ".#."];
 const DROP_TIME: f32 = 0.25;
 const DROP_DARKENING: f32 = 0.6;
 
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = Math)]
+    fn random() -> f64;
+}
+
+/// The balls racked again, each time a little differently: the browser picks the seed.
+fn new_rack() -> Table {
+    Table::racked((random() * f64::from(u32::MAX)) as u32)
+}
+
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -79,7 +132,15 @@ impl Plugin for GamePlugin {
         app.add_systems(OnEnter(Mode::Pool), show_table)
             .add_systems(
                 Update,
-                (fit_canvas, aim, play, draw, leave.run_if(chat_closed))
+                (
+                    fit_canvas,
+                    aim,
+                    play,
+                    draw,
+                    show_status,
+                    place_text,
+                    leave.run_if(chat_closed),
+                )
                     .chain()
                     .run_if(in_state(Mode::Pool)),
             )
@@ -99,6 +160,8 @@ struct Game {
     pending: f32,
     /// Balls that just went down, still being drawn on their way into the hole.
     dropping: Vec<Drop>,
+    /// The game of 8-ball being played on the table, by players 0 and 1.
+    rules: rules::Game,
 }
 
 /// A ball falling into a pocket: from where it went down to the hole's middle.
@@ -113,12 +176,38 @@ struct Drop {
 impl Default for Game {
     fn default() -> Self {
         Self {
-            table: Table::racked(),
+            table: new_rack(),
             aim: Vec2::X,
             cue: Cue::Aiming,
             pending: 0.0,
             dropping: Vec::new(),
+            rules: rules::Game::new(0),
         }
+    }
+}
+
+impl Game {
+    /// A new game on a fresh rack, the other player breaking this time.
+    fn start_over(&mut self) {
+        let breaker = 1 - self.rules.breaker;
+        *self = Self {
+            rules: rules::Game::new(breaker),
+            aim: self.aim,
+            ..default()
+        };
+    }
+
+    /// Once the balls have stopped: the rules judge the shot, and a pocketed cue ball comes back.
+    fn finish_shot(&mut self) {
+        self.rules.judge(&mut self.table);
+        self.table.respot_cue_ball();
+        self.cue = if self.rules.win.is_some() {
+            Cue::Over
+        } else if self.rules.ball_in_hand {
+            Cue::Placing { held: false }
+        } else {
+            Cue::Aiming
+        };
     }
 }
 
@@ -134,6 +223,13 @@ enum Cue {
     },
     /// Away while the balls roll.
     Rolling,
+    /// Away: someone won. A press starts the next game.
+    Over,
+    /// Ball in hand: the cue ball follows the pointer, and goes down when a press (`held`) is
+    /// let go.
+    Placing {
+        held: bool,
+    },
 }
 
 impl Cue {
@@ -162,6 +258,14 @@ struct Overlay;
 #[derive(Component)]
 struct Canvas;
 
+/// The line between the players' panels: what the last shot did, or who won.
+#[derive(Component)]
+struct Status;
+
+/// A player's name and group, over their panel.
+#[derive(Component)]
+struct Label(usize);
+
 fn show_table(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
@@ -183,10 +287,24 @@ fn show_table(
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD,
     );
-    let how = if touch.is_on() {
-        "Your finger aims. Hold to pull the cue back, lift to shoot."
-    } else {
-        "The mouse aims. Hold the button to pull the cue back, let go to shoot. Esc leaves."
+    let text = |size: f32, justify: Justify| {
+        (
+            Text::new(""),
+            TextFont {
+                font_size: FontSize::Px(size),
+                ..default()
+            },
+            TextColor(Color::WHITE),
+            TextLayout {
+                justify,
+                ..default()
+            },
+            // Placed over the canvas by place_text.
+            Node {
+                position_type: PositionType::Absolute,
+                ..default()
+            },
+        )
     };
     let mut overlay = commands.spawn((
         Overlay,
@@ -203,27 +321,9 @@ fn show_table(
         GlobalZIndex(1),
         children![
             (Canvas, ImageNode::new(images.add(image)), Node::default()),
-            (
-                Text::new(how),
-                TextFont {
-                    font_size: FontSize::Px(if touch.is_on() { 11.0 } else { 14.0 }),
-                    ..default()
-                },
-                TextColor(Color::WHITE),
-                Node {
-                    position_type: PositionType::Absolute,
-                    top: Val::Px(8.0),
-                    left: Val::Px(8.0),
-                    max_width: if touch.is_on() {
-                        Val::Percent(60.0)
-                    } else {
-                        Val::Auto
-                    },
-                    padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
-                    ..default()
-                },
-                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
-            ),
+            (Label(0), text(14.0, Justify::Left)),
+            (Label(1), text(14.0, Justify::Right)),
+            (Status, text(12.0, Justify::Center)),
         ],
     ));
     if touch.is_on() {
@@ -289,6 +389,39 @@ fn aim(
         (at * window.scale_factor() - corner) / size * CANVAS.as_vec2() - FELT
     };
     let pointer = touch.finger().or(window.cursor_position());
+    if let Cue::Placing { .. } = game.cue {
+        let mut to = pointer.filter(|at| Some(*at) != *last_pointer).map(to_felt);
+        let way = [
+            (KeyCode::ArrowLeft, Vec2::NEG_X),
+            (KeyCode::KeyA, Vec2::NEG_X),
+            (KeyCode::ArrowRight, Vec2::X),
+            (KeyCode::KeyD, Vec2::X),
+            (KeyCode::ArrowUp, Vec2::NEG_Y),
+            (KeyCode::KeyW, Vec2::NEG_Y),
+            (KeyCode::ArrowDown, Vec2::Y),
+            (KeyCode::KeyS, Vec2::Y),
+        ]
+        .iter()
+        .filter(|(key, _)| keys.pressed(*key))
+        .map(|(_, way)| *way)
+        .sum::<Vec2>();
+        if way != Vec2::ZERO {
+            let step = way.normalize() * PLACE_SPEED * time.delta_secs();
+            to = Some(game.table.cue_ball().position + step);
+        }
+        // Kept on the felt; where it would sit on another ball, it stays where it was.
+        let margin = Vec2::splat(BALL_RADIUS);
+        if let Some(to) = to.map(|to| to.clamp(margin, Vec2::new(WIDTH, HEIGHT) - margin))
+            && game.table.cue_ball_fits(to)
+        {
+            game.table.balls[0].position = to;
+        }
+        *last_pointer = pointer;
+        holding.now = mouse.pressed(MouseButton::Left)
+            || keys.pressed(KeyCode::Space)
+            || touch.finger().is_some();
+        return;
+    }
     if pointer != *last_pointer
         && let Some(at) = pointer
     {
@@ -332,8 +465,13 @@ fn play(time: Res<Time>, holding: Res<Holding>, settings: Res<Settings>, mut gam
     game.dropping.retain(|drop| drop.age < DROP_TIME);
     let full_pull = settings.get(Knob::FullPull);
     game.cue = match game.cue {
-        // Typing or tuning: a cue being aimed or pulled back stays put.
-        Cue::Aiming | Cue::Pulling(_) if holding.blocked => game.cue,
+        // Typing or tuning: a cue being aimed or pulled back, or a ball in hand, stays put.
+        Cue::Aiming | Cue::Pulling(_) | Cue::Placing { .. } if holding.blocked => game.cue,
+        Cue::Placing { held: false } if holding.now && !holding.before => {
+            Cue::Placing { held: true }
+        }
+        Cue::Placing { held: true } if !holding.now => Cue::Aiming,
+        cue @ Cue::Placing { .. } => cue,
         // A fresh press: one held from before the balls stopped doesn't count.
         Cue::Aiming if holding.now && !holding.before => Cue::Pulling(0.0),
         Cue::Pulling(pull) if holding.now => Cue::Pulling((pull + delta / full_pull).min(1.0)),
@@ -381,14 +519,15 @@ fn play(time: Res<Time>, holding: Res<Holding>, settings: Res<Settings>, mut gam
             if game.table.is_moving() {
                 Cue::Rolling
             } else {
-                if game.table.cleared() {
-                    game.table = Table::racked();
-                }
-                game.table.respot_cue_ball();
-                Cue::Aiming
+                game.finish_shot();
+                game.cue
             }
         }
-        Cue::Aiming => Cue::Aiming,
+        Cue::Over if holding.now && !holding.before && !holding.blocked => {
+            game.start_over();
+            Cue::Aiming
+        }
+        cue @ (Cue::Aiming | Cue::Over) => cue,
     };
 }
 
@@ -426,13 +565,118 @@ fn draw(
     for ball in game.table.balls.iter().filter(|ball| !ball.pocketed) {
         pixels.ball(ball.number, ball.position + FELT, &BALL_SHAPE, 1.0);
     }
-    if !matches!(game.cue, Cue::Rolling) {
+    if let Cue::Placing { .. } = game.cue {
+        pixels.ring(
+            game.table.cue_ball().position + FELT,
+            BALL_RADIUS + 2.0,
+            IN_HAND,
+        );
+    }
+    if !matches!(game.cue, Cue::Rolling | Cue::Over | Cue::Placing { .. }) {
         let cue_ball = game.table.cue_ball().position + FELT;
         let pull_back = settings.get(Knob::PullBack);
         let gap = BALL_RADIUS + CUE_GAP + game.cue.pull() * pull_back;
         pixels.cue(cue_ball - game.aim * gap, -game.aim);
     }
+    draw_panels(&mut pixels, &game.rules);
     image.data = Some(pixels.0);
+}
+
+/// The player at the table, or the winner once the game is over: their panel is lit up.
+fn lit_player(rules: &rules::Game) -> usize {
+    rules.win.map_or(rules.turn, |win| win.winner)
+}
+
+/// The players' panels: lit up for the player at the table, with an arrow by their name, and
+/// each a tray of their group's balls that are down, in order, then the 8 if they sank it.
+fn draw_panels(pixels: &mut Pixels, rules: &rules::Game) {
+    let lit = lit_player(rules);
+    for (player, (left, right)) in PANELS.into_iter().enumerate() {
+        let color = if player == lit {
+            PANEL_ACTIVE
+        } else {
+            PANEL_IDLE
+        };
+        pixels.rect(
+            IVec2::new(left, PANEL_TOP),
+            IVec2::new(right, PANEL_BOTTOM),
+            color,
+        );
+        let down = rules.down_of(player);
+        for slot in 0..8 {
+            let gap = if slot == 7 { TRAY_EIGHT_GAP } else { 0.0 };
+            let x = TRAY_LEFT[player] + TRAY_BALL_RADIUS + slot as f32 * TRAY_SLOT + gap;
+            let at = Vec2::new(x, TRAY_MIDDLE);
+            let ball = match slot {
+                7 => rules.sank_eight(player).then_some(8),
+                _ => down.get(slot).copied(),
+            };
+            match ball {
+                Some(number) => pixels.ball(number, at, &SMALL_BALL_SHAPE, 1.0),
+                None => pixels.disc(at, TRAY_BALL_RADIUS, TRAY_EMPTY),
+            }
+        }
+    }
+    // A little arrow by the lit player's name, pointing in at it: its back three pixels tall,
+    // narrowing to its point.
+    let (back, way) = if lit == 0 {
+        (PANELS[0].0 + 2, 1)
+    } else {
+        (PANELS[1].1 - 3, -1)
+    };
+    let middle = LABEL_TOP as i32 + 2;
+    for row in -1..=1_i32 {
+        for step in 0..2 - row.abs() {
+            pixels.set(back + way * step, middle + row, ARROW);
+        }
+    }
+}
+
+/// Puts the players' names and the status line where they go over the canvas, sized with it.
+fn place_text(
+    window: Single<&Window>,
+    canvas: Single<(&ComputedNode, &UiGlobalTransform), With<Canvas>>,
+    mut texts: Query<(&mut Node, &mut TextFont, Option<&Label>, Has<Status>)>,
+) {
+    let (node, transform) = *canvas;
+    let scale_factor = window.scale_factor();
+    // Logical pixels per canvas pixel, and where the canvas's corner is.
+    let scale = node.size().x / CANVAS.x as f32 / scale_factor;
+    let corner = (transform.translation - node.size() / 2.0) / scale_factor;
+    let at = |x: f32, y: f32| corner + Vec2::new(x, y) * scale;
+    for (mut text_node, mut font, label, is_status) in &mut texts {
+        let (size, left, right, width) = match (label, is_status) {
+            (Some(Label(0)), _) => (LABEL_SIZE, Some(at(LABEL_EDGES[0], 0.0).x), None, None),
+            (Some(_), _) => {
+                let edge = at(LABEL_EDGES[1], 0.0).x;
+                (LABEL_SIZE, None, Some(window.width() - edge), None)
+            }
+            (None, true) => {
+                let (from, to) = STATUS_SPAN;
+                (
+                    STATUS_SIZE,
+                    Some(at(from, 0.0).x),
+                    None,
+                    Some((to - from) * scale),
+                )
+            }
+            (None, false) => continue,
+        };
+        let font_size = FontSize::Px((size * scale).max(SMALLEST_TEXT).round());
+        if font.font_size != font_size {
+            font.font_size = font_size;
+        }
+        let top = Val::Px(at(0.0, LABEL_TOP).y.round());
+        let left = left.map_or(Val::Auto, |x| Val::Px(x.round()));
+        let right = right.map_or(Val::Auto, |x| Val::Px(x.round()));
+        let width = width.map_or(Val::Auto, |w| Val::Px(w.round()));
+        if text_node.top != top || text_node.left != left || text_node.right != right {
+            text_node.top = top;
+            text_node.left = left;
+            text_node.right = right;
+            text_node.width = width;
+        }
+    }
 }
 
 /// The New rack button in the settings: every ball back, wherever the game is at.
@@ -441,10 +685,107 @@ fn rack_again(mut asked: MessageReader<NewRack>, game: Option<ResMut<Game>>) {
         return;
     }
     if let Some(mut game) = game {
-        game.table = Table::racked();
-        game.cue = Cue::Aiming;
-        game.dropping.clear();
+        game.start_over();
     }
+}
+
+fn show_status(
+    game: Res<Game>,
+    touch: Res<Touch>,
+    mut status: Single<&mut Text, (With<Status>, Without<Label>)>,
+    mut labels: Query<(&Label, &mut Text, &mut TextColor), Without<Status>>,
+) {
+    let placing = matches!(game.cue, Cue::Placing { .. });
+    let line = describe(&game.rules, placing, touch.is_on());
+    if status.0 != line {
+        status.0 = line;
+    }
+    let rules = &game.rules;
+    let lit = lit_player(rules);
+    for (Label(player), mut text, mut color) in &mut labels {
+        let group = match rules.group_of(*player) {
+            Some(Group::Solids) => "solids",
+            Some(Group::Stripes) => "stripes",
+            None => "table open",
+        };
+        let mut line = format!("Player {} · {group}", player + 1);
+        if *player == lit && rules.win.is_none() {
+            if rules.breaking {
+                line = format!("Player {} · to break", player + 1);
+            } else if placing {
+                line.push_str(" · ball in hand");
+            }
+        }
+        if rules.win.is_some_and(|win| win.winner == *player) {
+            line.push_str(" · wins!");
+        }
+        if text.0 != line {
+            text.0 = line;
+        }
+        let shade = if *player == lit {
+            Color::WHITE
+        } else {
+            Color::srgb(0.55, 0.55, 0.55)
+        };
+        color.set_if_neq(TextColor(shade));
+    }
+}
+
+/// What the status line says: what the last shot did (and how to put the cue ball down, with
+/// ball in hand), or who won; how to play before anything has happened.
+fn describe(game: &rules::Game, placing: bool, touch: bool) -> String {
+    let name = |player: usize| format!("Player {}", player + 1);
+    let group_name = |group: Group| match group {
+        Group::Solids => "solids",
+        Group::Stripes => "stripes",
+    };
+    if let Some(win) = game.win {
+        let loser = name(1 - win.winner);
+        let why = match win.how {
+            WinBy::Eight => "the 8 is down".to_string(),
+            WinBy::EarlyEight => format!("{loser} sank the 8 too early"),
+            WinBy::FoulOnEight => format!("{loser} fouled on the 8"),
+        };
+        let again = if touch { "Tap" } else { "Click" };
+        return format!("{} wins: {why}! {again} for a new game.", name(win.winner));
+    }
+    let mut said = Vec::new();
+    if let Some(last) = game.last {
+        let shooter = if last.again { game.turn } else { 1 - game.turn };
+        match last.foul {
+            Some(Foul::Scratch) => said.push("Foul: the cue ball went in.".to_string()),
+            Some(Foul::NoHit) => said.push("Foul: no ball hit.".to_string()),
+            Some(Foul::WrongBall(8)) => said.push("Foul: the 8 was hit first.".to_string()),
+            Some(Foul::WrongBall(number)) => {
+                said.push(format!("Foul: the {number} was hit first."))
+            }
+            None => {}
+        }
+        if let Some(group) = last.took {
+            said.push(format!("{} takes {}.", name(shooter), group_name(group)));
+        }
+        if last.eight_respotted {
+            said.push("The 8 goes back on its spot.".to_string());
+        }
+    }
+    if placing {
+        said.push(if touch {
+            "Drag the cue ball, lift to put it down.".to_string()
+        } else {
+            "Move the cue ball, click to put it down.".to_string()
+        });
+    } else if game.last.is_some_and(|last| last.again) && !game.breaking {
+        said.push(format!("{} goes again.", name(game.turn)));
+    }
+    if said.is_empty() {
+        // Nothing has happened yet: how to play.
+        said.push(if touch {
+            "Your finger aims. Hold to pull the cue back, lift to shoot.".to_string()
+        } else {
+            "The mouse aims. Hold to pull the cue back, let go to shoot. Esc leaves.".to_string()
+        });
+    }
+    said.join(" ")
 }
 
 fn leave(keys: Res<ButtonInput<KeyCode>>, touch: Res<Touch>, mut mode: ResMut<NextState<Mode>>) {
@@ -459,14 +800,17 @@ fn hide_table(
     overlays: Query<Entity, With<Overlay>>,
 ) {
     // A shot half taken is put down, and one rolling finishes where nobody sees.
-    while game.table.is_moving() {
-        game.table.step();
+    match game.cue {
+        Cue::Rolling => {
+            while game.table.is_moving() {
+                game.table.step();
+            }
+            game.finish_shot();
+        }
+        Cue::Pulling(_) | Cue::Striking { .. } => game.cue = Cue::Aiming,
+        Cue::Placing { .. } => game.cue = Cue::Placing { held: false },
+        Cue::Aiming | Cue::Over => {}
     }
-    if game.table.cleared() {
-        game.table = Table::racked();
-    }
-    game.table.respot_cue_ball();
-    game.cue = Cue::Aiming;
     game.dropping.clear();
     for overlay in &overlays {
         commands.entity(overlay).despawn();
@@ -538,6 +882,22 @@ impl Pixels {
                 let middle = Vec2::new(x as f32, y as f32) + 0.5;
                 let t = ((middle - from).dot(along) / along.length_squared()).clamp(0.0, 1.0);
                 if middle.distance(from + along * t) <= reach {
+                    self.set(x, y, color);
+                }
+            }
+        }
+    }
+
+    /// A circle one pixel thick.
+    fn ring(&mut self, center: Vec2, radius: f32, color: [u8; 4]) {
+        let (low, high) = (
+            (center - radius - 1.0).floor(),
+            (center + radius + 1.0).ceil(),
+        );
+        for y in low.y as i32..=high.y as i32 {
+            for x in low.x as i32..=high.x as i32 {
+                let distance = (Vec2::new(x as f32, y as f32) + 0.5).distance(center);
+                if (radius - 0.5..radius + 0.5).contains(&distance) {
                     self.set(x, y, color);
                 }
             }

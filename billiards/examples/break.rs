@@ -1,5 +1,5 @@
 // How well breaks spread, for tuning: a full-power break at the rack's front ball, over 21
-// aims a hair apart. Prints the share of the cue ball's energy the other balls have just after
+// racks. Prints the share of the cue ball's energy the other balls have just after
 // the hit, how far from their middle they end up on average, how many go down, and how many
 // are still where the rack was.
 //
@@ -24,13 +24,12 @@ fn main() {
     let (mut kept, mut spread, mut down, mut clumped) = (0.0, 0.0, 0, 0);
     let aims = 21;
     for k in 0..aims {
-        let mut table = Table::racked();
+        let mut table = Table::racked(k);
         table.settings.max_speed = args[0];
         table.settings.friction = args[1];
         table.settings.ball_restitution = args[2];
         table.settings.cushion_restitution = args[3];
-        let off = (k as f32 - (aims / 2) as f32) * 0.05;
-        let aim = table.balls[1].position + Vec2::Y * off - table.cue_ball().position;
+        let aim = table.balls[1].position - table.cue_ball().position;
         table.shoot(aim, 1.0);
         let start = energy(&table, 0);
         // until the hit has gone through the rack: 0.1 s after the front ball first moves
