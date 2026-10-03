@@ -10,6 +10,11 @@ seat is taken (see [Watching](#watching)). Esc stands up. Y opens the chat for e
 show on a first visit and with `/help`; when a game starts, a card lists its buttons as the game
 names them (the core reports them, e.g. "Z  Low Punch").
 
+E next to the pool table plays pool, alone for now: the table seen from above, the cue
+following the mouse (or a finger) around the cue ball. Holding the button pulls the cue back,
+further the longer it's held, and letting go shoots. `/settings` in the chat tunes how it plays
+(shot speeds, friction, bounce, pocket size, how the cue pulls back) and racks the balls again.
+
 On a phone or tablet (a screen whose main pointer is a finger) the controls are on the screen
 instead (`client/src/touch.rs`): a thumb dragged anywhere walks, Play and Watch show by a cabinet,
 and at one a d-pad sits under the left thumb (fixed in place, so a move's sequence can be tapped
@@ -24,6 +29,7 @@ as long as its pixel ratio is left at the computer's own (an emulated one gets t
 | `server/` | Worker + `Room` Durable Object (WebSocket Hibernation) | `workers-rs` template, `wrangler` |
 | `netplay/` | Rollback for two players at a cabinet (GGRS), run by the emulator worker | `cargo` + `wasm-bindgen` → `web/netplay/` |
 | `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
+| `billiards/` | Pool physics, without Bevy: deterministic, tested natively (`cargo test -p billiards`) | |
 | `world/` | Map format, isometric grid math, tile drawing (shared by the editor and, later, the client) | |
 | `tools/editor/` | Bar layout editor, desktop only (`make editor`) | `cargo`, `bevy_egui` |
 | `assets/` | Tile art (`tiles/`) and maps (`maps/`) | |
