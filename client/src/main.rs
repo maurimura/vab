@@ -20,10 +20,8 @@ use pool::{PoolPlugin, PoolTables};
 use room::RoomPlugin;
 use settings::SettingsPlugin;
 use touch::TouchPlugin;
-use world::{Map, map_sprite};
+use world::{Map, MapPlugin, map_sprite};
 
-/// The bar, made with the editor (`make editor`) and built into the client.
-const BAR_MAP: &str = include_str!("../../assets/maps/bar.ron");
 /// All text is in Fira Mono cut down to Latin-1, so names and chat can have accents and ñ
 /// (Bevy's own font is ASCII only). SIL Open Font License: fonts/OFL.txt.
 const FONT: &[u8] = include_bytes!("../fonts/FiraMono-Latin1.ttf");
@@ -51,6 +49,7 @@ fn main() {
                 meta_check: AssetMetaCheck::Never,
                 ..default()
             }),
+        MapPlugin,
         PlayerPlugin,
         CabinetsPlugin,
         ChatPlugin,
@@ -63,7 +62,8 @@ fn main() {
     ))
     .init_state::<Mode>()
     .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.08)))
-    .add_systems(Startup, setup);
+    .add_systems(Startup, setup)
+    .add_systems(Update, build_bar.run_if(in_state(Mode::Loading)));
     // Text without a font of its own uses the default handle's.
     app.world_mut()
         .resource_mut::<Assets<Font>>()
@@ -72,28 +72,49 @@ fn main() {
     app.run();
 }
 
-/// Walking around the bar, playing a cabinet's game, or playing pool.
+/// Waiting for the bar's map, walking around the bar, playing a cabinet's game, or playing pool.
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Mode {
     #[default]
+    Loading,
     Walking,
     Playing,
     Pool,
 }
 
+/// The bar's map, made with the editor, while it loads.
+#[derive(Resource)]
+struct LoadingMap(Handle<Map>);
+
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    let map = Map::from_ron(BAR_MAP).expect("assets/maps/bar.ron is a valid map");
+    commands.spawn(Camera2d);
+    // The Worker serves the map last saved from the web editor, or the one built with the site.
+    commands.insert_resource(LoadingMap(asset_server.load("maps/bar.ron")));
+}
+
+/// Once the map is here, draws the bar and puts the player in it. A map that fails to load is
+/// logged by the asset server, and the bar stays empty.
+fn build_bar(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    loading: Res<LoadingMap>,
+    maps: Res<Assets<Map>>,
+    mut mode: ResMut<NextState<Mode>>,
+) {
+    let Some(map) = maps.get(&loading.0) else {
+        return;
+    };
     for placed in &map.floor {
         commands.spawn(map_sprite(&asset_server, placed, false));
     }
     for placed in &map.objects {
         commands.spawn(map_sprite(&asset_server, placed, true));
     }
-    commands.spawn(Camera2d);
-
-    let walkable = Walkable::from_map(&map);
+    let walkable = Walkable::from_map(map);
     spawn_player(&mut commands, &asset_server, &walkable);
     commands.insert_resource(walkable);
-    commands.insert_resource(Cabinets::from_map(&map));
-    commands.insert_resource(PoolTables::from_map(&map));
+    commands.insert_resource(Cabinets::from_map(map));
+    commands.insert_resource(PoolTables::from_map(map));
+    commands.remove_resource::<LoadingMap>();
+    mode.set(Mode::Walking);
 }

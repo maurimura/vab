@@ -1,10 +1,16 @@
 //! The bar's map: what is placed on the isometric grid and how it is drawn. Shared by the
-//! editor (tools/editor) and, later, the game client.
+//! editor (tools/editor), the game client and, as the map format alone (no `bevy` feature),
+//! the Worker that stores the map.
 
 use std::sync::OnceLock;
 
+#[cfg(feature = "bevy")]
+use bevy::asset::{AssetLoader, AsyncReadExt, LoadContext, io::Reader};
+#[cfg(feature = "bevy")]
 use bevy::prelude::*;
+#[cfg(feature = "bevy")]
 use bevy::sprite::Anchor;
+use glam::{IVec2, Vec2};
 use serde::{Deserialize, Serialize};
 
 /// Cells are 2:1 isometric diamonds.
@@ -16,7 +22,10 @@ const OBJECTS: &str = include_str!("../../assets/objects.ron");
 
 /// Everything placed on the grid. Tile names are PNG paths under assets/tiles/ without the
 /// extension, e.g. "floor/wood" or "objects/cabinet".
+///
+/// Also an asset: `asset_server.load::<Map>("maps/bar.ron")` with [`MapPlugin`] added.
 #[derive(Serialize, Deserialize, Default, Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "bevy", derive(Asset, TypePath))]
 pub struct Map {
     pub floor: Vec<Placed>,
     pub objects: Vec<Placed>,
@@ -112,6 +121,44 @@ impl Map {
     }
 }
 
+/// Loads `.ron` maps through the asset server: from assets/ on the desktop, over HTTP on the
+/// web, where the Worker serves the map the web editor last saved.
+#[cfg(feature = "bevy")]
+pub struct MapPlugin;
+
+#[cfg(feature = "bevy")]
+impl Plugin for MapPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_asset::<Map>().init_asset_loader::<MapLoader>();
+    }
+}
+
+#[cfg(feature = "bevy")]
+#[derive(Default, TypePath)]
+pub struct MapLoader;
+
+#[cfg(feature = "bevy")]
+impl AssetLoader for MapLoader {
+    type Asset = Map;
+    type Settings = ();
+    type Error = BevyError;
+
+    async fn load(
+        &self,
+        reader: &mut dyn Reader,
+        _settings: &(),
+        _load_context: &mut LoadContext<'_>,
+    ) -> Result<Map, BevyError> {
+        let mut text = String::new();
+        reader.read_to_string(&mut text).await?;
+        Ok(Map::from_ron(&text)?)
+    }
+
+    fn extensions(&self) -> &[&str] {
+        &["ron"]
+    }
+}
+
 /// Center of a cell's diamond. +x runs down-right on screen, +y down-left.
 pub fn cell_to_world(x: i32, y: i32) -> Vec2 {
     Vec2::new(
@@ -131,6 +178,7 @@ pub fn world_to_cell(position: Vec2) -> IVec2 {
 }
 
 /// Marks entities drawn from a map.
+#[cfg(feature = "bevy")]
 #[derive(Component)]
 pub struct MapSprite;
 
@@ -139,6 +187,7 @@ pub struct MapSprite;
 /// Floor tiles are centered on their cell. Objects stand on the cells they cover: the image's
 /// left edge is the area's left corner and its bottom the area's bottom point, and objects
 /// nearer the viewer (by their front cell) draw on top.
+#[cfg(feature = "bevy")]
 pub fn map_sprite(
     asset_server: &AssetServer,
     placed: &Placed,

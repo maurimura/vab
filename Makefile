@@ -14,7 +14,8 @@ WASM_BINDGEN := .tools/wasm-bindgen-$(WASM_BINDGEN_VERSION)/bin/wasm-bindgen
 # wasm-opt comes with the pinned emsdk.
 WASM_OPT := emulator/.cache/emsdk/upstream/bin/wasm-opt
 
-.PHONY: client netplay emulator emulator-remote upload-emulator upload-rom dev deploy preview editor
+.PHONY: client netplay emulator emulator-remote upload-emulator upload-rom dev deploy preview \
+	editor editor-web editor-dev editor-deploy editor-preview pull-map
 
 $(WASM_BINDGEN):
 	cargo install wasm-bindgen-cli --version $(WASM_BINDGEN_VERSION) --root .tools/wasm-bindgen-$(WASM_BINDGEN_VERSION) --locked
@@ -84,6 +85,39 @@ preview: PROFILE = wasm-release
 preview: client netplay
 	cd server && npx wrangler deploy --env preview
 
-# Bar layout editor (desktop dev tool, not deployed). Saves assets/maps/bar.ron.
+# Bar layout editor on the desktop. Saves assets/maps/bar.ron; draw mode writes art/.
 editor:
 	cargo run -p editor
+
+# The editor for the web -> tools/editor/web/pkg/, with the tiles it paints with and the map it
+# starts from (once a map has been saved there, the Worker serves that one instead). Built and
+# gzipped like the client: editor-deploy and editor-preview build wasm-release.
+EDITOR_WEB := tools/editor/web
+editor-web: $(WASM_BINDGEN) $(WASM_OPT)
+	rm -rf $(EDITOR_WEB)/assets && mkdir -p $(EDITOR_WEB)/assets
+	cp -R assets/tiles assets/maps $(EDITOR_WEB)/assets/
+	cargo build -p editor --profile $(PROFILE) --target wasm32-unknown-unknown
+	rm -rf $(EDITOR_WEB)/pkg
+	$(WASM_BINDGEN) --out-dir $(EDITOR_WEB)/pkg --target web \
+		target/wasm32-unknown-unknown/$(PROFILE_DIR)/editor.wasm
+	$(if $(filter wasm-release,$(PROFILE)),$(WASM_OPT) -Oz --output $(EDITOR_WEB)/pkg/editor_bg.opt.wasm $(EDITOR_WEB)/pkg/editor_bg.wasm && mv $(EDITOR_WEB)/pkg/editor_bg.opt.wasm $(EDITOR_WEB)/pkg/editor_bg.wasm,gzip -1 $(EDITOR_WEB)/pkg/editor_bg.wasm)
+	echo "export const gzipped = $(if $(filter wasm-release,$(PROFILE)),false,true);" > $(EDITOR_WEB)/pkg/build.js
+
+# The editor Worker serving tools/editor/web/ at http://localhost:8788, next to `make dev`.
+# They share the local R2 bucket, so a map saved here shows in the local bar.
+editor-dev: editor-web
+	cd server && npx wrangler dev --env editor --port 8788
+
+# https://vab-editor.<account>.workers.dev (merging to main does this too).
+editor-deploy: PROFILE = wasm-release
+editor-deploy: editor-web
+	cd server && npx wrangler deploy --env editor
+
+# https://vab-editor-preview.<account>.workers.dev, saving into the preview site's bucket.
+editor-preview: PROFILE = wasm-release
+editor-preview: editor-web
+	cd server && npx wrangler deploy --env editor-preview
+
+# The map last saved from the web editor, into the repo to commit it.
+pull-map:
+	cd server && npx wrangler r2 object get vab/maps/bar.ron --remote --file ../assets/maps/bar.ron

@@ -1,33 +1,47 @@
 //! Bar layout editor: paint floor tiles and place objects on the isometric grid, then save
-//! to assets/maps/bar.ron. Desktop-only dev tool (`make editor`), not part of the web build.
+//! to assets/maps/bar.ron. A desktop dev tool (`make editor`) that also builds for the web
+//! (`make editor-web`, README: Editor on the web), where it saves to the editor Worker instead
+//! and draw mode is left out.
 //!
-//! The palette lists every PNG in assets/tiles/floor and assets/tiles/objects, and images
-//! reload when their files change, so art edited in draw mode or a pixel-art app shows up
-//! right away.
+//! The palette lists every PNG in assets/tiles/floor and assets/tiles/objects (on the web, as
+//! they were when it was built), and on the desktop images reload when their files change, so
+//! art edited in draw mode or a pixel-art app shows up right away.
 
+#[cfg(not(target_arch = "wasm32"))]
 mod draw;
 mod history;
+#[cfg(not(target_arch = "wasm32"))]
 mod scaffold;
+mod store;
 
-use std::fs;
-
+use bevy::asset::io::AssetReaderError;
+use bevy::asset::{AssetLoadError, AssetMetaCheck, LoadState};
 use bevy::input::gestures::PinchGesture;
 use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass, egui};
+use crossbeam_channel::Receiver;
+#[cfg(not(target_arch = "wasm32"))]
 use draw::Studio;
 use history::History;
+use store::{Saved, tiles_in};
 use world::{
-    Game, Map, MapSprite, Placed, TILE_HEIGHT, TILE_WIDTH, cell_to_world, footprint,
+    Game, Map, MapPlugin, MapSprite, Placed, TILE_HEIGHT, TILE_WIDTH, cell_to_world, footprint,
     games_from_ron, map_sprite, world_to_cell,
 };
 
 /// The repo's assets/ folder (this crate lives in tools/editor).
+#[cfg(not(target_arch = "wasm32"))]
 const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../assets");
+/// The assets the editor Worker serves next to the page (tools/editor/web/assets).
+#[cfg(target_arch = "wasm32")]
+const ASSETS: &str = "assets";
 /// The repo's art/ folder: layer sources and cabinet skins, kept out of the web build.
+#[cfg(not(target_arch = "wasm32"))]
 const ART: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../art");
 const MAP_FILE: &str = "maps/bar.ron";
-const GAMES_FILE: &str = "games.ron";
+/// The games cabinets can run.
+const GAMES: &str = include_str!("../../../assets/games.ron");
 /// Grid lines drawn around the origin, in cells.
 const GRID_RADIUS: i32 = 16;
 /// Largest brush, in cells per side.
@@ -38,46 +52,56 @@ const MAX_ZOOM: f32 = 8.0;
 const PINCH_PER_ZOOM_STEP: f32 = 0.2;
 
 fn main() {
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(AssetPlugin {
-                    file_path: ASSETS.into(),
-                    watch_for_changes_override: Some(true),
-                    ..default()
-                })
-                .set(ImagePlugin::default_nearest())
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Bar editor".into(),
-                        ..default()
-                    }),
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(AssetPlugin {
+                file_path: ASSETS.into(),
+                // On the desktop, images reload when their files change.
+                watch_for_changes_override: Some(cfg!(not(target_arch = "wasm32"))),
+                // The Worker only has the files; don't ask it for a .meta next to each.
+                meta_check: AssetMetaCheck::Never,
+                ..default()
+            })
+            .set(ImagePlugin::default_nearest())
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Bar editor".into(),
+                    // On the web, <canvas id="bevy"> in tools/editor/web/index.html.
+                    canvas: Some("#bevy".into()),
+                    fit_canvas_to_parent: true,
                     ..default()
                 }),
-        )
-        .add_plugins(EguiPlugin::default())
-        .insert_resource(ClearColor(Color::srgb(0.08, 0.08, 0.1)))
-        .init_resource::<Editor>()
-        .init_resource::<Studio>()
-        .init_resource::<Mode>()
-        .add_systems(Startup, setup)
-        .add_systems(
-            Update,
-            (
-                (move_camera, resize_brush, paint, draw_grid, shortcuts)
-                    .run_if(resource_equals(Mode::Map)),
-                redraw_map,
-            ),
-        )
-        .add_systems(EguiPrimaryContextPass, panel)
-        .run();
+                ..default()
+            }),
+    )
+    .add_plugins((EguiPlugin::default(), MapPlugin))
+    .insert_resource(ClearColor(Color::srgb(0.08, 0.08, 0.1)))
+    .init_resource::<Editor>()
+    .init_resource::<Mode>()
+    .add_systems(Startup, setup)
+    .add_systems(
+        Update,
+        (
+            (move_camera, resize_brush, paint, draw_grid, shortcuts)
+                .run_if(resource_equals(Mode::Map)),
+            receive_map,
+            finish_save,
+            redraw_map,
+        ),
+    )
+    .add_systems(EguiPrimaryContextPass, panel);
+    #[cfg(not(target_arch = "wasm32"))]
+    app.init_resource::<Studio>();
+    app.run();
 }
 
-/// Whether the editor shows the map or draws an asset.
+/// Whether the editor shows the map or, on the desktop, draws an asset.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Default)]
 enum Mode {
     #[default]
     Map,
+    #[cfg(not(target_arch = "wasm32"))]
     Draw,
 }
 
@@ -106,6 +130,10 @@ struct Editor {
     history: History<Map>,
     typing_in_panel: bool,
     status: String,
+    /// The map file, until it has loaded (or failed to).
+    loading: Option<Handle<Map>>,
+    /// A save under way; its result arrives here.
+    saving: Option<Receiver<Saved>>,
 }
 
 impl Default for Editor {
@@ -127,49 +155,53 @@ impl Default for Editor {
             history: History::default(),
             typing_in_panel: false,
             status: String::new(),
+            loading: None,
+            saving: None,
         }
     }
 }
 
-/// Tile names ("floor/wood") for the PNGs in assets/tiles/<folder>.
-fn tiles_in(folder: &str) -> Vec<String> {
-    let mut names: Vec<String> = fs::read_dir(format!("{ASSETS}/tiles/{folder}"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            let name = path.file_stem()?.to_string_lossy().into_owned();
-            (path.extension()? == "png").then(|| format!("{folder}/{name}"))
-        })
-        .collect();
-    names.sort();
-    names
-}
-
-fn setup(mut commands: Commands, mut editor: ResMut<Editor>) {
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut editor: ResMut<Editor>) {
     commands.spawn(Camera2d);
     editor.brush = editor.floor_tiles.first().cloned().unwrap_or_default();
-    let games = fs::read_to_string(format!("{ASSETS}/{GAMES_FILE}"))
-        .map_err(|error| error.to_string())
-        .and_then(|text| games_from_ron(&text).map_err(|error| error.to_string()));
-    let games_status = match games {
-        Ok(games) => {
-            editor.games = games;
-            String::new()
-        }
-        Err(error) => format!("\nCould not read {GAMES_FILE}: {error}"),
+    match games_from_ron(GAMES) {
+        Ok(games) => editor.games = games,
+        Err(error) => editor.status = format!("Could not read games.ron: {error}\n"),
+    }
+    editor.loading = Some(asset_server.load(MAP_FILE));
+    editor.status += &format!("Loading {MAP_FILE}");
+}
+
+/// Takes the map once it has loaded: from assets/ on the desktop, from the Worker on the web,
+/// which serves the one last saved there.
+fn receive_map(asset_server: Res<AssetServer>, maps: Res<Assets<Map>>, mut editor: ResMut<Editor>) {
+    let Some(handle) = &editor.loading else {
+        return;
     };
-    editor.status = match fs::read_to_string(format!("{ASSETS}/{MAP_FILE}")) {
-        Ok(text) => match Map::from_ron(&text) {
-            Ok(map) => {
-                editor.map = map;
-                format!("Loaded {MAP_FILE}")
+    if let Some(map) = maps.get(handle) {
+        editor.map = map.clone();
+        editor.map_changed = true;
+        editor.status = format!("Loaded {MAP_FILE}");
+    } else if let LoadState::Failed(error) = asset_server.load_state(handle) {
+        editor.status = match *error {
+            AssetLoadError::AssetReaderError(AssetReaderError::NotFound(_)) => {
+                format!("New map; saves to {MAP_FILE}")
             }
-            Err(error) => format!("Could not read {MAP_FILE}: {error}"),
-        },
-        Err(_) => format!("New map; saves to {MAP_FILE}"),
-    } + &games_status;
+            _ => format!("Could not read {MAP_FILE}: {error}"),
+        };
+    } else {
+        return;
+    }
+    editor.loading = None;
+}
+
+/// Shows how the save under way went, once it has.
+fn finish_save(mut editor: ResMut<Editor>) {
+    let Some(result) = editor.saving.as_ref().and_then(|done| done.try_recv().ok()) else {
+        return;
+    };
+    editor.status = result.unwrap_or_else(|error| error);
+    editor.saving = None;
 }
 
 /// Arrows/WASD or scrolling pan; + and - or a trackpad pinch zoom in whole steps so pixels
@@ -279,11 +311,13 @@ fn paint(
         editor.stroke_start = (!editor.pointer_over_panel).then(|| editor.map.clone());
     }
     let Some(center) = editor.hovered else { return };
-    if editor.pointer_over_panel || editor.stroke_start.is_none() {
+    if editor.pointer_over_panel || editor.stroke_start.is_none() || editor.loading.is_some() {
         return;
     }
 
-    if buttons.pressed(MouseButton::Left) && !editor.brush.is_empty() {
+    // A click over in one frame is pressed and released before this runs: paint on the press too.
+    let held = |button| buttons.pressed(button) || buttons.just_pressed(button);
+    if held(MouseButton::Left) && !editor.brush.is_empty() {
         let is_object = editor.brush.starts_with("objects/");
         let game = (is_object && editor.brush.contains("cabinet") && !editor.game.is_empty())
             .then(|| editor.game.clone());
@@ -309,7 +343,7 @@ fn paint(
         }
     }
 
-    if buttons.pressed(MouseButton::Right) {
+    if held(MouseButton::Right) {
         for cell in brush_cells(center, editor.brush_size) {
             let at_cell = |p: &Placed| p.covers(cell);
             for layer in [&mut editor.map.objects, &mut editor.map.floor] {
@@ -405,6 +439,7 @@ fn shortcuts(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>) {
 }
 
 /// Clears a deleted tile from the map, as one undo step, and from the palette.
+#[cfg(not(target_arch = "wasm32"))]
 fn forget_tile(editor: &mut Editor, tile: &str) {
     let before = editor.map.clone();
     editor.map.floor.retain(|placed| placed.tile != tile);
@@ -438,21 +473,22 @@ fn redo(editor: &mut Editor) {
     }
 }
 
+/// Saves the map, unless a save is still under way (`finish_save` shows how it went).
 fn save(editor: &mut Editor) {
-    let path = format!("{ASSETS}/{MAP_FILE}");
-    let result = fs::create_dir_all(format!("{ASSETS}/maps"))
-        .and_then(|()| fs::write(&path, editor.map.to_ron()));
-    editor.status = match result {
-        Ok(()) => format!("Saved {MAP_FILE}"),
-        Err(error) => format!("Could not save: {error}"),
-    };
+    if editor.saving.is_some() || editor.loading.is_some() {
+        return;
+    }
+    let (done, result) = crossbeam_channel::bounded(1);
+    store::save(&editor.map, done);
+    editor.saving = Some(result);
+    editor.status = "Saving...".into();
 }
 
 fn panel(
     mut contexts: EguiContexts,
     mut editor: ResMut<Editor>,
-    mut studio: ResMut<Studio>,
-    mut mode: ResMut<Mode>,
+    #[cfg(not(target_arch = "wasm32"))] mut studio: ResMut<Studio>,
+    #[cfg_attr(target_arch = "wasm32", allow(unused_mut))] mut mode: ResMut<Mode>,
 ) -> Result {
     let ctx = contexts.ctx_mut()?;
     let editor = &mut *editor;
@@ -469,22 +505,29 @@ fn panel(
         .resizable(false)
         .default_size(190.0)
         .show(&mut window_ui, |ui| {
-            ui.horizontal(|ui| {
-                if ui.selectable_label(*mode == Mode::Map, "Map").clicked() && *mode != Mode::Map {
-                    *mode = Mode::Map;
-                    // Pick up assets made in draw mode.
-                    editor.floor_tiles = tiles_in("floor");
-                    editor.object_tiles = tiles_in("objects");
-                }
-                if ui.selectable_label(*mode == Mode::Draw, "Draw").clicked() && *mode != Mode::Draw
-                {
-                    *mode = Mode::Draw;
-                    studio.enter(&editor.brush);
-                }
-            });
-            ui.separator();
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(*mode == Mode::Map, "Map").clicked()
+                        && *mode != Mode::Map
+                    {
+                        *mode = Mode::Map;
+                        // Pick up assets made in draw mode.
+                        editor.floor_tiles = tiles_in("floor");
+                        editor.object_tiles = tiles_in("objects");
+                    }
+                    if ui.selectable_label(*mode == Mode::Draw, "Draw").clicked()
+                        && *mode != Mode::Draw
+                    {
+                        *mode = Mode::Draw;
+                        studio.enter(&editor.brush);
+                    }
+                });
+                ui.separator();
+            }
             match *mode {
                 Mode::Map => map_panel(ui, editor),
+                #[cfg(not(target_arch = "wasm32"))]
                 Mode::Draw => {
                     if let Some(tile) = studio.side_panel(ui, &editor.map) {
                         forget_tile(editor, &tile);
@@ -494,6 +537,7 @@ fn panel(
         })
         .response
         .rect;
+    #[cfg(not(target_arch = "wasm32"))]
     if *mode == Mode::Draw {
         studio.canvas(&mut window_ui);
         studio.shortcuts(ctx);
@@ -561,7 +605,9 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
         ui.label(format!("Cell ({}, {}): {text}", cell.x, cell.y));
     }
     ui.horizontal(|ui| {
-        if ui.button("Save (Cmd+S)").clicked() {
+        let save_button = egui::Button::new("Save (Cmd+S)");
+        let can_save = editor.saving.is_none() && editor.loading.is_none();
+        if ui.add_enabled(can_save, save_button).clicked() {
             save(editor);
         }
         if ui.button("Clear").clicked() {

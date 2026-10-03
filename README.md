@@ -1,14 +1,15 @@
 # Arcade Bar
 
-The page shows the bar from `assets/maps/bar.ron` (made with `make editor`) and a placeholder
-player: arrows or WASD walk, and floor tiles without an object are walkable. Everyone on the page
-is in the same bar room and sees the others walk around (`?room=<name>` opens a separate one).
-E next to a cabinet sits you at it: you start its game, or join the one being played there
-(see [Online play](#online-play)). F watches the game being played there, as does E once every
-seat is taken (see [Watching](#watching)). Esc stands up. Y opens the chat for everyone in the room;
-`/name <name>` there sets the name shown above your head, and a cookie keeps it. The controls
-show on a first visit and with `/help`; when a game starts, a card lists its buttons as the game
-names them (the core reports them, e.g. "Z  Low Punch").
+The page shows the bar from `assets/maps/bar.ron` (made with the editor, see [Dev
+tools](#dev-tools)) and a placeholder player: arrows or WASD walk, and floor tiles without an
+object are walkable. Everyone on the page is in the same bar room and sees the others walk around
+(`?room=<name>` opens a separate one). E next to a cabinet sits you at it: you start its game, or
+join the one being played there (see [Online play](#online-play)). F watches the game being
+played there, as does E once every seat is taken (see [Watching](#watching)). Esc stands up. Y
+opens the chat for everyone in the room; `/name <name>` there sets the name shown above your
+head, and a cookie keeps it. The controls show on a first visit and with `/help`; when a game
+starts, a card lists its buttons as the game names them (the core reports them, e.g. "Z  Low
+Punch").
 
 E next to the pool table plays 8-ball: the table seen from above, the cue following the mouse
 (or a finger) around the cue ball. Holding the button pulls the cue back, further the longer
@@ -33,11 +34,11 @@ as long as its pixel ratio is left at the computer's own (an emulated one gets t
 | `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
 | `billiards/` | Pool physics, without Bevy: deterministic, tested natively (`cargo test -p billiards`) | |
 | `world/` | Map format, isometric grid math, tile drawing (shared by the editor and, later, the client) | |
-| `tools/editor/` | Bar layout editor, desktop only (`make editor`) | `cargo`, `bevy_egui` |
+| `tools/editor/` | Bar layout editor: on the desktop (`make editor`), or on the web behind Cloudflare Access (`make editor-web`, served by the same Worker as `vab-editor`) | `cargo`, `bevy_egui` (+ `wasm-bindgen` → `tools/editor/web/pkg/`) |
 | `assets/` | Tile art (`tiles/`) and maps (`maps/`) | |
 | `web/` | Static assets: `index.html`, the room connection (`room.js`), Bevy's `pkg/`, the emulator worker + libretro frontend in `emulator/` | |
 
-Routes: static files from `web/`, `GET /ws/:room` (WebSocket to that room's Durable Object), `GET /ice` (WebRTC servers), `GET /fbneo/<core>/fbneo.{mjs,wasm}` (FBNeo cores) and `GET /roms/<file>` (ROM sets), both from R2.
+Routes: static files from `web/`, `GET /ws/:room` (WebSocket to that room's Durable Object), `GET /ice` (WebRTC servers), `GET /fbneo/<core>/fbneo.{mjs,wasm}` (FBNeo cores) and `GET /roms/<file>` (ROM sets), both from R2, and `GET /assets/maps/bar.ron` (the bar's map: the one last saved from the web editor, from R2, or the one in `web/`; `PUT` saves it, from the editor Worker only).
 
 ## Setup
 
@@ -65,7 +66,8 @@ included, for size: `make deploy`, `make preview` and CI always build that, and
 
 ## Dev tools
 
-`make editor` opens the bar layout editor, a desktop app that is never part of the web build.
+`make editor` opens the bar layout editor on the desktop; it also runs on the web, see [Editor on
+the web](#editor-on-the-web).
 
 - The palette is every PNG in `assets/tiles/floor/` and `assets/tiles/objects/`. Floor tiles are
   32×16 diamonds drawn centered on their cell. Objects are 32 px wide and any height: the bottom
@@ -78,10 +80,36 @@ included, for size: `make deploy`, `make preview` and CI always build that, and
 - Images reload when their files change, so you can edit art in a pixel-art app with the editor
   open. The current tiles are placeholders.
 
+### Editor on the web
+
+The map part of the editor (not draw mode) also builds for the web, and the Worker serves it as
+a second deployment, `vab-editor`, from `tools/editor/web/` (`[env.editor]` in
+`server/wrangler.toml`). A map saved there goes to R2 (`maps/bar.ron` in the site's bucket) and
+the bar shows it from its next page load, no deploy needed; until the first save, the site shows
+the map built into it. `make pull-map` copies R2's map into `assets/maps/bar.ron` to commit it,
+which also keeps the built-in copy current.
+
+Merging to `main` deploys it; `make editor-dev` runs it at <http://localhost:8788> next to `make
+dev`, sharing its local bucket (built and gzipped like the client, `wasm-dev` unless told
+otherwise), and `make editor-preview` deploys it as `vab-editor-preview`, saving into the
+preview site's bucket. It must only be reachable by people you let in, so once
+it is deployed, put Cloudflare Access in front of it (the site stays public: the toggle is per
+Worker; the preview editor gets its own):
+
+1. Dashboard → Workers & Pages → `vab-editor` → Settings → Domains & Routes → `workers.dev` →
+   Enable Cloudflare Access. Edit the policy it makes to the emails allowed in (or a login
+   method, under Zero Trust → Access → Applications).
+2. In `server/wrangler.toml`, under `[env.editor.vars]`, set `ACCESS_TEAM` to the team name
+   (Zero Trust → Settings: `<team>.cloudflareaccess.com`) and `ACCESS_AUD` to the application's
+   audience tag (its overview page), and deploy again. The Worker checks the token Access signs
+   onto each request against them before it saves, and refuses to save until they are set.
+
 ## Deploy
 
 Merging to `main` deploys the site (`.github/workflows/ci.yml`): the Worker, its Room Durable
-Object and everything in `web/`. Pull requests get the same build and checks without deploying.
+Object and everything in `web/`, and the same Worker again as `vab-editor` with the web editor
+([Editor on the web](#editor-on-the-web)). Pull requests get the same build and checks without
+deploying.
 The workflow needs two repository secrets: `CLOUDFLARE_API_TOKEN` (a token made from the "Edit
 Cloudflare Workers" template) and `CLOUDFLARE_ACCOUNT_ID`.
 
@@ -92,6 +120,7 @@ cd server && npx wrangler r2 bucket create vab && cd ..   # once
 make emulator-remote                                      # cores
 make upload-rom R2_TARGET=--remote ROM=$HOME/Downloads/mk2.zip   # each ROM, BIOS and .state
 make deploy                                               # or merge to main
+make editor-deploy                                        # the web editor, likewise
 ```
 
 A preview Worker, `vab-preview`, runs the same site with its own rooms and its own R2 bucket, for
@@ -102,6 +131,7 @@ cd server && npx wrangler r2 bucket create vab-preview && cd ..   # once
 make emulator-remote R2_BUCKET=vab-preview
 make upload-rom R2_TARGET=--remote R2_BUCKET=vab-preview ROM=$HOME/Downloads/mk2.zip   # each
 make preview    # https://vab-preview.<account>.workers.dev
+make editor-preview   # the editor for it, https://vab-editor-preview.<account>.workers.dev
 ```
 
 TURN (optional, per Worker): create a TURN key in the Cloudflare dashboard (Realtime → TURN
@@ -173,6 +203,7 @@ Players download each file once (compressed sizes; Workers static assets cap fil
 | File | Raw | gzip |
 | --- | --- | --- |
 | Bevy client (lean features, logs below `warn` compiled out, `wasm-opt -Oz`) | ~13.8 MiB | ~4.6 MB |
+| Bar editor on the web (Bevy's `2d` profile + egui, `wasm-opt -Oz`; only editors load it) | ~19.9 MiB | ~6.8 MB |
 | One FBNeo core (neogeo, midway, snowbros, capcom, konami, classics) | ~5–6 MiB | ~3–3.3 MB |
 
 A cabinet loads only its system's core. To add a system, add a line to `CORES` in

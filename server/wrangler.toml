@@ -6,9 +6,12 @@ compatibility_date = "2026-09-26"
 command = "cargo install -q \"worker-build@^0.8\" && worker-build --release"
 
 # index.html and Bevy's wasm-bindgen output (pkg/) are served as static files. Requests
-# with no matching file, like /ws/<room> and /fbneo/*, run the Worker.
+# with no matching file, like /ws/<room> and /fbneo/*, run the Worker. So does the map, which
+# the Worker takes from R2 when the editor has saved one, and from these files otherwise.
 [assets]
 directory = "../web"
+binding = "ASSETS"
+run_worker_first = ["/assets/maps/*"]
 
 # Files over the 25 MiB static asset limit: the FBNeo core now, ROMs later.
 [[r2_buckets]]
@@ -38,5 +41,60 @@ bucket_name = "vab-preview"
 bindings = [{ name = "ROOM", class_name = "Room" }]
 
 [[env.preview.migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+# The bar editor on the web: the same Worker serving the editor's files (make editor-web)
+# instead of the site's, sharing the site's bucket, deployed by CI as
+# https://vab-editor.<account>.workers.dev. Only people let in by Cloudflare Access should
+# reach it (README, Editor on the web): turn Access on for this Worker in the dashboard, then
+# put the team name and the Access application's audience tag here, or saves are refused.
+[env.editor]
+name = "vab-editor"
+
+[env.editor.assets]
+directory = "../tools/editor/web"
+binding = "ASSETS"
+run_worker_first = ["/assets/maps/*"]
+
+[env.editor.vars]
+# Zero Trust → Settings → Custom Pages: the team name in <team>.cloudflareaccess.com.
+ACCESS_TEAM = ""
+# Zero Trust → Access → Applications → vab-editor → Overview: Application Audience (AUD) Tag.
+ACCESS_AUD = ""
+
+[[env.editor.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "vab"
+
+[env.editor.durable_objects]
+bindings = [{ name = "ROOM", class_name = "Room" }]
+
+[[env.editor.migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"]
+
+# The editor for the preview site: saves into the preview bucket, so vab-preview shows them.
+# make editor-preview deploys it; Access goes in front of it the same way.
+[env.editor-preview]
+name = "vab-editor-preview"
+
+[env.editor-preview.assets]
+directory = "../tools/editor/web"
+binding = "ASSETS"
+run_worker_first = ["/assets/maps/*"]
+
+[env.editor-preview.vars]
+ACCESS_TEAM = ""
+ACCESS_AUD = ""
+
+[[env.editor-preview.r2_buckets]]
+binding = "BUCKET"
+bucket_name = "vab-preview"
+
+[env.editor-preview.durable_objects]
+bindings = [{ name = "ROOM", class_name = "Room" }]
+
+[[env.editor-preview.migrations]]
 tag = "v1"
 new_sqlite_classes = ["Room"]

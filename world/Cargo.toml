@@ -3,8 +3,16 @@ name = "world"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["bevy"]
+# Drawing a map and loading one as an asset. Off, the crate is the map format and the grid
+# math, for the Worker to check a map before it stores it.
+bevy = ["dep:bevy"]
+
 [dependencies]
 # Only what drawing a map needs, so crates using it keep their own lean feature lists.
-bevy = { version = "0.19.1", default-features = false, features = ["bevy_asset", "bevy_image", "bevy_sprite", "png"] }
+bevy = { version = "0.19.1", default-features = false, features = ["bevy_asset", "bevy_image", "bevy_sprite", "png"], optional = true }
+# The vector math Bevy uses, the same version, so the grid math works without Bevy too.
+glam = "0.32"
 ron = "0.12"
 serde = { version = "1", features = ["derive"] }
