@@ -1,17 +1,22 @@
 //! The room's chat: Y opens a line to type in, Enter sends it to everyone in the bar room and
 //! Esc closes it. The latest messages show in the bottom-left corner for a while (all of them
 //! while typing). `/name <name>` sets the name shown above your head and next to what you say;
-//! the page keeps it in a cookie (web/index.html).
+//! the page keeps it in a cookie (web/index.html). `/help` shows the controls, and `/settings`
+//! what can be tuned (settings.rs). On a touch screen the line is typed in the
+//! page instead, with the phone's keyboard, and comes in through `chat_typed`.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
 
+use bevy::ecs::system::SystemParam;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::{ButtonState, InputSystems};
 use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
 
 use crate::help::{Help, ShowHelp};
+use crate::settings::ShowSettings;
+use crate::touch::Touch;
 
 /// Lines kept and shown.
 const LINES: usize = 8;
@@ -23,6 +28,13 @@ const MAX_NAME: usize = 20;
 
 thread_local! {
     static SAID: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    static TYPED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Called by index.html with a line typed in the page's own chat box (touch screens).
+#[wasm_bindgen]
+pub fn chat_typed(text: String) {
+    TYPED.with_borrow_mut(|typed| typed.push(text));
 }
 
 /// Called by index.html with each message said in the room, ours included once the room has it.
@@ -79,8 +91,9 @@ impl Chat {
         }
     }
 
-    /// Sends what was typed: a message, or a command. True for /help.
-    fn send(&mut self, now: f32) -> bool {
+    /// Sends what was typed: a message, or a command. Opens the panel /help or /settings asks
+    /// for.
+    fn send(&mut self, now: f32, panels: &mut Panels) {
         let typed = std::mem::take(&mut self.typing);
         let line = typed.trim();
         let command = line
@@ -97,7 +110,12 @@ impl Chat {
                 }
             }
             None => {}
-            Some("/help") => return true,
+            Some("/help") => {
+                panels.help.write(ShowHelp);
+            }
+            Some("/settings") => {
+                panels.settings.write(ShowSettings);
+            }
             Some("/name") => {
                 let name = line["/name".len()..]
                     .split_whitespace()
@@ -112,19 +130,27 @@ impl Chat {
                 }
             }
             Some(_) => self.add(
-                "* Commands: /name Mauri sets your name, /help shows the controls".into(),
+                "* Commands: /name Mauri sets your name, /help shows the controls, /settings \
+                 tunes the games"
+                    .into(),
                 now,
             ),
         }
-        false
     }
+}
+
+/// The panels a chat command can open.
+#[derive(SystemParam)]
+pub struct Panels<'w> {
+    help: MessageWriter<'w, ShowHelp>,
+    settings: MessageWriter<'w, ShowSettings>,
 }
 
 pub fn type_in_chat(
     mut keyboard: MessageReader<KeyboardInput>,
     mut keys: ResMut<ButtonInput<KeyCode>>,
     mut chat: ResMut<Chat>,
-    mut help: MessageWriter<ShowHelp>,
+    mut panels: Panels,
     help_panel: Res<Help>,
     time: Res<Time>,
 ) {
@@ -143,9 +169,7 @@ pub fn type_in_chat(
         }
         match key.key_code {
             KeyCode::Enter | KeyCode::NumpadEnter => {
-                if chat.send(time.elapsed_secs()) {
-                    help.write(ShowHelp);
-                }
+                chat.send(time.elapsed_secs(), &mut panels);
                 chat.open = false;
             }
             KeyCode::Escape => {
@@ -230,11 +254,17 @@ fn spawn_chat(mut commands: Commands) {
 
 fn show_chat(
     mut chat: ResMut<Chat>,
+    touch: Res<Touch>,
     time: Res<Time>,
+    mut panels: Panels,
     mut log: Log,
-    mut line: Single<(&mut Text, &mut TextColor), With<ChatLine>>,
+    mut line: Single<(&mut Text, &mut TextColor, &mut Visibility), With<ChatLine>>,
 ) {
     let now = time.elapsed_secs();
+    for typed in TYPED.take() {
+        chat.typing = typed.chars().take(MAX_MESSAGE).collect();
+        chat.send(now, &mut panels);
+    }
     for said in SAID.take() {
         chat.add(said, now);
     }
@@ -265,9 +295,15 @@ fn show_chat(
     } else {
         (format!("> {}_", chat.typing), 1.0)
     };
-    let (line_text, line_color) = &mut *line;
+    let (line_text, line_color, line_visibility) = &mut *line;
     if line_text.0 != typed {
         line_text.0 = typed;
         line_color.0 = Color::srgba(1.0, 1.0, 1.0, typed_color);
     }
+    // A touch screen has no Y to tell of: the page's Chat button is there.
+    line_visibility.set_if_neq(if touch.is_on() && !chat.open {
+        Visibility::Hidden
+    } else {
+        Visibility::Inherited
+    });
 }

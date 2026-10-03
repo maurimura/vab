@@ -2,17 +2,23 @@
 //! editor (tools/editor), the game client and, as the map format alone (no `bevy` feature),
 //! the Worker that stores the map.
 
+use std::sync::OnceLock;
+
 #[cfg(feature = "bevy")]
 use bevy::asset::{AssetLoader, AsyncReadExt, LoadContext, io::Reader};
 #[cfg(feature = "bevy")]
 use bevy::prelude::*;
 #[cfg(feature = "bevy")]
 use bevy::sprite::Anchor;
+use glam::{IVec2, Vec2};
 use serde::{Deserialize, Serialize};
 
 /// Cells are 2:1 isometric diamonds.
 pub const TILE_WIDTH: f32 = 32.0;
 pub const TILE_HEIGHT: f32 = 16.0;
+
+/// Objects that cover more than one cell, built in like the game list.
+const OBJECTS: &str = include_str!("../../assets/objects.ron");
 
 /// Everything placed on the grid. Tile names are PNG paths under assets/tiles/ without the
 /// extension, e.g. "floor/wood" or "objects/cabinet".
@@ -33,6 +39,47 @@ pub struct Placed {
     /// The ROM set a cabinet runs, e.g. "mk2".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub game: Option<String>,
+}
+
+impl Placed {
+    /// Every cell it covers: its own, and more along +x and +y for an object in
+    /// assets/objects.ron.
+    pub fn cells(&self) -> impl Iterator<Item = IVec2> + use<> {
+        let (x, y, size) = (self.x, self.y, footprint(&self.tile));
+        (0..size.x).flat_map(move |dx| (0..size.y).map(move |dy| IVec2::new(x + dx, y + dy)))
+    }
+
+    pub fn covers(&self, cell: IVec2) -> bool {
+        let size = footprint(&self.tile);
+        let offset = cell - IVec2::new(self.x, self.y);
+        offset.cmpge(IVec2::ZERO).all() && offset.cmplt(size).all()
+    }
+
+    /// The middle of the area it covers, in world pixels.
+    pub fn center(&self) -> Vec2 {
+        let size = footprint(&self.tile);
+        let front = IVec2::new(self.x, self.y) + size - IVec2::ONE;
+        (cell_to_world(self.x, self.y) + cell_to_world(front.x, front.y)) / 2.0
+    }
+}
+
+#[derive(Deserialize)]
+struct Object {
+    tile: String,
+    size: (i32, i32),
+}
+
+/// How many cells a tile covers along +x and +y: one by one unless assets/objects.ron says
+/// otherwise.
+pub fn footprint(tile: &str) -> IVec2 {
+    static OBJECT_SIZES: OnceLock<Vec<Object>> = OnceLock::new();
+    OBJECT_SIZES
+        .get_or_init(|| ron::from_str(OBJECTS).expect("assets/objects.ron is a valid list"))
+        .iter()
+        .find(|object| object.tile == tile)
+        .map_or(IVec2::ONE, |object| {
+            IVec2::new(object.size.0, object.size.1)
+        })
 }
 
 /// A game a cabinet can run, from assets/games.ron.
@@ -113,7 +160,6 @@ impl AssetLoader for MapLoader {
 }
 
 /// Center of a cell's diamond. +x runs down-right on screen, +y down-left.
-#[cfg(feature = "bevy")]
 pub fn cell_to_world(x: i32, y: i32) -> Vec2 {
     Vec2::new(
         (x - y) as f32 * TILE_WIDTH / 2.0,
@@ -122,7 +168,6 @@ pub fn cell_to_world(x: i32, y: i32) -> Vec2 {
 }
 
 /// The cell whose diamond contains a world position.
-#[cfg(feature = "bevy")]
 pub fn world_to_cell(position: Vec2) -> IVec2 {
     let across = position.x / (TILE_WIDTH / 2.0);
     let down = -position.y / (TILE_HEIGHT / 2.0);
@@ -139,24 +184,29 @@ pub struct MapSprite;
 
 /// The sprite for a placed floor tile or object.
 ///
-/// Floor tiles are centered on their cell. Objects stand on it: the bottom point of the image
-/// is the bottom point of the cell's diamond, and cells nearer the viewer draw on top.
+/// Floor tiles are centered on their cell. Objects stand on the cells they cover: the image's
+/// left edge is the area's left corner and its bottom the area's bottom point, and objects
+/// nearer the viewer (by their front cell) draw on top.
 #[cfg(feature = "bevy")]
 pub fn map_sprite(
     asset_server: &AssetServer,
     placed: &Placed,
     object: bool,
 ) -> (MapSprite, Sprite, Anchor, Transform) {
-    let center = cell_to_world(placed.x, placed.y);
-    let depth = (placed.x + placed.y) as f32 * 0.001;
     let image = asset_server.load(format!("tiles/{}.png", placed.tile));
     let (anchor, position) = if object {
-        (
-            Anchor::BOTTOM_CENTER,
-            center.extend(1.0 + depth) - Vec3::Y * TILE_HEIGHT / 2.0,
-        )
+        let size = footprint(&placed.tile);
+        let front = IVec2::new(placed.x, placed.y) + size - IVec2::ONE;
+        let depth = (front.x + front.y) as f32 * 0.001;
+        let left = cell_to_world(placed.x, front.y).x - TILE_WIDTH / 2.0;
+        let bottom = cell_to_world(front.x, front.y).y - TILE_HEIGHT / 2.0;
+        (Anchor::BOTTOM_LEFT, Vec3::new(left, bottom, 1.0 + depth))
     } else {
-        (Anchor::CENTER, center.extend(depth))
+        let depth = (placed.x + placed.y) as f32 * 0.001;
+        (
+            Anchor::CENTER,
+            cell_to_world(placed.x, placed.y).extend(depth),
+        )
     };
     (
         MapSprite,
@@ -170,7 +220,6 @@ pub fn map_sprite(
 mod tests {
     use super::*;
 
-    #[cfg(feature = "bevy")]
     #[test]
     fn world_positions_map_back_to_their_cell() {
         for (x, y) in [(0, 0), (3, -2), (-5, 7)] {
@@ -201,6 +250,28 @@ mod tests {
                 .bios
                 .is_none()
         );
+    }
+
+    #[test]
+    fn objects_cover_their_footprint() {
+        let table = Placed {
+            x: 3,
+            y: -1,
+            tile: "objects/pool_table".into(),
+            game: None,
+        };
+        assert_eq!(footprint("objects/pool_table"), IVec2::new(2, 1));
+        assert_eq!(
+            table.cells().collect::<Vec<_>>(),
+            [IVec2::new(3, -1), IVec2::new(4, -1)]
+        );
+        assert!(table.covers(IVec2::new(4, -1)));
+        assert!(!table.covers(IVec2::new(3, 0)));
+        let counter = Placed {
+            tile: "objects/counter".into(),
+            ..table
+        };
+        assert_eq!(counter.cells().collect::<Vec<_>>(), [IVec2::new(3, -1)]);
     }
 
     #[test]

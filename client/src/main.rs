@@ -3,7 +3,10 @@ mod chat;
 mod emulator;
 mod help;
 mod player;
+mod pool;
 mod room;
+mod settings;
+mod touch;
 
 use bevy::asset::AssetId;
 use bevy::asset::AssetMetaCheck;
@@ -13,7 +16,10 @@ use chat::ChatPlugin;
 use emulator::EmulatorPlugin;
 use help::HelpPlugin;
 use player::{PlayerPlugin, Walkable, spawn_player};
+use pool::{PoolPlugin, PoolTables};
 use room::RoomPlugin;
+use settings::SettingsPlugin;
+use touch::TouchPlugin;
 use world::{Map, MapPlugin, map_sprite};
 
 /// All text is in Fira Mono cut down to Latin-1, so names and chat can have accents and ñ
@@ -49,7 +55,10 @@ fn main() {
         ChatPlugin,
         EmulatorPlugin,
         HelpPlugin,
+        PoolPlugin,
         RoomPlugin,
+        SettingsPlugin,
+        TouchPlugin,
     ))
     .init_state::<Mode>()
     .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.08)))
@@ -63,13 +72,14 @@ fn main() {
     app.run();
 }
 
-/// Waiting for the bar's map, walking around the bar, or playing a cabinet's game.
+/// Waiting for the bar's map, walking around the bar, playing a cabinet's game, or playing pool.
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Mode {
     #[default]
     Loading,
     Walking,
     Playing,
+    Pool,
 }
 
 /// The bar's map, made with the editor, while it loads.
@@ -104,6 +114,7 @@ fn build_bar(
     spawn_player(&mut commands, &asset_server, &walkable);
     commands.insert_resource(walkable);
     commands.insert_resource(Cabinets::from_map(map));
+    commands.insert_resource(PoolTables::from_map(map));
     commands.remove_resource::<LoadingMap>();
     mode.set(Mode::Walking);
 }

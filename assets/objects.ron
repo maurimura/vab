@@ -1,0 +1,7 @@
+// Objects that cover more than one cell. `size` is how many cells along +x (down-right on
+// screen), then +y (down-left), from the cell they're placed on. Their image is
+// (x + y) * 16 pixels wide, and the bottom point of the area they cover is its bottom row.
+// Objects not listed cover one cell.
+[
+    (tile: "objects/pool_table", size: (2, 1)),
+]

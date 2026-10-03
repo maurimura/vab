@@ -23,8 +23,18 @@
     <canvas id="bevy"></canvas>
     <script type="module">
       import init from "./pkg/editor.js";
+      // Whether the editor was built gzipped (any build but wasm-release: see the Makefile).
+      import { gzipped } from "./pkg/build.js";
 
-      await init().catch((error) => {
+      // A gzipped editor is unpacked as it downloads.
+      const gunzipped = () =>
+        fetch("./pkg/editor_bg.wasm.gz").then(
+          (response) =>
+            new Response(response.body.pipeThrough(new DecompressionStream("gzip")), {
+              headers: { "content-type": "application/wasm" },
+            }),
+        );
+      await init(gzipped ? { module_or_path: gunzipped() } : undefined).catch((error) => {
         // winit ends its web event loop by throwing this on purpose.
         if (!error.message.startsWith("Using exceptions for control flow")) {
           throw error;

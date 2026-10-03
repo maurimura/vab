@@ -1,5 +1,6 @@
-//! A placeholder player that walks the bar with the arrow keys or WASD. It can stand on
-//! floor tiles without an object, and slides along whatever blocks it.
+//! A placeholder player that walks the bar with the arrow keys or WASD, or a thumb dragged on
+//! a touch screen (touch.rs). It can stand on floor tiles without an object, and slides along
+//! whatever blocks it.
 
 use std::collections::HashSet;
 
@@ -11,23 +12,28 @@ use crate::Mode;
 use crate::chat::chat_closed;
 use crate::help::help_closed;
 use crate::room;
+use crate::settings::settings_closed;
+use crate::touch::Touch;
 
 /// Walking speed in world pixels per second.
 const SPEED: f32 = 64.0;
 /// Roughly how many world pixels tall the view is; the zoom is the whole number closest to it.
 const VIEW_HEIGHT: f32 = 270.0;
+/// In a window much taller than wide (a phone held upright), how many it is wide instead.
+const VIEW_WIDTH: f32 = 240.0;
 
 pub struct PlayerPlugin;
 
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.insert_resource(Zoom(1.0)).add_systems(
             Update,
             (
                 walk.run_if(
                     in_state(Mode::Walking)
                         .and_then(chat_closed)
-                        .and_then(help_closed),
+                        .and_then(help_closed)
+                        .and_then(settings_closed),
                 ),
                 follow,
             )
@@ -42,7 +48,7 @@ pub struct Walkable(HashSet<IVec2>);
 
 impl Walkable {
     pub fn from_map(map: &Map) -> Self {
-        let blocked: HashSet<IVec2> = map.objects.iter().map(|p| IVec2::new(p.x, p.y)).collect();
+        let blocked: HashSet<IVec2> = map.objects.iter().flat_map(|p| p.cells()).collect();
         Self(
             map.floor
                 .iter()
@@ -67,6 +73,11 @@ impl Walkable {
     }
 }
 
+/// How many of the screen's own pixels a world pixel takes up: a whole number, set from the
+/// window's size.
+#[derive(Resource)]
+pub struct Zoom(pub f32);
+
 #[derive(Component)]
 pub struct Player {
     /// Where the player's feet are, in world pixels.
@@ -83,15 +94,16 @@ pub fn spawn_player(commands: &mut Commands, asset_server: &AssetServer, walkabl
         Player { feet },
         Sprite::from_image(asset_server.load("characters/player.png")),
         Anchor::BOTTOM_CENTER,
-        Transform::from_translation(translation(feet)),
+        Transform::from_translation(translation(feet, 1.0)),
     ));
 }
 
 fn walk(
     keys: Res<ButtonInput<KeyCode>>,
+    touch: Res<Touch>,
     time: Res<Time>,
     walkable: Res<Walkable>,
-    mut players: Query<(&mut Player, &mut Transform, &mut Sprite)>,
+    mut players: Query<(&mut Player, &mut Sprite)>,
 ) {
     let mut direction = Vec2::ZERO;
     for (key_a, key_b, towards) in [
@@ -104,13 +116,15 @@ fn walk(
             direction += towards;
         }
     }
+    // A thumb walks the way it points on the screen, which the halving below would flatten.
+    direction += touch.stick() * Vec2::new(1.0, 2.0);
     if direction == Vec2::ZERO {
         return;
     }
     // Up and down at half speed, so walking looks even on the 2:1 isometric floor.
     let step = direction.normalize() * Vec2::new(1.0, 0.5) * SPEED * time.delta_secs();
 
-    for (mut player, mut transform, mut sprite) in &mut players {
+    for (mut player, mut sprite) in &mut players {
         // The whole step if it's free, otherwise slide along whichever axis is.
         for attempt in [step, Vec2::new(step.x, 0.0), Vec2::new(0.0, step.y)] {
             if attempt != Vec2::ZERO && walkable.allows(player.feet + attempt) {
@@ -121,29 +135,44 @@ fn walk(
         if step.x != 0.0 {
             sprite.flip_x = step.x < 0.0;
         }
-        transform.translation = translation(player.feet);
         room::room_move(player.feet.x, player.feet.y, sprite.flip_x);
     }
 }
 
-/// Snapped to whole pixels, with the same depth rule as map objects (lower on screen draws
-/// on top), nudged ahead of objects on the same row.
-pub fn translation(feet: Vec2) -> Vec3 {
+/// Snapped to whole screen pixels, with the same depth rule as map objects (lower on screen
+/// draws on top), nudged ahead of objects on the same row. Snapping to screen pixels rather
+/// than world pixels keeps diagonal walking smooth: x and y cross world pixels on different
+/// frames, which shakes the view by a whole world pixel at a time.
+pub fn translation(feet: Vec2, zoom: f32) -> Vec3 {
     let row = -feet.y / (TILE_HEIGHT / 2.0);
-    feet.round().extend(1.0 + row * 0.001 + 0.0005)
+    snap(feet, zoom).extend(1.0 + row * 0.001 + 0.0005)
 }
 
-/// Keeps the player in the middle of the view, at a whole-number zoom so pixels stay square.
+fn snap(position: Vec2, zoom: f32) -> Vec2 {
+    (position * zoom).round() / zoom
+}
+
+/// Keeps the player in the middle of the view, at a whole number of the screen's own pixels to
+/// each of the world's so they stay square (a phone has three or so to a logical one).
 fn follow(
     window: Single<&Window>,
-    player: Single<&Player>,
+    mut zoom: ResMut<Zoom>,
+    player: Single<(&Player, &mut Transform), Without<Camera2d>>,
     camera: Single<(&mut Transform, &mut Projection), With<Camera2d>>,
 ) {
+    let tall = window.physical_height() as f32 / VIEW_HEIGHT;
+    let wide = window.physical_width() as f32 / VIEW_WIDTH;
+    let scale = tall.min(wide).round().max(1.0);
+    if zoom.0 != scale {
+        zoom.0 = scale;
+    }
+    let (player, mut player_transform) = player.into_inner();
+    player_transform.translation = translation(player.feet, scale);
     let (mut transform, mut projection) = camera.into_inner();
-    // Aim at the player's middle rather than their feet.
-    let target = (player.feet + Vec2::Y * TILE_HEIGHT).round();
+    // Aim at the player's middle rather than their feet, snapped the same way so they stay put.
+    let target = snap(player.feet + Vec2::Y * TILE_HEIGHT, scale);
     transform.translation = target.extend(transform.translation.z);
     if let Projection::Orthographic(ortho) = &mut *projection {
-        ortho.scale = 1.0 / (window.height() / VIEW_HEIGHT).round().max(1.0);
+        ortho.scale = window.scale_factor() / scale;
     }
 }

@@ -1,7 +1,11 @@
 # Build pipeline. Outputs land in web/, which the Worker serves as static assets.
 
-PROFILE ?= wasm-release
-PROFILE_DIR := $(if $(filter dev,$(PROFILE)),debug,$(PROFILE))
+# Local builds are wasm-dev: a change rebuilds in seconds (Cargo.toml says why). What players
+# download is wasm-release, small but minutes to build: deploy and preview build it whatever
+# PROFILE says, and so does CI. `make dev PROFILE=wasm-release` tries it locally.
+PROFILE ?= wasm-dev
+# Worked out when used (=, not :=), so deploy's and preview's own PROFILE counts.
+PROFILE_DIR = $(if $(filter dev,$(PROFILE)),debug,$(PROFILE))
 
 # wasm-bindgen-cli must match the wasm-bindgen crate in Cargo.lock, so install it locally, one
 # folder per version: a version bump installs the new one, other Cargo.lock changes don't.
@@ -20,16 +24,17 @@ $(WASM_OPT):
 	./emulator/emsdk.sh
 
 # Bevy client -> web/pkg/ (https://github.com/bevyengine/bevy/tree/latest/examples#wasm),
-# plus its art -> web/assets/.
+# plus its art -> web/assets/. wasm-release is shrunk with wasm-opt. Any other build is too big
+# to serve (Workers static assets take files up to 25 MiB), so it's gzipped instead, and the
+# page unpacks it as it loads: web/pkg/build.js tells it which.
 client: $(WASM_BINDGEN) $(WASM_OPT)
 	rm -rf web/assets && cp -R assets web/assets
 	cargo build -p client --profile $(PROFILE) --target wasm32-unknown-unknown
+	rm -rf web/pkg
 	$(WASM_BINDGEN) --out-dir web/pkg --target web \
 		target/wasm32-unknown-unknown/$(PROFILE_DIR)/client.wasm
-ifeq ($(PROFILE),wasm-release)
-	$(WASM_OPT) -Oz --output web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm
-	mv web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm
-endif
+	$(if $(filter wasm-release,$(PROFILE)),$(WASM_OPT) -Oz --output web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm && mv web/pkg/client_bg.opt.wasm web/pkg/client_bg.wasm,gzip -1 web/pkg/client_bg.wasm)
+	echo "export const gzipped = $(if $(filter wasm-release,$(PROFILE)),false,true);" > web/pkg/build.js
 
 # GGRS rollback for the emulator worker (netplay/src/lib.rs) -> web/netplay/.
 netplay: $(WASM_BINDGEN) $(WASM_OPT)
@@ -70,11 +75,13 @@ upload-emulator:
 dev: client netplay
 	cd server && npx wrangler dev
 
+deploy: PROFILE = wasm-release
 deploy: client netplay
 	cd server && npx wrangler deploy
 
 # The preview Worker (server/wrangler.toml). Its bucket gets cores and ROMs like the main one:
 # make emulator-remote R2_BUCKET=vab-preview, make upload-rom R2_TARGET=--remote R2_BUCKET=vab-preview ...
+preview: PROFILE = wasm-release
 preview: client netplay
 	cd server && npx wrangler deploy --env preview
 
@@ -83,18 +90,18 @@ editor:
 	cargo run -p editor
 
 # The editor for the web -> tools/editor/web/pkg/, with the tiles it paints with and the map it
-# starts from (once a map has been saved there, the Worker serves that one instead).
+# starts from (once a map has been saved there, the Worker serves that one instead). Built and
+# gzipped like the client: editor-deploy and editor-preview build wasm-release.
 EDITOR_WEB := tools/editor/web
 editor-web: $(WASM_BINDGEN) $(WASM_OPT)
 	rm -rf $(EDITOR_WEB)/assets && mkdir -p $(EDITOR_WEB)/assets
 	cp -R assets/tiles assets/maps $(EDITOR_WEB)/assets/
 	cargo build -p editor --profile $(PROFILE) --target wasm32-unknown-unknown
+	rm -rf $(EDITOR_WEB)/pkg
 	$(WASM_BINDGEN) --out-dir $(EDITOR_WEB)/pkg --target web \
 		target/wasm32-unknown-unknown/$(PROFILE_DIR)/editor.wasm
-ifeq ($(PROFILE),wasm-release)
-	$(WASM_OPT) -Oz --output $(EDITOR_WEB)/pkg/editor_bg.opt.wasm $(EDITOR_WEB)/pkg/editor_bg.wasm
-	mv $(EDITOR_WEB)/pkg/editor_bg.opt.wasm $(EDITOR_WEB)/pkg/editor_bg.wasm
-endif
+	$(if $(filter wasm-release,$(PROFILE)),$(WASM_OPT) -Oz --output $(EDITOR_WEB)/pkg/editor_bg.opt.wasm $(EDITOR_WEB)/pkg/editor_bg.wasm && mv $(EDITOR_WEB)/pkg/editor_bg.opt.wasm $(EDITOR_WEB)/pkg/editor_bg.wasm,gzip -1 $(EDITOR_WEB)/pkg/editor_bg.wasm)
+	echo "export const gzipped = $(if $(filter wasm-release,$(PROFILE)),false,true);" > $(EDITOR_WEB)/pkg/build.js
 
 # The editor Worker serving tools/editor/web/ at http://localhost:8788, next to `make dev`.
 # They share the local R2 bucket, so a map saved here shows in the local bar.
@@ -102,10 +109,12 @@ editor-dev: editor-web
 	cd server && npx wrangler dev --env editor --port 8788
 
 # https://vab-editor.<account>.workers.dev (merging to main does this too).
+editor-deploy: PROFILE = wasm-release
 editor-deploy: editor-web
 	cd server && npx wrangler deploy --env editor
 
 # https://vab-editor-preview.<account>.workers.dev, saving into the preview site's bucket.
+editor-preview: PROFILE = wasm-release
 editor-preview: editor-web
 	cd server && npx wrangler deploy --env editor-preview
 
