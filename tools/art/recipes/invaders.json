@@ -1,0 +1,469 @@
+{
+  "version": 1,
+  "skin": "invaders",
+  "rom": "invaders",
+  "title": "SPACE INVADERS / TAITO BLUE UPRIGHT",
+  "variant": "Taito blue upright with alien/moonscape sides, integrated title/bezel and one shared two-way joystick",
+  "renderer": "upright",
+  "shell": "flat-upright",
+  "size": [
+    32,
+    48
+  ],
+  "players": 2,
+  "control_stations": 1,
+  "buttons_per_player": 3,
+  "stations": [
+    10.5
+  ],
+  "buttons": [
+    {
+      "name": "Fire",
+      "position": [
+        11.8,
+        -3.0
+      ],
+      "color": [
+        229,
+        207,
+        88
+      ]
+    },
+    {
+      "name": "1P Start",
+      "position": [
+        11.8,
+        -4.8
+      ],
+      "color": [
+        225,
+        40,
+        34
+      ]
+    },
+    {
+      "name": "2P Start",
+      "position": [
+        11.8,
+        -6.0
+      ],
+      "color": [
+        225,
+        40,
+        34
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      22,
+      31,
+      73
+    ],
+    "side": [
+      22,
+      31,
+      73
+    ],
+    "trim": [
+      66,
+      37,
+      25
+    ],
+    "stick": [
+      233,
+      230,
+      208
+    ],
+    "back": [
+      21,
+      23,
+      28
+    ],
+    "bezel": [
+      12,
+      16,
+      31
+    ],
+    "deck": [
+      22,
+      31,
+      73
+    ]
+  },
+  "preview_note": "32 x 48 px | Taito blue upright with alien/moonscape sides, integrated title/bezel and one shared two-way joystick",
+  "rom_validation": {
+    "fbneo_commit": "aceeebed9e7edc8a28652365a064baee9a16e274",
+    "core": "classics",
+    "required_roms": 4,
+    "matching_required_roms": 4,
+    "matching": "All required files match pinned FBNeo CRC32 and size; existing legacy aliases are accepted.",
+    "optional_absent": [],
+    "zip_sha256": "c751c28224caa85fc3a7a91ed7a1b4a90376418fca57edd7c2af1d9c543fc296",
+    "state_sha256": "9468d1041aae5459550617d165b03cd6b311b04e9750866175e74b1168f1a93a",
+    "core_sha256": "130610ee62d49881f25524b8adf26e693a961c38e6189b07b738c93e8903e16a",
+    "coins": 9,
+    "bios": null
+  },
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/94768",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/invaders.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Photographed blue Taito upright: alien silhouettes, line grids, lunar foreground, white side/title lettering, integrated upright glass/bezel and white joystick, yellow Fire and two red Start buttons. Not the distinct red/yellow Taito America conversion panel.",
+      "rights": "Underlying printed artwork Taito / Midway; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "9e52f0f6e03ad52edeb28c9ab6e5367cefc4b45bdc40e59a111dea4f38bdccee",
+      "download_sha256": "9e52f0f6e03ad52edeb28c9ab6e5367cefc4b45bdc40e59a111dea4f38bdccee",
+      "download_size": [
+        399,
+        750
+      ]
+    },
+    "marquee": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/94768",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/invaders.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Title area rectified from the same documented integrated Taito blue bezel, not an unrelated marquee or the red/yellow American kit.",
+      "rights": "Underlying printed artwork Taito / Midway; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "9e52f0f6e03ad52edeb28c9ab6e5367cefc4b45bdc40e59a111dea4f38bdccee",
+      "download_sha256": "9e52f0f6e03ad52edeb28c9ab6e5367cefc4b45bdc40e59a111dea4f38bdccee",
+      "download_size": [
+        399,
+        750
+      ]
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/86276",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadeflyers168/invaders.png",
+      "kind": "original-print-scan",
+      "purpose": "Original-design promotional print, retained for release/artwork provenance; regional cabinet identity follows the blue Taito photograph rather than silently mixing variants.",
+      "rights": "Underlying printed artwork Taito / Midway; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "20c45806ae25ea40a92f7fe35823893f5a28d13e2c923499c404b3a77e6e6f7b",
+      "download_sha256": "20c45806ae25ea40a92f7fe35823893f5a28d13e2c923499c404b3a77e6e6f7b",
+      "download_size": [
+        850,
+        1100
+      ]
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real 224x260 upright gameplay, from the rebuilt classics core, four matching supplied program ROMs and nine-coin state; Start 15 frames then 300 neutral frames. Core color overlay retained.",
+      "rights": "Game imagery Taito / Midway, captured from user-supplied local ROM only. No ROM downloaded, uploaded or committed; no redistribution license inferred.",
+      "sha256": "3f9785a675ef66daf048755c24b9a3f94e7be977fb1441948477b54674decaf2"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "marquee",
+      "quad": [
+        [
+          49,
+          28
+        ],
+        [
+          280,
+          35
+        ],
+        [
+          279,
+          118
+        ],
+        [
+          52,
+          121
+        ]
+      ],
+      "rectified_size": [
+        160,
+        60
+      ],
+      "size": [
+        16,
+        6
+      ]
+    },
+    "controls": {
+      "source": "cabinet",
+      "quad": [
+        [
+          44,
+          314
+        ],
+        [
+          283,
+          343
+        ],
+        [
+          251,
+          397
+        ],
+        [
+          25,
+          350
+        ]
+      ],
+      "rectified_size": [
+        160,
+        60
+      ],
+      "size": [
+        16,
+        9
+      ]
+    },
+    "bezel": {
+      "source": "cabinet",
+      "quad": [
+        [
+          52,
+          119
+        ],
+        [
+          280,
+          115
+        ],
+        [
+          278,
+          305
+        ],
+        [
+          48,
+          286
+        ]
+      ],
+      "rectified_size": [
+        128,
+        160
+      ],
+      "size": [
+        16,
+        20
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        10,
+        14
+      ],
+      "fit": "contain",
+      "brightness": 3.0,
+      "background": [
+        0,
+        0,
+        0
+      ]
+    },
+    "front": {
+      "source": "cabinet",
+      "quad": [
+        [
+          30,
+          361
+        ],
+        [
+          247,
+          396
+        ],
+        [
+          252,
+          741
+        ],
+        [
+          55,
+          661
+        ]
+      ],
+      "rectified_size": [
+        160,
+        256
+      ],
+      "size": [
+        16,
+        24
+      ]
+    },
+    "left": {
+      "source": "cabinet",
+      "quad": [
+        [
+          299,
+          4
+        ],
+        [
+          398,
+          11
+        ],
+        [
+          390,
+          651
+        ],
+        [
+          259,
+          743
+        ]
+      ],
+      "rectified_size": [
+        160,
+        512
+      ],
+      "size": [
+        18,
+        54
+      ],
+      "mask_polygon": [
+        [
+          299,
+          4
+        ],
+        [
+          398,
+          11
+        ],
+        [
+          393,
+          653
+        ],
+        [
+          256,
+          744
+        ],
+        [
+          252,
+          396
+        ],
+        [
+          282,
+          332
+        ],
+        [
+          282,
+          316
+        ],
+        [
+          291,
+          297
+        ],
+        [
+          297,
+          20
+        ]
+      ],
+      "background": [
+        22,
+        31,
+        73
+      ]
+    },
+    "right": {
+      "source": "cabinet",
+      "quad": [
+        [
+          299,
+          4
+        ],
+        [
+          398,
+          11
+        ],
+        [
+          390,
+          651
+        ],
+        [
+          259,
+          743
+        ]
+      ],
+      "rectified_size": [
+        160,
+        512
+      ],
+      "size": [
+        18,
+        54
+      ],
+      "mask_polygon": [
+        [
+          299,
+          4
+        ],
+        [
+          398,
+          11
+        ],
+        [
+          393,
+          653
+        ],
+        [
+          256,
+          744
+        ],
+        [
+          252,
+          396
+        ],
+        [
+          282,
+          332
+        ],
+        [
+          282,
+          316
+        ],
+        [
+          291,
+          297
+        ],
+        [
+          297,
+          20
+        ]
+      ],
+      "background": [
+        22,
+        31,
+        73
+      ]
+    }
+  },
+  "uncertainties": [
+    "Publisher-hosted artwork masters were not found. Archive photographs/scans are not proof of factory prints or artwork redistribution permission.",
+    "This selected shell/kit interpretation is explicit; ROM, hardware and seat count are not changed to suit artwork. No map placement or uploads included.",
+    "One photographed side is reused on the opposite side with readable lettering; the distinct opposite factory print is unverified and is not invented.",
+    "Space Invaders is sequential two-player play with one shared two-way stick. Three modeled panel buttons are Fire plus the two Start buttons; game actions are not three firing buttons.",
+    "The archive red/yellow Taito America panel is a different conversion variant and was examined but not used; this cabinet retains its photographed blue panel.",
+    "The flat-front tall glass/bezel geometry approximates the photographed Taito shell at sprite scale; it does not simulate an optical reflected-monitor installation.",
+    "Thin alien raster strokes are brightened 3x after aspect-preserving downsampling for native-size legibility; original captured reference remains unchanged.",
+    "The four program ROMs are complete. This FBNeo driver needs a separate invaders audio sample set (1-9.wav and 18.wav), absent from the supplied 5KB program ZIP and local files. It is currently silent; no sound samples or ROMs were downloaded.",
+    "The rebuilt classics core contains the existing replay fixes and changes state size. Refreshed local states for Pac-Man, Atari Tetris and Wonder Boy are staged separately to keep those games compatible; their earlier states are backed up and artwork is unchanged."
+  ],
+  "turns": true,
+  "game_actions": [
+    "Left",
+    "Right",
+    "Fire"
+  ],
+  "audio": {
+    "status": "missing-samples",
+    "sample_set": "invaders",
+    "required_files": [
+      "1.wav",
+      "2.wav",
+      "3.wav",
+      "4.wav",
+      "5.wav",
+      "6.wav",
+      "7.wav",
+      "8.wav",
+      "9.wav",
+      "18.wav"
+    ],
+    "downloaded": false
+  }
+}

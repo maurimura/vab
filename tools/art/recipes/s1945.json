@@ -1,0 +1,317 @@
+{
+  "version": 1,
+  "skin": "s1945",
+  "rom": "s1945",
+  "title": "STRIKERS 1945 / PSIKYO-FABTEK CONVERSION",
+  "variant": "Black conversion upright with original-design Strikers marquee, portrait display and gray Fabtek operator panel",
+  "renderer": "upright",
+  "shell": "upright",
+  "portrait_monitor": true,
+  "size": [
+    32,
+    48
+  ],
+  "players": 2,
+  "control_stations": 2,
+  "buttons_per_player": 4,
+  "stations": [
+    9.7,
+    4.7
+  ],
+  "buttons": [
+    {
+      "name": "Shoot left",
+      "position": [10.6, 2.2],
+      "position_by_station": [[10.6, 2.2], [12.4, 1.5]],
+      "color": [
+        35,
+        132,
+        210
+      ],
+      "color_by_station": [
+        [
+          35,
+          132,
+          210
+        ],
+        [
+          37,
+          208,
+          72
+        ]
+      ]
+    },
+    {
+      "name": "Bomb left",
+      "position": [11.5, 1.5],
+      "position_by_station": [[11.5, 1.5], [12.6, 0.8]],
+      "color": [
+        35,
+        132,
+        210
+      ],
+      "color_by_station": [
+        [
+          35,
+          132,
+          210
+        ],
+        [
+          37,
+          208,
+          72
+        ]
+      ]
+    },
+    {
+      "name": "Shoot right",
+      "position": [12.5, -1.3],
+      "position_by_station": [[12.5, -1.3], [10.6, -1.2]],
+      "color": [
+        35,
+        132,
+        210
+      ],
+      "color_by_station": [
+        [
+          35,
+          132,
+          210
+        ],
+        [
+          37,
+          208,
+          72
+        ]
+      ]
+    },
+    {
+      "name": "Bomb right",
+      "position": [12.6, -2.2],
+      "position_by_station": [[12.6, -2.2], [11.3, -0.95]],
+      "color": [
+        35,
+        132,
+        210
+      ],
+      "color_by_station": [
+        [
+          35,
+          132,
+          210
+        ],
+        [
+          37,
+          208,
+          72
+        ]
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      20,
+      22,
+      28
+    ],
+    "side": [
+      20,
+      22,
+      28
+    ],
+    "trim": [
+      15,
+      17,
+      22
+    ],
+    "stick": [
+      21,
+      24,
+      28
+    ],
+    "bezel": [
+      10,
+      12,
+      18
+    ],
+    "deck": [
+      34,
+      38,
+      45
+    ],
+    "back": [
+      22,
+      24,
+      30
+    ]
+  },
+  "preview_note": "32 x 48 px | Black conversion upright with original-design Strikers marquee, portrait display and gray Fabtek operator panel",
+  "rom_validation": {
+    "fbneo_commit": "aceeebed9e7edc8a28652365a064baee9a16e274",
+    "core": "psikyo",
+    "required_roms": 10,
+    "matching_required_roms": 10,
+    "matching": "All required files match pinned FBNeo CRC32 and size; existing legacy aliases are accepted.",
+    "optional_absent": [
+      "4-u59.bin"
+    ],
+    "zip_sha256": "8f8f78eaade6d0035c9ccf9e1642d6ae63b745dbdbf53dbe42af3175657edb3c",
+    "state_sha256": "5f826bb7acb99a856d4fb032ece35c6e40f516cfc364520d365a06a3c14fbdd3",
+    "core_sha256": "b025aaba7426f378eec5c65ca5ff411781de6ec21473103936bf854598f5e05d",
+    "coins": 9,
+    "bios": null
+  },
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/97310",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=97310&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Low-resolution archive conversion cabinet, black shell and portrait monitor; original-design Strikers 1945 plane marquee. Its red deck differs from the selected gray Fabtek operator panel and is not reused. No unique factory-dedicated cabinet is claimed.",
+      "rights": "Underlying printed artwork Psikyo / Fabtek; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "e07d6d018eff8f1a944806784ddd02939a6dd4d74233d62defc32e46a5b12c2b",
+      "download_sha256": "e07d6d018eff8f1a944806784ddd02939a6dd4d74233d62defc32e46a5b12c2b",
+      "download_size": [
+        158,
+        222
+      ]
+    },
+    "marquee": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/97310",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=97310&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Plane/title marquee rectified from the documented Strikers 1945 conversion photo; not Strikers 1945 II, III or Neo Geo Plus artwork.",
+      "rights": "Underlying printed artwork Psikyo / Fabtek; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "e07d6d018eff8f1a944806784ddd02939a6dd4d74233d62defc32e46a5b12c2b",
+      "download_sha256": "e07d6d018eff8f1a944806784ddd02939a6dd4d74233d62defc32e46a5b12c2b",
+      "download_size": [
+        158,
+        222
+      ]
+    },
+    "controls": {
+      "file": "controls.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/5773",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=5773&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Gray repeated-Fabtek operator panel photograph with two black sticks, duplicated Shoot/Bomb pairs (blue left, green right) and two white Start buttons. All duplicated physical action caps are modeled; Start remains photographed.",
+      "rights": "Underlying printed artwork Psikyo / Fabtek; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "bb463146b44d9da38412841d90c3dc7b74c229eea8f748149e2479461eea170a",
+      "download_sha256": "bb463146b44d9da38412841d90c3dc7b74c229eea8f748149e2479461eea170a",
+      "download_size": [
+        506,
+        238
+      ]
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/87739",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=87739&part=e&download",
+      "kind": "original-print-scan",
+      "purpose": "1995 Psikyo Strikers 1945 promotional print with aircraft art credited to Yoshiyuki Takani, corroborates the first game/plane/title imagery; not fabricated cabinet side art.",
+      "rights": "Underlying printed artwork Psikyo; illustration credited to Yoshiyuki Takani; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "82ce0f2da67df6437ed098e1af91dab6e64411acc1986944bc16a7698289b231",
+      "download_sha256": "82ce0f2da67df6437ed098e1af91dab6e64411acc1986944bc16a7698289b231",
+      "download_size": [
+        1200,
+        848
+      ]
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real 224x320 Stage 1 aircraft gameplay from supplied World ROMs and new Psikyo 68EC020 WASM core: nine-coin state, Start 15 frames, one first-action confirmation, then 600 neutral frames.",
+      "rights": "Game imagery Psikyo, captured from user-supplied local ROM only. No ROM downloaded, uploaded or committed; no redistribution license inferred.",
+      "sha256": "bb5f939ef197b3cc6c400a2fdefb47ca1dc61f98684cfdc62c6fe2dd0b503e82"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "marquee",
+      "quad": [
+        [
+          17,
+          12
+        ],
+        [
+          147,
+          17
+        ],
+        [
+          146,
+          52
+        ],
+        [
+          17,
+          49
+        ]
+      ],
+      "rectified_size": [
+        160,
+        48
+      ],
+      "size": [
+        16,
+        6
+      ]
+    },
+    "controls": {
+      "source": "controls",
+      "quad": [
+        [
+          12,
+          1
+        ],
+        [
+          465,
+          26
+        ],
+        [
+          491,
+          199
+        ],
+        [
+          21,
+          219
+        ]
+      ],
+      "rectified_size": [
+        192,
+        80
+      ],
+      "size": [
+        16,
+        9
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        10,
+        14
+      ],
+      "fit": "contain",
+      "background": [
+        0,
+        0,
+        0
+      ],
+      "brightness": 1.4
+    }
+  },
+  "uncertainties": [
+    "Publisher-hosted artwork masters were not found. Archive photographs/scans are not proof of factory prints or artwork redistribution permission.",
+    "This selected shell/kit interpretation is explicit; ROM, hardware and seat count are not changed to suit artwork. No map placement or uploads included.",
+    "Strikers 1945 is a JAMMA kit. The black conversion shell/marquee and gray Fabtek operator deck are an explicit operator interpretation, not a factory-exclusive cabinet or a silent claim that the photographed red deck is Fabtek gray.",
+    "Plain black sides follow the conversion photo; no unverified character/aircraft side print is invented.",
+    "The photographed panel duplicates the two Shoot/Bomb actions on alternate sides of each joystick; four physical action buttons per station are modeled with measured per-station offsets, two white Start buttons remain photographed. FBNeo also exposes a third optional action descriptor, not an extra invented operator button.",
+    "The selected cabinet/marquee photo is only 158x222; title/aircraft detail is consequently limited, not substituted with another game's art.",
+    "Ten supplied ROMs match. MCU 4-u59.bin is undumped (BRF_NODUMP), its protection is handled by FBNeo; no download or new BIOS is needed. The new per-system Psikyo core must be served alongside the game before browser play."
+  ],
+  "game_actions": [
+    "Shoot / hold to charge",
+    "Bomb"
+  ],
+  "turns": false
+}

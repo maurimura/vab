@@ -1,0 +1,208 @@
+{
+  "version": 1,
+  "skin": "wboy",
+  "rom": "wboy",
+  "title": "WONDER BOY / ONLINE REFERENCES",
+  "variant": "White-sided Sega conversion upright, original-design 1986 landscape marquee and blue single-station operator panel",
+  "renderer": "upright",
+  "shell": "upright",
+  "size": [
+    32,
+    48
+  ],
+  "players": 2,
+  "control_stations": 1,
+  "buttons_per_player": 6,
+  "stations": [
+    8
+  ],
+  "buttons": [
+    {
+      "position": [
+        11,
+        3.2
+      ],
+      "color": [
+        224,
+        42,
+        36
+      ]
+    },
+    {
+      "position": [
+        11,
+        2.1
+      ],
+      "color": [
+        244,
+        107,
+        31
+      ]
+    },
+    {
+      "position": [
+        11,
+        -2.1
+      ],
+      "color": [
+        244,
+        107,
+        31
+      ]
+    },
+    {
+      "position": [
+        11,
+        -3.2
+      ],
+      "color": [
+        224,
+        42,
+        36
+      ]
+    },
+    {
+      "position": [
+        9,
+        1
+      ],
+      "color": [
+        232,
+        230,
+        211
+      ]
+    },
+    {
+      "position": [
+        9,
+        -1
+      ],
+      "color": [
+        232,
+        230,
+        211
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      18,
+      22,
+      27
+    ],
+    "side": [238, 234, 219],
+    "trim": [237, 233, 220],
+    "bezel": [15, 18, 23],
+    "deck": [45, 46, 83],
+    "stick": [
+      226,
+      39,
+      36
+    ]
+  },
+  "preview_note": "Off-white side panels and edging from the supplied photo; black front/bezel and blue operator deck",
+  "sources": {
+    "white_cabinet": {
+      "file": "white-cabinet.png",
+      "kind": "user-supplied-reference",
+      "purpose": "Supplied cabinet photo guides plain off-white side panels/edging while retaining the black front/bezel and existing original-design marquee/blue control overlay.",
+      "supplied_filename": "clipboard-2026-10-04-151842-30228607.png",
+      "rights": "User-supplied photo; photographer and original-versus-restored cabinet status unknown. Underlying Sega/Escape artwork rights retained; no redistribution permission inferred.",
+      "sha256": "868eae0bfaf5b8bf2ac8c2f0a001442761bffcbcf3ca5aaae7a1b32c68d82923"
+    },
+    "marquee": {
+      "file": "marquee.jpg",
+      "kind": "original-art-scan",
+      "purpose": "Original-design operator marquee; corroborated by game branding/printed credits, not independently authenticated by publisher.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/12754",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=12754&part=e&download",
+      "rights": "Underlying original-design artwork Sega/Escape; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "812fdb8b29a3d0b1687661cfc520f5aa41ff8b1b865acaf1b2522633f949d88b",
+      "download_sha256": "0320cda66b942fbf08d5c2a91f94c260599570288295f10f05f9ec3654734d58",
+      "processing": "Working reference reduced with Pillow BOX to at most 2048px; downloaded size [3200, 9602], stored size [683, 2048]."
+    },
+    "controls": {
+      "file": "controls.png",
+      "kind": "original-cabinet-photo",
+      "purpose": "Photographed original-design operator control panel; informs placement/colors and carries the actual printed instructions.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=wboy",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/wboy.png",
+      "rights": "Underlying original-design artwork Sega/Escape; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "3d035492aec4fff55353595688e7b0c0998e1e367f3d39b06be29ec4342207fb"
+    },
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Archive cabinet/restoration reference for geometry; unverified replacement prints are not silently treated as original masters.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=wboy",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/wboy.png",
+      "rights": "Underlying original-design artwork Sega/Escape; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "c66b36c2f75583f22b6b7f73dfd7030e7bc064cf7105c0d6e77df3554ec9aba3"
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real display captured with tools/art/capture_screen.mjs from an existing user-supplied local ROM and matching local startup state; Start 15 frames then 600 neutral frames. No ROM fetched or committed.",
+      "rights": "Game imagery Sega/Escape, captured from user-supplied local game; no redistribution license inferred.",
+      "sha256": "852380a6ee2cac62751e1d2bc3191637a36d989bf7cce751aa66176cd8269c63"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "marquee",
+      "size": [
+        16,
+        6
+      ],
+      "crop": [
+        0,
+        55,
+        680,
+        2020
+      ],
+      "quarter_turns": 1
+    },
+    "controls": {
+      "source": "controls",
+      "quad": [
+        [
+          48,
+          15
+        ],
+        [
+          688,
+          15
+        ],
+        [
+          737,
+          278
+        ],
+        [
+          15,
+          283
+        ]
+      ],
+      "rectified_size": [
+        160,
+        60
+      ],
+      "size": [
+        16,
+        9
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        12,
+        12
+      ]
+    }
+  },
+  "uncertainties": [
+    "Publisher-hosted masters were not found; archive scans/photos retain underlying rights and are not deployment permission.",
+    "Only the requested game runs at this skin; artwork does not change ROM/core or seat count.",
+    "Plain off-white sides and edging follow the supplied conversion cabinet. Its exact manufacturer/region and opposite-side condition are unverified. The front/bezel stay black; the existing original-design marquee and blue panel are retained rather than replacing them with the differently photographed kit.",
+    "The photographed single station has duplicated left/right Speed/Jump pairs plus two Start buttons, six physical buttons; two sequential players share that station."
+  ]
+}

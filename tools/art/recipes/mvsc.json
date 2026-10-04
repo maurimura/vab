@@ -1,0 +1,202 @@
+{
+  "version": 1,
+  "skin": "mvsc",
+  "rom": "mvscu",
+  "title": "MARVEL VS. CAPCOM / ONLINE REFERENCES",
+  "variant": "Capcom pedestal conversion interpretation, gray steel six-button panel and original crossover marquee",
+  "renderer": "upright",
+  "shell": "pedestal",
+  "size": [
+    40,
+    56
+  ],
+  "players": 2,
+  "control_stations": 2,
+  "buttons_per_player": 6,
+  "stations": [
+    12,
+    5
+  ],
+  "buttons": [
+    {
+      "position": [
+        11,
+        -1.4
+      ],
+      "color": [
+        36,
+        113,
+        211
+      ]
+    },
+    {
+      "position": [
+        11,
+        -2.3
+      ],
+      "color": [
+        224,
+        42,
+        36
+      ]
+    },
+    {
+      "position": [
+        11,
+        -3.2
+      ],
+      "color": [
+        45,
+        173,
+        70
+      ]
+    },
+    {
+      "position": [
+        12.2,
+        -1.1
+      ],
+      "color": [
+        36,
+        113,
+        211
+      ]
+    },
+    {
+      "position": [
+        12.2,
+        -2.0
+      ],
+      "color": [
+        224,
+        42,
+        36
+      ]
+    },
+    {
+      "position": [
+        12.2,
+        -2.9
+      ],
+      "color": [
+        45,
+        173,
+        70
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      174,
+      179,
+      187
+    ],
+    "side": [
+      145,
+      152,
+      164
+    ],
+    "trim": [
+      48,
+      53,
+      63
+    ],
+    "stick": [
+      22,
+      24,
+      27
+    ],
+    "hood": [28, 31, 39],
+    "hood_trim": [174, 179, 187]
+  },
+  "preview_note": "Capcom pedestal conversion interpretation, gray steel six-button panel and original crossover marquee",
+  "sources": {
+    "marquee": {
+      "file": "marquee.jpg",
+      "kind": "original-art-scan",
+      "purpose": "Original-design operator marquee; corroborated by game branding/printed credits, not independently authenticated by publisher.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/11529",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=11529&part=e&download",
+      "rights": "Underlying original-design artwork Capcom/Marvel; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "d17e3b7595ae914f5e46abf79353698a9010348f2671093855e904d20dd99388",
+      "download_sha256": "d17e3b7595ae914f5e46abf79353698a9010348f2671093855e904d20dd99388",
+      "processing": "Working reference reduced with Pillow BOX to at most 2048px; downloaded size [360, 113], stored size [360, 113]."
+    },
+    "controls": {
+      "file": "controls.png",
+      "kind": "original-cabinet-photo",
+      "purpose": "Photographed original-design operator control panel; informs placement/colors and carries the actual printed instructions.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=mvsc",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/mvsc.png",
+      "rights": "Underlying original-design artwork Capcom/Marvel; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "0cdea76afb66ce5b340a1f3c3b59d3bbacb0ef6d97e5497dcc2f134a1b145a3e"
+    },
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Archive cabinet/restoration reference for geometry; unverified replacement prints are not silently treated as original masters.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=mvsc",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/mvsc.png",
+      "rights": "Underlying original-design artwork Capcom/Marvel; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "d0b9b94586a4746753bd07ead3c0fa7426cc07b13c8a2fafdf2ae12e8054be5e"
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real display captured with tools/art/capture_screen.mjs from an existing user-supplied local ROM and matching local startup state; Start 15 frames then 600 neutral frames. No ROM fetched or committed.",
+      "rights": "Game imagery Capcom/Marvel, captured from user-supplied local game; no redistribution license inferred.",
+      "sha256": "6b8f62fdfa819c673a9c79e86bc889a117f9cac70977f56b89ed088ddba85bbe"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "marquee",
+      "size": [
+        20,
+        6
+      ]
+    },
+    "controls": {
+      "source": "controls",
+      "quad": [
+        [
+          13,
+          5
+        ],
+        [
+          686,
+          5
+        ],
+        [
+          733,
+          223
+        ],
+        [
+          7,
+          231
+        ]
+      ],
+      "rectified_size": [
+        160,
+        60
+      ],
+      "size": [
+        22,
+        9
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        18,
+        12
+      ]
+    }
+  },
+  "uncertainties": [
+    "Publisher-hosted masters were not found; archive scans/photos retain underlying rights and are not deployment permission.",
+    "Only the requested game runs at this skin; artwork does not change ROM/core or seat count.",
+    "Capcom pedestal geometry is a low-resolution interpretation; exact model/region is unverified. Its neck/foot remain separate from the wide screen and deck. Six modeled fighting buttons per player; start buttons remain photographed in the overlay.",
+    "Sides stay unprinted gray: no dedicated character side decal was verified for this cabinet variant."
+  ]
+}

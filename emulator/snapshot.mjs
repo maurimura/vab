@@ -10,6 +10,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { Core } from "../web/emulator/libretro.js";
+import { actionButtons } from "./action-buttons.mjs";
 
 const [corePath, romPath, outPath, coins = "9", ...biosPaths] = process.argv.slice(2);
 const { default: createFBNeo } = await import(resolve(corePath));
@@ -17,16 +18,17 @@ const core = await Core.create(createFBNeo, { onFrame() {}, onAudio() {} });
 for (const path of biosPaths) core.addFile(basename(path), readFileSync(path));
 const { fps } = core.loadGame(basename(romPath), readFileSync(romPath));
 
-// RetroPad bits (libretro.h): B is any button, SELECT inserts a coin.
-const B = 1 << 0;
+// RetroPad SELECT inserts a coin; use the driver's first action to confirm boot.
+// UMK3's CMOS warning checks High Punch (Y), not Low Punch (B).
 const SELECT = 1 << 2;
 const run = (seconds, mask = 0) => {
   core.inputs[0] = mask;
   for (let i = 0; i < Math.round(seconds * fps); i++) core.run();
 };
 
-run(10); // boot
-run(0.2, B); // "any button to continue"
+run(10); // boot; action descriptors are now available
+const confirm = actionButtons(core.buttons)[0]?.[0] ?? 0;
+run(0.2, 1 << confirm); // "any button to continue"
 run(5);
 for (let i = 0; i < Number(coins); i++) {
   run(0.2, SELECT);

@@ -1,0 +1,332 @@
+{
+  "version": 1,
+  "skin": "pacman",
+  "rom": "pacman",
+  "title": "PAC-MAN / ONLINE REFERENCES",
+  "variant": "Midway yellow upright with photographed original-design side/front characters and red replacement molding",
+  "renderer": "upright",
+  "shell": "upright",
+  "size": [
+    32,
+    48
+  ],
+  "players": 2,
+  "control_stations": 1,
+  "buttons_per_player": 2,
+  "stations": [
+    8
+  ],
+  "buttons": [
+    {
+      "position": [
+        10.7,
+        -3.1
+      ],
+      "color": [
+        232,
+        230,
+        211
+      ]
+    },
+    {
+      "position": [
+        12,
+        -3.1
+      ],
+      "color": [
+        232,
+        230,
+        211
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      244,
+      219,
+      20
+    ],
+    "side": [
+      244,
+      219,
+      20
+    ],
+    "trim": [
+      216,
+      44,
+      41
+    ],
+    "stick": [
+      228,
+      39,
+      35
+    ]
+  },
+  "preview_note": "Midway yellow upright with photographed original-design side/front characters and red replacement molding",
+  "sources": {
+    "marquee": {
+      "file": "marquee.jpg",
+      "kind": "original-art-scan",
+      "purpose": "Original-design operator marquee; corroborated by game branding/printed credits, not independently authenticated by publisher.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/8143",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=8143&part=e&download",
+      "rights": "Underlying original-design artwork Midway/Namco; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "11590c4950ed347b9c58d6fc96116642a2c21446ad09edde0874dcafa22b8e24",
+      "download_sha256": "a883a47b313c927a883211dce66c68179ba403f10d574641a47822cf7dd6db0d",
+      "processing": "Working reference reduced with Pillow BOX to at most 2048px; downloaded size [8280, 3049], stored size [2048, 754]."
+    },
+    "controls": {
+      "file": "controls.png",
+      "kind": "original-cabinet-photo",
+      "purpose": "Photographed original-design operator control panel; informs placement/colors and carries the actual printed instructions.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=pacman",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/pacman.png",
+      "rights": "Underlying original-design artwork Midway/Namco; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "1cd1fddd117a5e82e0ff1f135ee3c466f9fb0fd6bd562e99d30f85fddc69bb3f"
+    },
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Archive cabinet/restoration reference for geometry; unverified replacement prints are not silently treated as original masters.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=pacman",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/pacman.png",
+      "rights": "Underlying original-design artwork Midway/Namco; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "78037424b1ac1cd3e9c40957909a5196cbe9e4c365e87c03591838106e8621bf"
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real display captured with tools/art/capture_screen.mjs from an existing user-supplied local ROM and matching local startup state; Start 15 frames then 600 neutral frames. No ROM fetched or committed.",
+      "rights": "Game imagery Midway/Namco, captured from user-supplied local game; no redistribution license inferred.",
+      "sha256": "d675a7c168ed1568d254c2222cdfaa7465856b71f43efbe378802f1baf3b7bed"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "marquee",
+      "size": [
+        16,
+        6
+      ]
+    },
+    "controls": {
+      "source": "controls",
+      "quad": [
+        [
+          11,
+          19
+        ],
+        [
+          709,
+          17
+        ],
+        [
+          743,
+          153
+        ],
+        [
+          5,
+          156
+        ]
+      ],
+      "rectified_size": [
+        160,
+        60
+      ],
+      "size": [
+        16,
+        9
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        12,
+        12
+      ],
+      "fit": "contain",
+      "brightness": 3.0
+    },
+    "left": {
+      "source": "cabinet",
+      "mask_polygon": [
+        [
+          1,
+          94
+        ],
+        [
+          137,
+          7
+        ],
+        [
+          147,
+          17
+        ],
+        [
+          151,
+          121
+        ],
+        [
+          167,
+          267
+        ],
+        [
+          203,
+          399
+        ],
+        [
+          195,
+          449
+        ],
+        [
+          182,
+          741
+        ],
+        [
+          16,
+          616
+        ]
+      ],
+      "background": [
+        244,
+        219,
+        20
+      ],
+      "quad": [
+        [
+          1,
+          94
+        ],
+        [
+          143,
+          9
+        ],
+        [
+          184,
+          744
+        ],
+        [
+          16,
+          616
+        ]
+      ],
+      "rectified_size": [
+        96,
+        256
+      ],
+      "size": [
+        18,
+        48
+      ]
+    },
+    "right": {
+      "source": "cabinet",
+      "mask_polygon": [
+        [
+          1,
+          94
+        ],
+        [
+          137,
+          7
+        ],
+        [
+          147,
+          17
+        ],
+        [
+          151,
+          121
+        ],
+        [
+          167,
+          267
+        ],
+        [
+          203,
+          399
+        ],
+        [
+          195,
+          449
+        ],
+        [
+          182,
+          741
+        ],
+        [
+          16,
+          616
+        ]
+      ],
+      "background": [
+        244,
+        219,
+        20
+      ],
+      "quad": [
+        [
+          1,
+          94
+        ],
+        [
+          143,
+          9
+        ],
+        [
+          184,
+          744
+        ],
+        [
+          16,
+          616
+        ]
+      ],
+      "rectified_size": [
+        96,
+        256
+      ],
+      "size": [
+        18,
+        48
+      ]
+    },
+    "front": {
+      "source": "cabinet",
+      "quad": [
+        [
+          212,
+          399
+        ],
+        [
+          374,
+          373
+        ],
+        [
+          350,
+          673
+        ],
+        [
+          195,
+          728
+        ]
+      ],
+      "rectified_size": [
+        96,
+        160
+      ],
+      "size": [
+        14,
+        24
+      ]
+    }
+  },
+  "uncertainties": [
+    "Publisher-hosted masters were not found; archive scans/photos retain underlying rights and are not deployment permission.",
+    "Only the requested game runs at this skin; artwork does not change ROM/core or seat count.",
+    "One documented side print is reused on the opposite side with readable orientation; black page margins are replaced with yellow.",
+    "Red molding matches the archive restoration photo; it is not a claim that all original Midway machines used this trim.",
+    "Two sequential players share one physical joystick; the two modeled buttons are Start 1/Start 2, not action buttons.",
+    "The vertical screen is letterboxed rather than stretched; its downsampled brightness is boosted 3x to retain thin blue maze lines at sprite resolution."
+  ]
+}
