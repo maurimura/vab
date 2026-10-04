@@ -66,9 +66,11 @@ export class Core {
   /**
    * @param createModule the core's default export (createFBNeo from fbneo.mjs)
    * @param callbacks onFrame(rgba, width, height), onAudio(Int16Array stereo), onLog(level, text)
+   * @param moduleOptions Emscripten Module settings the core needs, e.g. { canvas } for a core
+   *   that draws with WebGL (Supermodel)
    */
-  static async create(createModule, callbacks) {
-    return new Core(await createModule(), callbacks);
+  static async create(createModule, callbacks, moduleOptions = {}) {
+    return new Core(await createModule(moduleOptions), callbacks);
   }
 
   constructor(module, { onFrame, onAudio, onLog = () => {} }) {

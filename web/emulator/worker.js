@@ -4,7 +4,9 @@
 // Alone, the local player's buttons drive their seat's controller port. Online, every seated
 // player's machine runs the same game in step with rollback (netplay/src/lib.rs): GGRS guesses
 // the others' input and re-runs frames once the real input arrives. Its packets go out and come
-// in on `port` as [seat, bytes], and the page carries them between the players. Each starts
+// in on `port` as [seat, bytes], and the page carries them between the players. A `lockstep`
+// game (Supermodel: a 32 MB state, too slow to save every frame) runs in step without guessing:
+// a few frames of input delay, and a wait whenever the others' input is late. Each starts
 // with its session's epoch, so packets still in flight from an earlier session are dropped.
 //
 // When players join or leave, one machine (the page picks it) captures the game as it is and
@@ -15,7 +17,7 @@
 // only frames no rollback can change anymore. The watchers' machines play those frames as they
 // come in, keeping a few in hand so they play evenly.
 //
-// In:  { type: "start", core, rom, files, state, seat, turns, port, hold }
+// In:  { type: "start", core, rom, files, state, seat, turns, lockstep, port, hold }
 //        Loads the game. `files` (a BIOS) and `state` are optional: skipped if missing. Plays
 //        alone right away, or with `hold` waits for "online" (joining a game in progress) or
 //        "watch-state" (watching; no `seat` or `port` then).
@@ -27,7 +29,7 @@
 //      { type: "snapshot", to } A state for a new watcher, to go on from with the stream.
 //      { type: "watch-state", bytes } | { type: "watch-inputs", frame, inputs } Watching: a
 //        stream's state and inputs, as they're sent out (below).
-//      { type: "input", mask } | { type: "audio", port }
+//      { type: "input", mask } | { type: "audio", port, sampleRate } the speaker's port and rate
 // Out: { type: "ready" } the game is loaded | { type: "frame", rgba, width, height } |
 //      { type: "netplay", event, seat, ... } | { type: "captured", epoch, state } |
 //      { type: "buttons", buttons } what the game calls player 1's buttons, [RetroPad id, name]
@@ -37,6 +39,7 @@
 //      port (4) for each frame from `frame` on, a few times a second. `stream` counts up each
 //      time the stream starts over (a new session); inputs go on from that stream's states.
 import { Core } from "./libretro.js";
+import { Resampler } from "./resample.js";
 
 /** Controller ports, as many as libretro.js has. */
 const PORTS = 4;
@@ -44,8 +47,11 @@ const PORTS = 4;
 const STREAM_EVERY = 100;
 /** Frames a watcher has in hand before playing: a little more than arrive at once. */
 const WATCH_BUFFER = 12;
+/** Input delay of a lockstep game, in frames: what the others' input has to arrive within. */
+const LOCKSTEP_DELAY = 4;
 
 let audioPort;
+let speakerRate = 48000;
 let localMask = 0;
 let cabinet;
 const waiting = [];
@@ -59,7 +65,7 @@ const netplay = import("../netplay/netplay.js").then(async (module) => {
 
 onmessage = ({ data: msg }) => {
   if (msg.type === "input") localMask = msg.mask;
-  else if (msg.type === "audio") audioPort = msg.port;
+  else if (msg.type === "audio") ({ port: audioPort, sampleRate: speakerRate = speakerRate } = msg);
   else if (msg.type === "start") start(msg);
   // Anything else is for the loaded game; it can arrive while the game still downloads.
   else if (cabinet) cabinet.handle(msg);
@@ -75,22 +81,30 @@ const download = async (url) => {
 };
 const downloadIfPresent = (url) => url && download(url).catch(() => undefined);
 
-async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, seat = 0, turns = false, port, hold }) {
-  const { default: createFBNeo } = await import(coreUrl);
+async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, seat = 0, turns = false, lockstep = false, port, hold }) {
+  const { default: createCore } = await import(coreUrl);
   const [rom, state, ...extras] = await Promise.all([
     download(romUrl),
     downloadIfPresent(stateUrl),
     ...files.map(downloadIfPresent),
   ]);
-  const cab = new Cabinet(await Core.create(createFBNeo, {
+  // The canvas is for a core that draws with WebGL (Supermodel), which sizes it; FBNeo ignores it.
+  const cab = new Cabinet(await Core.create(createCore, {
     onFrame: (rgba, width, height) => cab.muted || (cab.frame = { type: "frame", rgba, width, height }),
-    onAudio: (samples) => cab.muted || audioPort?.postMessage(samples, [samples.buffer]),
+    onAudio: (samples) => {
+      if (cab.muted) return;
+      if (cab.resampler) samples = cab.resampler.process(samples);
+      audioPort?.postMessage(samples, [samples.buffer]);
+    },
     onLog: (level, text) => level >= 2 && console.warn(text),
-  }), { seat, turns, port });
+  }, { canvas: new OffscreenCanvas(1, 1) }), { seat, turns, lockstep, port });
   const core = cab.core;
   core.netplay = true;
   files.forEach((url, i) => extras[i] && core.addFile(url.split("/").pop(), extras[i]));
-  cab.fps = core.loadGame(romUrl.split("/").pop(), rom).fps;
+  const { fps, sampleRate } = core.loadGame(romUrl.split("/").pop(), rom);
+  cab.fps = fps;
+  // The speaker runs at one rate; a core at another (Supermodel, 44.1 kHz) is brought to it.
+  if (Math.round(sampleRate) !== speakerRate) cab.resampler = new Resampler(sampleRate, speakerRate);
   // A start-up state (emulator/snapshot.mjs) skips the boot screens and adds credits. States
   // from an older core build don't load; the game then just boots normally.
   try {
@@ -121,8 +135,11 @@ class Cabinet {
   /** Not running frames: waiting to join a game, or for the others after a capture. */
   paused = false;
   fps = 60;
+  /** Brings the core's sound to the speaker's rate, when they differ. */
+  resampler;
 
   #seat;
+  #lockstep;
   #port;
   /** Online: the GGRS session, its epoch, and the seats of its players in handle order. */
   #session;
@@ -146,10 +163,11 @@ class Cabinet {
   #nextStats = 0;
   #buttonsSent = false;
 
-  constructor(core, { seat, turns, port }) {
+  constructor(core, { seat, turns, lockstep, port }) {
     this.core = core;
     core.turns = turns;
     this.#seat = seat;
+    this.#lockstep = lockstep;
     this.#port = port;
     if (!port) return; // watching
     port.onmessage = ({ data: [seat, packet] }) => {
@@ -287,7 +305,9 @@ class Cabinet {
     this.#leaveSession();
     this.core.unserialize(state);
     this.#captured = undefined;
-    if (!this.#tuned) {
+    if (this.#lockstep) {
+      this.#tuned = { rollback: 0, delay: LOCKSTEP_DELAY }; // GGRS never saves: no slots needed
+    } else if (!this.#tuned) {
       this.muted = true;
       this.#tuned = tune(this.core, this.fps);
       this.muted = false;
@@ -339,14 +359,14 @@ class Cabinet {
 
   /**
    * The machine at the frame the stream goes on from, for one watcher or all. Online it's the
-   * save GGRS made before that frame, unless the machine is there now.
+   * save GGRS made before that frame, unless the machine is there now (always, in lockstep).
    */
   #sendState(to) {
     this.#flush(true);
     const { id, frame } = this.#stream;
     const session = this.#session;
-    const state =
-      session && frame < session.currentFrame() ? this.core.slotBytes(session.slot(frame)) : this.core.serialize();
+    const saved = session && !this.#lockstep && frame < session.currentFrame();
+    const state = saved ? this.core.slotBytes(session.slot(frame)) : this.core.serialize();
     const bytes = new Uint8Array(4 + state.length);
     new DataView(bytes.buffer).setUint32(0, frame, true);
     bytes.set(state, 4);

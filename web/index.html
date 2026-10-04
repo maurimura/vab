@@ -154,13 +154,16 @@
       let myName = "";
       const list = (items) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 
+      /** Where a game's core is: an FBNeo core, or Supermodel for the Sega Model 3 games. */
+      const coreUrl = (core) => (core === "supermodel" ? "/supermodel/supermodel.mjs" : `/fbneo/${core}/fbneo.mjs`);
+
       /** An emulator worker for a cabinet's game, its sound going to the speaker. */
       function emulatorWorker(onmessage) {
         const worker = new Worker("./emulator/worker.js", { type: "module" });
         worker.onmessage = ({ data }) => onmessage(data);
         const sound = new MessageChannel();
         speaker.port.postMessage(sound.port1, [sound.port1]);
-        worker.postMessage({ type: "audio", port: sound.port2 }, [sound.port2]);
+        worker.postMessage({ type: "audio", port: sound.port2, sampleRate: audio.sampleRate }, [sound.port2]);
         return worker;
       }
 
@@ -264,16 +267,17 @@
 
           // Cores, ROM sets, BIOS sets and start-up states (emulator/snapshot.mjs) come from R2.
           // Alone we start the game; otherwise the others hand theirs over.
-          const { core, rom, bios, turns } = this.#game;
+          const { core, rom, bios, turns, lockstep } = this.#game;
           const alone = this.#seated.size === 1;
           const start = {
             type: "start",
-            core: `/fbneo/${core}/fbneo.mjs`,
+            core: coreUrl(core),
             rom: `/roms/${rom}.zip`,
             files: bios ? [`/roms/${bios}.zip`] : [],
             state: `/roms/${rom}.state`,
             seat,
             turns,
+            lockstep,
             port: packets.port2,
             hold: !alone,
           };
@@ -434,7 +438,7 @@
           });
           this.#worker.postMessage({
             type: "start",
-            core: `/fbneo/${core}/fbneo.mjs`,
+            core: coreUrl(core),
             rom: `/roms/${rom}.zip`,
             files: bios ? [`/roms/${bios}.zip`] : [],
             turns,
@@ -474,9 +478,9 @@
       }
 
       let play;
-      window.emulatorPlay = async (core, rom, bios, cabinet, turns, players) => {
+      window.emulatorPlay = async (core, rom, bios, cabinet, turns, players, lockstep) => {
         play?.stop();
-        const current = (play = new Play({ core, rom, bios, turns, players, cabinet }));
+        const current = (play = new Play({ core, rom, bios, turns, players, cabinet, lockstep }));
         stayAwake(true);
         game_status("Taking a seat...");
         await joined;

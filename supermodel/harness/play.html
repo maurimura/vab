@@ -1,0 +1,111 @@
+<!doctype html>
+<!-- Play a Model 3 game on the Supermodel core, in this page: keyboard in, picture and sound
+     out, paced at 60 frames a second (or as fast as the machine goes). The sound goes through
+     the bar's own AudioWorklet (web/emulator/audio.js).
+       node supermodel/harness/serve.mjs, then open
+       http://localhost:8790/supermodel/harness/play.html?rom=vs298
+     ?rom=<set> is served from /roms/<set>.zip; &ppc=<MHz> sets the PowerPC clock (50 by
+     default so a laptop keeps up; 0 is the Model 3's real clock, 166 MHz on Step 2.x).
+     Player 1: arrows, Z X C (short pass, long pass, shoot), Enter start, Space coin.
+     Player 2: W A S D, G H J, 2 start, 6 coin. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Supermodel</title>
+<style>
+  body { margin: 0; background: #000; color: #ccc; font: 14px monospace; display: flex; flex-direction: column; align-items: center; min-height: 100vh }
+  canvas { image-rendering: pixelated; width: min(100vw, calc((100vh - 48px) * 496 / 384)); aspect-ratio: 496 / 384; background: #000 }
+  #hud { padding: 8px; white-space: pre; text-align: center }
+  #start { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #000c; font-size: 22px; cursor: pointer }
+</style>
+</head>
+<body>
+<canvas id="screen" width="496" height="384"></canvas>
+<div id="hud">loading…</div>
+<div id="start">loading…</div>
+<script type="module">
+import { Core } from "/web/emulator/libretro.js";
+import createSupermodel from "/supermodel/dist/supermodel.mjs";
+
+const params = new URLSearchParams(location.search);
+const rom = params.get("rom") ?? "vs298";
+const PPC = params.get("ppc") ?? "50";
+const FPS = 60;
+const hud = document.getElementById("hud");
+const overlay = document.getElementById("start");
+const screen = document.getElementById("screen").getContext("2d");
+
+// Keyboard -> RetroPad button ids (libretro.h): [port, id].
+const B = 0, Y = 1, SELECT = 2, START = 3, UP = 4, DOWN = 5, LEFT = 6, RIGHT = 7, A = 8;
+const KEYS = {
+  ArrowUp: [0, UP], ArrowDown: [0, DOWN], ArrowLeft: [0, LEFT], ArrowRight: [0, RIGHT],
+  KeyZ: [0, Y], KeyX: [0, B], KeyC: [0, A], Enter: [0, START], Space: [0, SELECT],
+  KeyW: [1, UP], KeyS: [1, DOWN], KeyA: [1, LEFT], KeyD: [1, RIGHT],
+  KeyG: [1, Y], KeyH: [1, B], KeyJ: [1, A], Digit2: [1, START], Digit6: [1, SELECT],
+};
+
+const fail = (what) => { overlay.textContent = `failed: ${what}`; overlay.style.color = "#f66"; };
+addEventListener("error", (e) => fail(e.message));
+addEventListener("unhandledrejection", (e) => fail(e.reason?.message ?? e.reason));
+overlay.textContent = "starting the emulator…";
+const offscreen = new OffscreenCanvas(1, 1); // the core sizes it, as in the worker
+const module = await createSupermodel({ canvas: offscreen });
+if (PPC !== "0") {
+  const alloc = (text) => { const n = module.lengthBytesUTF8(text) + 1; const p = module._malloc(n); module.stringToUTF8(text, p, n); return p; };
+  module._supermodel_set(alloc("PowerPCFrequency"), alloc(PPC));
+}
+
+const audio = new AudioContext({ sampleRate: 44100 });
+await audio.audioWorklet.addModule("/web/emulator/audio.js");
+const speaker = new AudioWorkletNode(audio, "emulator-audio", { outputChannelCount: [2] });
+speaker.connect(audio.destination);
+const sound = new MessageChannel();
+speaker.port.postMessage(sound.port1, [sound.port1]);
+
+let picture;
+const core = new Core(module, {
+  onFrame(rgba, width, height) { picture = new ImageData(rgba, width, height); },
+  onAudio(samples) { sound.port2.postMessage(samples, [samples.buffer]); },
+  onLog(level, text) { if (level >= 2) console.error(text); },
+});
+overlay.textContent = `downloading ${rom}.zip…`;
+const response = await fetch(`/roms/${rom}.zip`);
+if (!response.ok) throw new Error(`/roms/${rom}.zip: ${response.status} (serve.mjs looks for it in ~/Downloads, or ROMS=<dir>)`);
+const bytes = new Uint8Array(await response.arrayBuffer());
+overlay.textContent = "loading the ROM set…";
+await new Promise((r) => setTimeout(r)); // let the overlay repaint before the long load
+core.loadGame(`${rom}.zip`, bytes);
+console.log(`core canvas ${offscreen.width}x${offscreen.height}, drawing buffer ${offscreen.getContext("webgl2")?.drawingBufferWidth}x${offscreen.getContext("webgl2")?.drawingBufferHeight}`);
+const clock = PPC === "0" ? "real clock" : `PowerPC at ${PPC} MHz`;
+hud.textContent = `${rom} · ${clock}\nP1: arrows, Z X C, Enter start, Space coin · P2: W A S D, G H J, 2 start, 6 coin`;
+overlay.textContent = "click to start";
+
+addEventListener("keydown", (e) => { const k = KEYS[e.code]; if (k) { core.inputs[k[0]] |= 1 << k[1]; e.preventDefault(); } });
+addEventListener("keyup", (e) => { const k = KEYS[e.code]; if (k) { core.inputs[k[0]] &= ~(1 << k[1]); e.preventDefault(); } });
+
+overlay.addEventListener("click", () => {
+  overlay.remove();
+  audio.resume();
+  let next = performance.now();
+  let frames = 0, work = 0, since = performance.now();
+  const tick = (now) => {
+    if (now >= next) {
+      const start = performance.now();
+      core.run();
+      work += performance.now() - start;
+      frames++;
+      next += 1000 / FPS;
+      if (now - next > 100) next = now; // too far behind to catch up: just carry on
+      if (picture) screen.putImageData(picture, 0, 0);
+    }
+    if (now - since >= 1000) {
+      hud.textContent = `${rom} · ${clock} · ${frames} fps, ${(work / Math.max(1, frames)).toFixed(1)} ms a frame\nP1: arrows, Z X C, Enter start, Space coin · P2: W A S D, G H J, 2 start, 6 coin`;
+      frames = 0; work = 0; since = now;
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}, { once: true });
+</script>
+</body>
+</html>

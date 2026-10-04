@@ -97,7 +97,8 @@ pub struct Session {
 #[wasm_bindgen]
 impl Session {
     /// A session for `players` players where this machine plays handle `local`. Input delay
-    /// and the rollback limit are in frames; `fps` is the game's rate.
+    /// and the rollback limit are in frames; `fps` is the game's rate. A rollback limit of 0
+    /// is lockstep: frames run only once everyone's input for them is in, and nothing is saved.
     #[wasm_bindgen(constructor)]
     pub fn new(
         players: usize,
@@ -114,8 +115,13 @@ impl Session {
             .with_input_delay(input_delay)
             .with_max_prediction_window(max_rollback)
             .with_fps(fps)?
-            .with_desync_detection_mode(DesyncDetection::On {
-                interval: DESYNC_INTERVAL as u32,
+            // Desync checks hash the saves, which lockstep never makes.
+            .with_desync_detection_mode(if max_rollback == 0 {
+                DesyncDetection::Off
+            } else {
+                DesyncDetection::On {
+                    interval: DESYNC_INTERVAL as u32,
+                }
             })
             // Players leave through the room (a new session without them), never through GGRS:
             // dropping a player mid-session can panic in GGRS 0.13 with more than two players.
@@ -224,6 +230,8 @@ impl Session {
     pub fn advance(&mut self, input: u16, machine: &Machine) -> Result<bool, JsError> {
         self.ggrs.add_local_input(self.local, input)?;
         let requests = match self.ggrs.advance_frame() {
+            // Lockstep waiting for the others' input: nothing to do yet (the input stays queued).
+            Ok(requests) if requests.is_empty() => return Ok(false),
             Ok(requests) => requests,
             Err(GgrsError::PredictionThreshold) => return Ok(false),
             Err(error) => return Err(error.into()),

@@ -17,6 +17,10 @@
 # Emulator toolchain + sources (emsdk, FBNeo checkout)
 /emulator/.cache
 
+# Supermodel (Model 3) build output and checkout (supermodel/build.sh)
+/supermodel/dist
+/supermodel/.cache
+
 # Wrangler
 .wrangler/
 node_modules/

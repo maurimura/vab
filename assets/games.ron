@@ -1,9 +1,11 @@
 // Games cabinets can run (a cabinet's `game` in maps/bar.ron is a `rom` from this list).
 // `rom` is the ROM set in R2 (/roms/<rom>.zip, plus the optional <rom>.state), `core` the FBNeo
-// core that runs it (emulator/build.sh), and `bios` a BIOS set loaded next to it. `players` is
-// how many play at once (2 if not said, up to 4); `turns` games take turns on player 1's
-// controls. `cabinets` names the cabinet skins drawn for the game (tiles/objects/cabinet_<skin>_*):
-// the editor gives a cabinet in one of them the game.
+// core that runs it (emulator/build.sh) or "supermodel" for a Sega Model 3 game (supermodel/),
+// and `bios` a BIOS set loaded next to it. `players` is how many play at once (2 if not said,
+// up to 4); `turns` games take turns on player 1's controls; `lockstep` games play online
+// without rollback (Supermodel's save state is too big to take every frame). `cabinets` names
+// the cabinet skins drawn for the game (tiles/objects/cabinet_<skin>_*): the editor gives a
+// cabinet in one of them the game.
 [
     (rom: "mk2", core: "midway", title: "mkII", cabinets: ["mk2_v2"]),
     (rom: "umk3", core: "midway", title: "Ultimate Mortal Kombat 3", cabinets: ["umk3"]),
@@ -23,4 +25,5 @@
     (rom: "asteroid", core: "classics", title: "Asteroids", turns: true, cabinets: ["asteroid"]),
     (rom: "s1945", core: "psikyo", title: "Strikers 1945", cabinets: ["s1945"]),
     (rom: "term2", core: "midway", title: "Terminator 2: Judgment Day", cabinets: ["term2"]),
+    (rom: "vs298", core: "supermodel", title: "Virtua Striker 2 '98", lockstep: true),
 ]

@@ -55,7 +55,8 @@ pub fn game_status(text: String) {
 // Defined in index.html.
 #[wasm_bindgen]
 extern "C" {
-    /// Sits the player at `cabinet` ("x,y") and starts its game, for up to `players` at once.
+    /// Sits the player at `cabinet` ("x,y") and starts its game, for up to `players` at once;
+    /// `lockstep` games don't roll back online (world::Game).
     #[wasm_bindgen(js_name = emulatorPlay)]
     fn emulator_play(
         core: &str,
@@ -64,6 +65,7 @@ extern "C" {
         cabinet: &str,
         turns: bool,
         players: u32,
+        lockstep: bool,
     );
     /// Watches the game at `cabinet` ("x,y"), streamed from one of its players.
     #[wasm_bindgen(js_name = emulatorWatch)]
@@ -95,6 +97,7 @@ pub fn play(cell: IVec2, game: &Game) {
         &cabinet,
         game.turns,
         game.players,
+        game.lockstep,
     );
 }
 

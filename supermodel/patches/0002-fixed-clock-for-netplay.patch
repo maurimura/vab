@@ -1,0 +1,31 @@
+diff --git a/Src/Model3/RTC72421.cpp b/Src/Model3/RTC72421.cpp
+index d5490ef..a448d81 100644
+--- a/Src/Model3/RTC72421.cpp
++++ b/Src/Model3/RTC72421.cpp
+@@ -41,16 +41,23 @@
+  Emulation Functions
+ ******************************************************************************/
+ 
++// When set, the clock stands at this moment (UTC) instead of following the host: players
++// online keep identical machines (supermodel/shim/libretro.cpp).
++time_t supermodel_fixed_time = 0;
++
+ UINT8 CRTC72421::ReadRegister(unsigned reg)
+ {
+ 	static time_t oldTime{0};
+ 	time_t currentTime;
+ 	static struct tm *Time;
+ 
+-	time(&currentTime);
+-	if (currentTime != oldTime)
++	if (supermodel_fixed_time)
++		currentTime = supermodel_fixed_time;
++	else
++		time(&currentTime);
++	if (currentTime != oldTime || Time == nullptr)
+ 	{
+-		Time = localtime(&currentTime);
++		Time = supermodel_fixed_time ? gmtime(&currentTime) : localtime(&currentTime);
+ 		oldTime = currentTime;
+ 	}
+ 

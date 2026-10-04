@@ -32,8 +32,12 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             "/ice",
             |_req, ctx| async move { ice_servers(&ctx.env).await },
         )
-        // FBNeo cores (/fbneo/<core>/fbneo.wasm) and ROM sets (/roms/mk2.zip) live in R2.
+        // FBNeo cores (/fbneo/<core>/fbneo.wasm), the Supermodel core (/supermodel/supermodel.wasm)
+        // and ROM sets (/roms/mk2.zip) live in R2.
         .get_async("/fbneo/*file", |req, ctx| serve_from_r2(req, ctx, "fbneo"))
+        .get_async("/supermodel/*file", |req, ctx| {
+            serve_from_r2(req, ctx, "supermodel")
+        })
         .get_async("/roms/*file", |req, ctx| serve_from_r2(req, ctx, "roms"))
         // The bar's map: the one last saved from the editor, or the one built with the site.
         .get_async(MAP_PATH, serve_map)
