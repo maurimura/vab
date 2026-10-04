@@ -43,9 +43,16 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
 }
 
 /// The map from R2, or the site's own copy until the editor has saved one. Browsers keep it
-/// but ask each time whether it changed, since a save changes it without a deploy.
+/// but ask each time whether it changed, since a save changes it without a deploy. `make dev`
+/// reads the site's bucket for the games but sets MAP_FROM_R2 to false, so the map being
+/// edited in assets/ shows, not the one saved on the site.
 async fn serve_map(req: Request, ctx: RouteContext<()>) -> Result<Response> {
-    let response = match from_r2(&req, &ctx, MAP_KEY).await? {
+    let map_from_r2 = ctx.env.var("MAP_FROM_R2").map(|var| var.to_string());
+    let saved = match map_from_r2.as_deref() {
+        Ok("false") => None,
+        _ => from_r2(&req, &ctx, MAP_KEY).await?,
+    };
+    let response = match saved {
         Some(response) => response,
         None => ctx.env.assets("ASSETS")?.fetch_request(req).await?,
     };
