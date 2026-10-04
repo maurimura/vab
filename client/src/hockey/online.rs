@@ -4,7 +4,7 @@
 //!
 //! Each player's machine runs the whole game, a fixed frame at a time (hockey's `play_frame`),
 //! from both players' inputs: where their paddle should be. GGRS carries the inputs between
-//! them, a frame behind (`INPUT_DELAY`), and where the other player's hasn't come yet it
+//! them a few frames behind (`input_delay_for`), and where the other player's hasn't come yet it
 //! guesses their paddle carried on as it was going (`Input::guess_next`); when it comes and the
 //! guess was wrong, it goes back to the frame before, plays the frames since again with it, and
 //! catches up, all before the next picture.
@@ -27,10 +27,24 @@ use hockey::{FRAME, Input, Rink};
 use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-/// Frames between a player moving their mouse and their paddle moving, on both rinks: the
-/// fewer, the sooner it answers, and the more often the other rink guesses wrong and puts
-/// things right.
-const INPUT_DELAY: usize = 1;
+/// Frames between a player moving their mouse and their paddle moving, on both rinks, at most:
+/// the fewer, the sooner it answers, and the further back the other rink has to put things
+/// right when it guessed wrong.
+const MOST_INPUT_DELAY: usize = 3;
+/// A round trip that gets one more frame of input delay, in seconds: one frame up to this, two
+/// up to twice it, and so on.
+const ROUND_TRIP_PER_FRAME: f32 = 0.06;
+
+/// The input delay for a match whose round trip is `round_trip` seconds: a frame for a quick
+/// connection, more for a slow one, so corrections stay short, but never so many the paddle
+/// feels slow.
+pub fn input_delay_for(round_trip: f32) -> usize {
+    // Timed a frame at a time, each answer is seen up to a frame late at each end: about one
+    // frame's worth too slow, on the whole.
+    let round_trip = round_trip - FRAME;
+    let frames = (round_trip / ROUND_TRIP_PER_FRAME).ceil().max(1.0) as usize;
+    frames.min(MOST_INPUT_DELAY)
+}
 /// How many frames ahead of the other player's last input a rink may run on guesses, before it
 /// waits for them: enough for a round trip of about 200 ms.
 const MAX_PREDICTION: usize = 12;
@@ -49,8 +63,12 @@ const SKIP_SPREAD: u32 = 20;
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Message {
     /// A match begins, playing by these settings (player 1's): the puck's top speed and
-    /// friction, how bouncy the rails and paddles are, and the bot's speed.
-    Begin { settings: [f32; 5] },
+    /// friction, how bouncy the rails and paddles are, and the bot's speed; with this input
+    /// delay, from the round trip player 1 timed.
+    Begin {
+        settings: [f32; 5],
+        input_delay: usize,
+    },
 }
 
 /// How the room names an air hockey table: "hockey:x,y", its first cell.
@@ -125,10 +143,33 @@ impl NonBlockingSocket<usize> for Socket {
         PACKETS
             .take()
             .into_iter()
-            .filter(|(from, _)| *from == partner)
+            .filter(|(from, bytes)| *from == partner && ping(bytes).is_none())
             .filter_map(|(_, bytes)| Some((self.seat, bincode::deserialize(&bytes).ok()?)))
             .collect()
     }
+}
+
+/// Before a match, player 1 times round trips to player 2 over the link itself (the path the
+/// match's packets take), with tiny packets of their own: "vabp", then the ping's number, then
+/// 0 going out and 1 coming back. GGRS's own are longer, and never start like that.
+const PING_MARK: &[u8; 4] = b"vabp";
+
+/// A ping packet's number and whether it's the answer, if `bytes` is one.
+fn ping(bytes: &[u8]) -> Option<(u8, bool)> {
+    match bytes {
+        [mark @ .., n, kind] if mark == PING_MARK => Some((*n, *kind == 1)),
+        _ => None,
+    }
+}
+
+fn ping_packet(n: u8, answer: bool) -> [u8; 6] {
+    let [a, b, c, d] = *PING_MARK;
+    [a, b, c, d, n, u8::from(answer)]
+}
+
+thread_local! {
+    /// The other player linked to for packets (see `link`), before and through a match.
+    static LINKED: RefCell<Option<u32>> = const { RefCell::new(None) };
 }
 
 /// A match in progress.
@@ -144,6 +185,7 @@ struct Net {
     since_skip: u32,
     /// The other player's packets stopped coming, for now.
     interrupted: bool,
+    input_delay: usize,
     /// This player's last input.
     last_input: Option<Input>,
     counts: Counts,
@@ -164,6 +206,8 @@ struct Counts {
 #[derive(Clone, Copy, Default)]
 pub struct Stats {
     pub ping: Option<u128>,
+    /// Frames between a player's mouse and their paddle.
+    pub input_delay: usize,
     /// Packets go straight to the other browser, not through the room.
     pub direct: bool,
     pub frames_ahead: i32,
@@ -206,11 +250,58 @@ extern "C" {
     fn table_link_direct(partner: u32) -> bool;
 }
 
-/// Begins a match at `table`: this player in seat `me`, against `partner`.
-pub fn start(table: &str, me: usize, partner: u32, my_id: u32) {
+/// Links this player, in seat `me` at `table`, to `partner` for packets: the round trips are
+/// timed over it, and then the match is played over it. Player 1 sets up WebRTC.
+pub fn link(table: &str, me: usize, partner: u32, my_id: u32) {
     stop();
     let link = format!("{table}/{}/{}", partner.min(my_id), partner.max(my_id));
     table_link(partner, me == 0, &link);
+    LINKED.set(Some(partner));
+}
+
+/// Whether the packets to the linked player go straight to their browser yet.
+pub fn link_direct() -> bool {
+    LINKED.with_borrow(|partner| partner.is_some_and(table_link_direct))
+}
+
+/// Sends ping number `n` to the linked player, to time the round trip.
+pub fn send_ping(n: u8) {
+    if let Some(partner) = LINKED.with_borrow(|partner| *partner) {
+        table_link_send(partner, &ping_packet(n, false));
+    }
+}
+
+/// The answers to this player's pings that came in, by number. Pings from the other player are
+/// answered straight away. Anything else (the match's first packets, ahead of it here) waits.
+pub fn take_pongs() -> Vec<u8> {
+    let Some(partner) = LINKED.with_borrow(|partner| *partner) else {
+        return Vec::new();
+    };
+    let mut pongs = Vec::new();
+    PACKETS.with_borrow_mut(|packets| {
+        packets.retain(|(from, bytes)| match ping(bytes) {
+            Some((n, false)) if *from == partner => {
+                table_link_send(partner, &ping_packet(n, true));
+                false
+            }
+            Some((n, true)) if *from == partner => {
+                pongs.push(n);
+                false
+            }
+            _ => true,
+        });
+    });
+    pongs
+}
+
+/// Begins the match with the linked player, this player in seat `me`, inputs going
+/// `input_delay` frames late.
+pub fn start(me: usize, input_delay: usize) {
+    let Some(partner) = LINKED.with_borrow(|partner| *partner) else {
+        return;
+    };
+    let input_delay = input_delay.clamp(1, MOST_INPUT_DELAY);
+    NET.set(None);
     let other = 1 - me;
     let builder = SessionBuilder::<Hockey>::new()
         .with_num_players(2)
@@ -219,7 +310,7 @@ pub fn start(table: &str, me: usize, partner: u32, my_id: u32) {
         .and_then(|builder| builder.add_player(PlayerType::Remote(other), other))
         .map(|builder| {
             builder
-                .with_input_delay(INPUT_DELAY)
+                .with_input_delay(input_delay)
                 .with_max_prediction_window(MAX_PREDICTION)
                 .with_desync_detection_mode(DesyncDetection::On {
                     interval: DESYNC_INTERVAL,
@@ -243,6 +334,7 @@ pub fn start(table: &str, me: usize, partner: u32, my_id: u32) {
             to_skip: 0,
             since_skip: 0,
             interrupted: false,
+            input_delay,
             last_input: None,
             counts: Counts::default(),
         })),
@@ -250,10 +342,11 @@ pub fn start(table: &str, me: usize, partner: u32, my_id: u32) {
     }
 }
 
-/// Ends the match, if there is one.
+/// Ends the match, if there is one, and the link to the other player.
 pub fn stop() {
-    if let Some(net) = NET.take() {
-        table_unlink(net.partner);
+    NET.set(None);
+    if let Some(partner) = LINKED.take() {
+        table_unlink(partner);
     }
     PACKETS.with_borrow_mut(Vec::clear);
 }
@@ -384,6 +477,7 @@ pub fn stats() -> Option<Stats> {
                 .network_stats(other)
                 .ok()
                 .map(|stats| stats.ping),
+            input_delay: net.input_delay,
             direct: table_link_direct(net.partner),
             frames_ahead: net.session.frames_ahead(),
             frames: counts.frames,
@@ -411,9 +505,34 @@ mod tests {
         };
         let begin = Message::Begin {
             settings: settings_to_message(&settings),
+            input_delay: 2,
         };
         let json = serde_json::to_string(&begin).unwrap();
-        let Message::Begin { settings: back } = serde_json::from_str(&json).unwrap();
+        let Ok(Message::Begin {
+            settings: back,
+            input_delay: 2,
+        }) = serde_json::from_str(&json)
+        else {
+            panic!("{json}");
+        };
         assert_eq!(settings_from_message(back), settings);
+    }
+
+    #[test]
+    fn ping_packets_are_told_apart_from_the_match_s() {
+        assert_eq!(ping(&ping_packet(3, false)), Some((3, false)));
+        assert_eq!(ping(&ping_packet(4, true)), Some((4, true)));
+        assert_eq!(ping(b"vabp"), None);
+        assert_eq!(ping(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]), None);
+    }
+
+    #[test]
+    fn slower_connections_get_more_input_delay_up_to_three_frames() {
+        assert_eq!(input_delay_for(0.02), 1);
+        assert_eq!(input_delay_for(0.07), 1);
+        assert_eq!(input_delay_for(0.09), 2);
+        assert_eq!(input_delay_for(0.15), 3);
+        assert_eq!(input_delay_for(0.233), 3);
+        assert_eq!(input_delay_for(2.0), 3);
     }
 }

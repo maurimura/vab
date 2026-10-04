@@ -49,6 +49,14 @@ const GOAL_SHOWN_FOR: f32 = 1.5;
 /// An Esc this soon after the pointer was let go is the one that let it go (the browser takes
 /// it, and may pass it on too): it doesn't also leave the table.
 const ESC_AFTER_UNLOCK: f32 = 0.3;
+/// Before a match, player 1 times this many round trips to player 2 over the link, one this
+/// often (seconds), to choose the input delay. It waits up to `LINK_WAIT` for WebRTC to connect
+/// first, and past `TIMING_GIVES_UP` goes with what it has (seconds, from sitting down).
+const PINGS: u8 = 5;
+const PING_EVERY: f32 = 0.1;
+const LINK_WAIT: f32 = 1.5;
+const TIMING_GIVES_UP: f32 = 3.5;
+
 /// When a rollback moves the puck or the other player's paddle, they're drawn gliding to where
 /// they really are, the jump fading over this long (seconds), rather than jumping.
 const SMOOTHING: f32 = 0.08;
@@ -170,11 +178,35 @@ struct Game {
     unlocked_at: Option<f32>,
     /// The table, as the room names it, while the player sits at it.
     table_id: Option<String>,
+    /// Player 1 timing round trips to player 2, before the match begins.
+    timing: Option<Timing>,
     /// How far from where they really are the puck and the other player's paddle are drawn,
     /// fading: the jumps rollback makes, smoothed over (as seat 0 sees the rink).
     drawn_off: [Vec2; 2],
     /// The other player at the table, when there is one: then they play each other, not the bot.
     opponent: Option<Opponent>,
+}
+
+/// Round trips being timed (in seconds of `Time`): when each ping went, and how long the
+/// answers took.
+#[derive(Default)]
+struct Timing {
+    started: f32,
+    sent: Vec<f32>,
+    round_trips: Vec<f32>,
+}
+
+impl Timing {
+    /// The round trip to go by: the middle one, so one slow answer doesn't count for much. With
+    /// none at all, as slow as can be.
+    fn round_trip(&self) -> f32 {
+        let mut round_trips = self.round_trips.clone();
+        round_trips.sort_by(f32::total_cmp);
+        round_trips
+            .get(round_trips.len() / 2)
+            .copied()
+            .unwrap_or(f32::MAX)
+    }
 }
 
 /// Who the player is playing against.
@@ -217,16 +249,16 @@ impl Game {
         self.new_game();
     }
 
-    /// The match begins, playing by `settings` (player 1's): both rinks start alike from here.
-    fn begin_match(&mut self, settings: hockey::Settings) {
-        let (Some(table), Some(opponent)) = (&self.table_id, &self.opponent) else {
+    /// The match begins, playing by `settings` (player 1's), inputs going `input_delay` frames
+    /// late: both rinks start alike from here.
+    fn begin_match(&mut self, settings: hockey::Settings, input_delay: usize) {
+        let Some(me) = self.opponent.as_ref().map(|opponent| opponent.me) else {
             return;
         };
-        let (table, me, id, my_id) = (table.clone(), opponent.me, opponent.id, opponent.my_id);
         self.rink.settings = settings;
         self.new_game();
         self.target = Some(self.rink.paddles[me]);
-        online::start(&table, me, id, my_id);
+        online::start(me, input_delay);
     }
 }
 
@@ -387,7 +419,13 @@ fn fit_canvas(window: Single<&Window>, mut canvas: Single<&mut Node, With<Canvas
 /// Sits at the table in the room, starts a match when someone sits at the other seat (and goes
 /// back to the bot when they leave), and follows what they say: their paddle, the puck while
 /// it's theirs, the puck when they hand it over, and the goals they've let in.
-fn sync(at: Option<Res<AtTable>>, settings: Res<Settings>, mut game: ResMut<Game>) {
+fn sync(
+    at: Option<Res<AtTable>>,
+    settings: Res<Settings>,
+    time: Res<Time>,
+    mut game: ResMut<Game>,
+) {
+    let now_s = time.elapsed_secs();
     let Some(at) = at else {
         return;
     };
@@ -412,19 +450,20 @@ fn sync(at: Option<Res<AtTable>>, settings: Res<Settings>, mut game: ResMut<Game
             opponent.names = now.names;
         }
         (_, Some(now)) => {
-            let (me, id) = (now.me, now.id);
+            let (me, id, my_id) = (now.me, now.id, now.my_id);
             game.play_against(Some(now));
-            // Player 1 begins the match, with their settings; player 2 waits for them.
-            if me == 0 {
-                let settings = settings.hockey();
-                let begin = Message::Begin {
-                    settings: online::settings_to_message(&settings),
-                };
-                seats::send(&at.0, id, &begin);
-                game.begin_match(settings);
-            }
+            // Linked straight away: the round trips are timed over the match's own path.
+            online::link(&at.0, me, id, my_id);
+            // Player 1 times a few round trips, then begins the match; player 2 waits for them.
+            game.timing = (me == 0).then(|| Timing {
+                started: now_s,
+                ..default()
+            });
         }
-        (Some(_), None) => game.play_against(None),
+        (Some(_), None) => {
+            game.timing = None;
+            game.play_against(None);
+        }
         (None, None) => {}
     }
 
@@ -432,13 +471,50 @@ fn sync(at: Option<Res<AtTable>>, settings: Res<Settings>, mut game: ResMut<Game
     let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
         return;
     };
+    // Pings over the link: player 2 answers them, player 1 times the answers.
+    for n in online::take_pongs() {
+        if let Some(timing) = &mut game.timing
+            && let Some(sent) = timing.sent.get(usize::from(n))
+        {
+            timing.round_trips.push(now_s - sent);
+        }
+    }
     for (_, message) in messages.into_iter().filter(|(from, _)| *from == id) {
         match message {
-            Message::Begin { settings } if game.me() == 1 => {
-                game.begin_match(online::settings_from_message(settings));
+            Message::Begin {
+                settings,
+                input_delay,
+            } if game.me() == 1 => {
+                game.begin_match(online::settings_from_message(settings), input_delay);
             }
             Message::Begin { .. } => {}
         }
+    }
+
+    // Player 1, timing: the next ping when it's time, and once the answers are in (or it's
+    // been long enough), the match begins with the input delay they say.
+    let Some(timing) = &mut game.timing else {
+        return;
+    };
+    // Once WebRTC is up, or it's been long enough waiting for it.
+    let link_ready = online::link_direct() || now_s - timing.started > LINK_WAIT;
+    let sent = timing.sent.len() as u8;
+    let last = timing.sent.last().copied().unwrap_or(f32::MIN);
+    if link_ready && sent < PINGS && now_s - last >= PING_EVERY {
+        timing.sent.push(now_s);
+        online::send_ping(sent);
+    }
+    let done = timing.round_trips.len() >= usize::from(PINGS);
+    if done || now_s - timing.started > TIMING_GIVES_UP {
+        let input_delay = online::input_delay_for(timing.round_trip());
+        game.timing = None;
+        let settings = settings.hockey();
+        let begin = Message::Begin {
+            settings: online::settings_to_message(&settings),
+            input_delay,
+        };
+        seats::send(&at.0, id, &begin);
+        game.begin_match(settings, input_delay);
     }
 }
 
@@ -823,7 +899,8 @@ fn show_net_stats(
                 String::new()
             };
             format!(
-                "{drawn}\nping {ping}, {how}\nframes/s {}, ahead {}\nrollbacks/s {}{length}\nskipped/s {}, waited/s {}\ndesyncs {}",
+                "{drawn}\nping {ping}, {how}\ninput delay {} frames\nframes/s {}, ahead {}\nrollbacks/s {}{length}\nskipped/s {}, waited/s {}\ndesyncs {}",
+                stats.input_delay,
                 stats.frames,
                 stats.frames_ahead,
                 stats.rollbacks,
