@@ -21,7 +21,14 @@ E next to the air hockey table plays air hockey against a bot: the rink seen fro
 upright, your goal at the bottom. Your paddle goes where the mouse (or a finger) is, kept in your
 half; the bot slides its paddle back and forth across its goal. First to 7 wins. `/settings`
 tunes it too (the puck's top speed and friction, how bouncy the rails and paddles are, the bot's
-speed). `/settings` in the chat tunes how it plays
+speed).
+
+When someone sits at the air hockey table's other seat, the two play each other with rollback,
+as at the cabinets: each machine runs the whole game a frame at a time from both players'
+inputs (their paddles), guessing the other's until it arrives and replaying the frames since
+when a guess was wrong, so each player's own paddle answers at once. Inputs go a frame late
+(`INPUT_DELAY` in `client/src/hockey/online.rs`), straight between the browsers once WebRTC
+connects. `/settings` in the chat tunes how it plays
 (shot speeds, friction, bounce, pocket size, how the cue pulls back) and racks the balls again.
 
 On a phone or tablet (a screen whose main pointer is a finger) the controls are on the screen

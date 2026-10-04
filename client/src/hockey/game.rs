@@ -15,12 +15,12 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::ui::UiGlobalTransform;
 use bevy::window::CursorOptions;
 use hockey::{
-    Bot, Event, GOAL_WIDTH, HEIGHT, PADDLE_RADIUS, PUCK_RADIUS, Rink, WIDTH, WINNING_SCORE,
+    Bot, Event, GOAL_WIDTH, HEIGHT, Input, PADDLE_RADIUS, PUCK_RADIUS, Rink, WIDTH, WINNING_SCORE,
 };
 
 use wasm_bindgen::prelude::*;
 
-use super::online::Message;
+use super::online::{self, Message};
 use crate::Mode;
 use crate::chat::{Chat, chat_closed};
 use crate::help::Help;
@@ -49,14 +49,6 @@ const GOAL_SHOWN_FOR: f32 = 1.5;
 /// An Esc this soon after the pointer was let go is the one that let it go (the browser takes
 /// it, and may pass it on too): it doesn't also leave the table.
 const ESC_AFTER_UNLOCK: f32 = 0.3;
-/// How often each player tells the other where things are, in seconds.
-const TICK_EVERY: f32 = 1.0 / 30.0;
-/// The puck is handed over once it's this far into the other half.
-const HANDOVER_PAST: f32 = 1.0;
-/// Handed the puck, a player keeps their own rink's puck if it's this close to where the other
-/// player let it go: it's been following it, and is likely a little further along already.
-const KEEP_OWN_PUCK: f32 = 24.0;
-
 /// The air hockey table the player sits at, as the room names it (online::table_id, seats.rs).
 /// Set before switching to `Mode::Hockey`.
 #[derive(Resource)]
@@ -173,19 +165,15 @@ struct Game {
     table_id: Option<String>,
     /// The other player at the table, when there is one: then they play each other, not the bot.
     opponent: Option<Opponent>,
-    /// This player runs the puck (it's in their half), and the other player's rink follows.
-    owner: bool,
-    /// Where the other player's paddle is, as they last said.
-    their_paddle: Vec2,
-    /// Time since this player last told the other where things are.
-    since_tick: f32,
 }
 
 /// Who the player is playing against.
 struct Opponent {
-    /// The player's own seat (0 has their goal at the rink's bottom), and the other player's id.
+    /// The player's own seat (0 has their goal at the rink's bottom), the other player's id,
+    /// and the player's own.
     me: usize,
     id: u32,
+    my_id: u32,
     /// Both seats' names.
     names: [String; 2],
 }
@@ -196,7 +184,7 @@ impl Game {
         self.opponent.as_ref().map_or(0, |opponent| opponent.me)
     }
 
-    /// A fresh game, with the same players: the puck served to seat 0, who runs it.
+    /// A fresh game, with the same players: the puck served to seat 0.
     fn new_game(&mut self) {
         let settings = self.rink.settings;
         self.rink = Rink {
@@ -205,41 +193,29 @@ impl Game {
         };
         self.bot = Bot::default();
         self.goal = None;
-        self.owner = self.me() == 0;
-        self.their_paddle = self.rink.paddles[1 - self.me()];
         self.paddle_placed = false;
         self.slack = Vec2::ZERO;
     }
 
-    /// Against `opponent` now, or against the bot (`None`): a new game either way.
+    /// Against `opponent` now, or against the bot (`None`): a new game either way, the match
+    /// before it (if any) over.
     fn play_against(&mut self, opponent: Option<Opponent>) {
+        online::stop();
         self.opponent = opponent;
         self.target = None;
         self.new_game();
     }
 
-    /// Tells the other player where this player's paddle is, the puck while it's theirs (and
-    /// that they're handing it over), and how many goals they've let in.
-    fn tick(&mut self, handover: bool) {
-        self.since_tick = 0.0;
+    /// The match begins, playing by `settings` (player 1's): both rinks start alike from here.
+    fn begin_match(&mut self, settings: hockey::Settings) {
         let (Some(table), Some(opponent)) = (&self.table_id, &self.opponent) else {
             return;
         };
-        let me = opponent.me;
-        let rink = &self.rink;
-        let puck = (self.owner || handover).then_some([
-            rink.puck.x,
-            rink.puck.y,
-            rink.velocity.x,
-            rink.velocity.y,
-        ]);
-        let tick = Message::Tick {
-            paddle: rink.paddles[me].into(),
-            puck,
-            handover,
-            conceded: rink.score[1 - me],
-        };
-        seats::send(table, opponent.id, &tick);
+        let (table, me, id, my_id) = (table.clone(), opponent.me, opponent.id, opponent.my_id);
+        self.rink.settings = settings;
+        self.new_game();
+        self.target = Some(self.rink.paddles[me]);
+        online::start(&table, me, id, my_id);
     }
 }
 
@@ -378,7 +354,7 @@ fn fit_canvas(window: Single<&Window>, mut canvas: Single<&mut Node, With<Canvas
 /// Sits at the table in the room, starts a match when someone sits at the other seat (and goes
 /// back to the bot when they leave), and follows what they say: their paddle, the puck while
 /// it's theirs, the puck when they hand it over, and the goals they've let in.
-fn sync(at: Option<Res<AtTable>>, mut game: ResMut<Game>) {
+fn sync(at: Option<Res<AtTable>>, settings: Res<Settings>, mut game: ResMut<Game>) {
     let Some(at) = at else {
         return;
     };
@@ -394,6 +370,7 @@ fn sync(at: Option<Res<AtTable>>, mut game: ResMut<Game>) {
         Some(Opponent {
             me,
             id,
+            my_id: seats.me,
             names: seats.names(),
         })
     });
@@ -401,7 +378,19 @@ fn sync(at: Option<Res<AtTable>>, mut game: ResMut<Game>) {
         (Some(opponent), Some(now)) if opponent.id == now.id && opponent.me == now.me => {
             opponent.names = now.names;
         }
-        (_, Some(now)) => game.play_against(Some(now)),
+        (_, Some(now)) => {
+            let (me, id) = (now.me, now.id);
+            game.play_against(Some(now));
+            // Player 1 begins the match, with their settings; player 2 waits for them.
+            if me == 0 {
+                let settings = settings.hockey();
+                let begin = Message::Begin {
+                    settings: online::settings_to_message(&settings),
+                };
+                seats::send(&at.0, id, &begin);
+                game.begin_match(settings);
+            }
+        }
         (Some(_), None) => game.play_against(None),
         (None, None) => {}
     }
@@ -410,46 +399,13 @@ fn sync(at: Option<Res<AtTable>>, mut game: ResMut<Game>) {
     let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
         return;
     };
-    let me = game.me();
     for (_, message) in messages.into_iter().filter(|(from, _)| *from == id) {
         match message {
-            Message::Start => game.new_game(),
-            Message::Tick {
-                paddle,
-                puck,
-                handover,
-                conceded,
-            } => {
-                game.their_paddle = Vec2::from(paddle);
-                if conceded > game.rink.score[me] {
-                    game.goal = Some((me, 0.0));
-                }
-                game.rink.score[me] = conceded;
-                let Some([x, y, vx, vy]) = puck else {
-                    continue;
-                };
-                let (theirs, going) = (Vec2::new(x, y), Vec2::new(vx, vy));
-                let keep_mine = handover
-                    && game.rink.puck.distance(theirs) < KEEP_OWN_PUCK
-                    && in_half(me, game.rink.puck);
-                if (handover || !game.owner) && !keep_mine {
-                    game.rink.puck = theirs;
-                    game.rink.velocity = going;
-                }
-                if handover {
-                    game.owner = true;
-                }
+            Message::Begin { settings } if game.me() == 1 => {
+                game.begin_match(online::settings_from_message(settings));
             }
+            Message::Begin { .. } => {}
         }
-    }
-}
-
-/// Whether `at` (as seat 0 sees the rink) is in `seat`'s half.
-fn in_half(seat: usize, at: Vec2) -> bool {
-    if seat == 0 {
-        at.y > HEIGHT / 2.0
-    } else {
-        at.y < HEIGHT / 2.0
     }
 }
 
@@ -472,7 +428,10 @@ fn play(
 ) {
     let game = &mut *game;
     let seconds = time.delta_secs();
-    game.rink.settings = settings.hockey();
+    // Against someone, both rinks play by the settings the match began with.
+    if game.opponent.is_none() {
+        game.rink.settings = settings.hockey();
+    }
     if let Some((_, since)) = &mut game.goal {
         *since += seconds;
     }
@@ -537,19 +496,30 @@ fn play(
     let pressed = !busy && (mouse.pressed(MouseButton::Left) || touch.finger().is_some());
     let fresh_press = pressed && !game.was_pressed;
     game.was_pressed = pressed;
-    if game.rink.winner().is_some() {
-        // Against someone, player 1 starts the next game, for both.
-        if fresh_press && me == 0 {
-            game.new_game();
-            if let (Some(table), Some(opponent)) = (&game.table_id, &game.opponent) {
-                seats::send(table, opponent.id, &Message::Start);
-            }
+    if online {
+        // The rink plays on GGRS's frames, from both players' inputs (online.rs). Player 1's
+        // press after someone won starts the next game, on both rinks at the same frame.
+        let target = game.target.unwrap_or(game.rink.paddles[me]);
+        let new_game = fresh_press && me == 0 && game.rink.winner().is_some();
+        let before = game.rink.score;
+        online::play(&mut game.rink, Input::new(target, new_game), seconds);
+        let after = game.rink.score;
+        if after == [0, 0] && before != after {
+            game.goal = None;
+        } else if let Some(scorer) = (0..2).find(|&seat| after[seat] > before[seat]) {
+            game.goal = Some((scorer, 0.0));
         }
         return;
     }
-    // Against the bot, waiting for a click, or for the chat or a panel to close, time stands
-    // still. Against someone it can't: the paddle just stays where it is.
-    if !online && (busy || control == Control::Paused) {
+
+    if game.rink.winner().is_some() {
+        if fresh_press {
+            game.new_game();
+        }
+        return;
+    }
+    // Waiting for a click, or for the chat or a panel to close: time stands still.
+    if busy || control == Control::Paused {
         return;
     }
 
@@ -559,42 +529,12 @@ fn play(
         game.rink.paddles[me] = target.clamp(low, high);
         game.paddle_placed = true;
     }
-    let mut targets = [Vec2::ZERO; 2];
-    targets[me] = game.target.unwrap_or(game.rink.paddles[me]);
-    targets[1 - me] = if online {
-        game.their_paddle
-    } else {
-        game.bot.target(&game.rink, seconds)
-    };
-    // The puck is run by whoever's half it's in: the other rink follows, and doesn't score.
-    let events = if !online || game.owner {
-        game.rink.advance(targets, seconds)
-    } else {
-        game.rink.advance_following(targets, seconds)
-    };
-    for event in events {
+    let mine = game.target.unwrap_or(game.rink.paddles[0]);
+    let bot = game.bot.target(&game.rink, seconds);
+    for event in game.rink.advance([mine, bot], seconds) {
         if let Event::Goal(scorer) = event {
             game.goal = Some((scorer, 0.0));
-            // Let in here, and served again on this side: say so straight away.
-            game.tick(false);
         }
-    }
-    if !online {
-        return;
-    }
-    // How far the puck is into the other player's half (seat 0's is the bottom one).
-    let into_theirs = if me == 0 {
-        HEIGHT / 2.0 - game.rink.puck.y
-    } else {
-        game.rink.puck.y - HEIGHT / 2.0
-    };
-    if game.owner && into_theirs > HANDOVER_PAST {
-        game.tick(true);
-        game.owner = false;
-    }
-    game.since_tick += seconds;
-    if game.since_tick >= TICK_EVERY {
-        game.tick(false);
     }
 }
 
@@ -702,6 +642,7 @@ fn draw_rink() -> Pixels {
 fn show_text(game: Res<Game>, touch: Res<Touch>, mut texts: Query<(&Says, &mut Text)>) {
     let rink = &game.rink;
     let control = Control::now(&touch);
+    let net = online::state();
     let me = game.me();
     // The bot, or the other player by name, and player 1, who starts games against someone.
     let (them, first) = match &game.opponent {
@@ -716,6 +657,15 @@ fn show_text(game: Res<Game>, touch: Res<Touch>, mut texts: Query<(&Says, &mut T
             Says::TheirScore => format!("{them}\n{}", rink.score[1 - me]),
             Says::YourScore => format!("{}\nYou", rink.score[me]),
             Says::Status => match (rink.winner(), game.goal) {
+                // Against someone: getting in step with them, or their packets stopped.
+                _ if game.opponent.is_some()
+                    && matches!(net, online::State::None | online::State::Connecting) =>
+                {
+                    format!("Connecting to {them}...")
+                }
+                _ if net == online::State::Interrupted => {
+                    format!("Waiting for {them}'s connection...")
+                }
                 (Some(winner), _) => {
                     let who = if winner == me {
                         "You win".to_string()
