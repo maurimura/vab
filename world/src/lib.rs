@@ -251,9 +251,23 @@ mod tests {
         let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
         let mslug = games.iter().find(|g| g.rom == "mslug").unwrap();
         assert_eq!(mslug.bios.as_deref(), Some("neogeo"));
-        assert!(mslug.cabinets.is_empty());
+        assert_eq!(mslug.cabinets, ["mslug"]);
+        assert_eq!(mslug.core, "neogeo");
+        assert_eq!(mslug.players, 2);
         let mk2 = games.iter().find(|g| g.rom == "mk2").unwrap();
         assert_eq!(mk2.cabinets, ["mk2", "mk2_v2"]);
+        for (rom, core, players, skin) in [
+            ("dinou", "capcom", 3, "dino"),
+            ("simpsons", "konami", 4, "simpsons"),
+            ("nbajam", "midway", 4, "nbajam"),
+        ] {
+            let game = games.iter().find(|g| g.rom == rom).unwrap();
+            assert_eq!(game.core, core);
+            assert_eq!(game.players, players);
+            assert_eq!(game.cabinets, [skin]);
+            assert!(!game.turns);
+            assert!(game.bios.is_none());
+        }
         assert!(
             games
                 .iter()
@@ -262,6 +276,24 @@ mod tests {
                 .bios
                 .is_none()
         );
+    }
+
+    #[test]
+    fn catalog_cabinet_skins_have_all_four_views() {
+        let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
+        let tiles =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tiles/objects");
+        for game in games {
+            assert!(!game.cabinets.is_empty(), "{} has no cabinet", game.title);
+            for skin in game.cabinets {
+                for facing in ["down_right", "down_left", "up_left", "up_right"] {
+                    assert!(
+                        tiles.join(format!("cabinet_{skin}_{facing}.png")).is_file(),
+                        "{skin} is missing {facing}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

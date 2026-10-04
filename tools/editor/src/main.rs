@@ -180,6 +180,17 @@ struct Cabinet {
     game: Option<Game>,
 }
 
+impl Cabinet {
+    /// Show the game title, not its internal ROM/skin identifier.
+    fn label(&self) -> &str {
+        match (&self.skin, &self.game) {
+            (Some(_), Some(game)) => &game.title,
+            (Some(skin), None) => skin,
+            (None, _) => "plain",
+        }
+    }
+}
+
 /// The tile of a cabinet skin (`None` for the plain one) facing one way.
 fn cabinet_tile(skin: Option<&str>, facing: &str) -> String {
     match skin {
@@ -355,6 +366,15 @@ fn game_title<'a>(games: &'a [Game], rom: &'a str) -> &'a str {
         .iter()
         .find(|game| game.rom == rom)
         .map_or(rom, |game| game.title.as_str())
+}
+
+/// A placed cabinet's game title, without internal tile/ROM identifiers.
+fn placed_label<'a>(games: &'a [Game], placed: &'a Placed) -> &'a str {
+    placed
+        .game
+        .as_deref()
+        .and_then(|rom| games.iter().find(|game| game.rom == rom))
+        .map_or(placed.tile.as_str(), |game| game.title.as_str())
 }
 
 /// A dropdown of the games in games.ron, "(none)" first, that writes the pick into `rom`.
@@ -940,14 +960,15 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
         _ => 0,
     };
     for cabinet in &editor.cabinets {
-        let name = match (&cabinet.skin, &cabinet.game) {
-            (Some(skin), Some(game)) => format!("{skin}: {}", game.title),
-            (Some(skin), None) => skin.clone(),
-            (None, _) => "plain".into(),
-        };
+        let name = cabinet.label();
         let selected =
             matches!(&editor.brush, Brush::Cabinet { skin, .. } if skin == &cabinet.skin);
-        if ui.selectable_label(selected, name).clicked() {
+        // Variants can share a title; retain the skin only as the widget's identity.
+        if ui
+            .push_id(&cabinet.skin, |ui| ui.selectable_label(selected, name))
+            .inner
+            .clicked()
+        {
             editor.brush = Brush::Cabinet {
                 skin: cabinet.skin.clone(),
                 facing,
@@ -973,7 +994,10 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
         }
         Brush::Move => match selected(editor).cloned() {
             Some(placed) => {
-                ui.label(format!("Selected: {}", placed.tile));
+                ui.label(format!(
+                    "Selected: {}",
+                    placed_label(&editor.games, &placed)
+                ));
                 let mut rom = placed.game.clone().unwrap_or_default();
                 match cabinet_parts(&placed.tile) {
                     // A skin's cabinets keep the skin's game.
@@ -1010,12 +1034,7 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
     if let Some(cell) = editor.hovered {
         let object = editor.map.objects.iter().find(|p| p.covers(cell));
         let text = match object {
-            Some(Placed {
-                tile,
-                game: Some(rom),
-                ..
-            }) => format!("{tile} [{}]", game_title(&editor.games, rom)),
-            Some(placed) => placed.tile.clone(),
+            Some(placed) => placed_label(&editor.games, placed).to_owned(),
             None => "empty".into(),
         };
         ui.label(format!("Cell ({}, {}): {text}", cell.x, cell.y));
@@ -1054,4 +1073,68 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.small(
                 "Left click: paint, or select what is there\nRight click: erase\n[ / ]: brush size\nR: turn a cabinet\nM: move things (drag; Delete removes)\nScroll, arrows, WASD: pan\n+ / -, pinch: zoom",
             );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cabinet_labels_use_only_the_game_title() {
+        for game in games_from_ron(GAMES).unwrap() {
+            for skin in &game.cabinets {
+                let cabinet = Cabinet {
+                    skin: Some(skin.clone()),
+                    game: Some(game.clone()),
+                };
+                assert_eq!(cabinet.label(), game.title);
+            }
+        }
+    }
+
+    #[test]
+    fn moved_and_hovered_cabinets_use_only_the_game_title() {
+        let games = games_from_ron(GAMES).unwrap();
+        for game in &games {
+            for skin in &game.cabinets {
+                let placed = Placed {
+                    x: 0,
+                    y: 0,
+                    tile: cabinet_tile(Some(skin), FACINGS[0]),
+                    game: Some(game.rom.clone()),
+                };
+                assert_eq!(placed_label(&games, &placed), game.title);
+            }
+        }
+    }
+
+    #[test]
+    fn unassigned_objects_keep_their_asset_label() {
+        let placed = Placed {
+            x: 0,
+            y: 0,
+            tile: "objects/air_hockey".into(),
+            game: None,
+        };
+        assert_eq!(placed_label(&[], &placed), "objects/air_hockey");
+    }
+
+    #[test]
+    fn cabinet_variants_share_a_title_but_keep_distinct_identity() {
+        let game = games_from_ron(GAMES)
+            .unwrap()
+            .into_iter()
+            .find(|game| game.rom == "mk2")
+            .unwrap();
+        let original = Cabinet {
+            skin: Some("mk2".into()),
+            game: Some(game.clone()),
+        };
+        let alternative = Cabinet {
+            skin: Some("mk2_v2".into()),
+            game: Some(game),
+        };
+        assert_eq!(original.label(), alternative.label());
+        assert_ne!(original.skin, alternative.skin);
+    }
 }

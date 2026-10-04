@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "skin": "mslug",
+  "rom": "mslug",
+  "title": "METAL SLUG / ONLINE REFERENCE PILOT",
+  "variant": "Neo Geo MVS four-slot big-red shell, with Metal Slug in the first mini-marquee bay",
+  "renderer": "mvs",
+  "size": [40, 56],
+  "players": 2,
+  "buttons_per_player": 4,
+  "game_actions": ["Shoot", "Jump", "Grenade"],
+  "preview_note": "40 x 56 px | MVS big red / original-art scan / two players / four-button panel / other bays blank",
+  "stations": [12, 5],
+  "buttons": [
+    {"name": "A", "position": [11.4, -1.2], "color": [224, 39, 36]},
+    {"name": "B", "position": [12.1, -1.5], "color": [245, 209, 37]},
+    {"name": "C", "position": [12.8, -2.1], "color": [48, 182, 70]},
+    {"name": "D", "position": [13.5, -2.7], "color": [40, 128, 222]}
+  ],
+  "colors": {"body": [211, 43, 36], "trim": [17, 19, 22], "stick": [23, 25, 28]},
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "page_url": "https://commons.wikimedia.org/wiki/File:Neo_Geo_full_on.png",
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/d/d5/Neo_Geo_full_on.png",
+      "author": "Beeblebrox (Wikipedia)",
+      "kind": "original-cabinet-photo",
+      "rights": "Photo CC BY-SA 3.0, https://creativecommons.org/licenses/by-sa/3.0/; printed SNK artwork and trademarks retain their underlying rights. Derived logo extractions and renders acknowledge this photo license.",
+      "purpose": "Red MVS shell, black molding, Neo Geo/MVS/SNK side logos and four-slot marquee geometry. The photographed custom deck is not reused.",
+      "sha256": "58b99846db866e9e62a8f89af1d02d4d8756c553efe811a37d72523720a4a8e8"
+    },
+    "marquee": {
+      "file": "mini-marquee.jpg",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/8137",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=8137&part=e&download",
+      "kind": "original-art-scan",
+      "rights": "Printed artwork credits copyright 1996 NAZCA CORPORATION and SNK trademarks. Scan hosted by a third-party archive, not publisher permission or a verified redistribution license.",
+      "purpose": "Original Metal Slug mini-marquee, title, tank, Marco and A/B/C/D action labels. Originality supported by printed credits and the photographed conversion cabinet, not independently authenticated by the publisher.",
+      "sha256": "05325f2997fd632b9cc8d2f4cead2b64ed33bd4c2473bb3f1ced20f92ed05fb7"
+    },
+    "controls": {
+      "file": "controls.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/5418",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/neogeo.png",
+      "kind": "original-cabinet-photo",
+      "rights": "Archive photo of an SNK-branded panel; photographer and redistribution license unknown. Original panel/reproduction status not independently authenticated.",
+      "purpose": "Red diagonal-striped MVS panel, black sticks and red/yellow/green/blue four-button layout.",
+      "sha256": "e1184bb397bbb39dcca02e0a5f7660c41ac08d8ee8c89ca6db11dbd662acd51f"
+    },
+    "conversion": {
+      "file": "conversion-cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=mslug",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/mslug.png",
+      "kind": "original-cabinet-photo",
+      "rights": "Archive cabinet photograph; author/license unknown, underlying artwork NAZCA/SNK.",
+      "purpose": "Corroborates original mini-marquee appearance and four-button layout. Black single-slot conversion is a different variant and is not used as the red shell texture.",
+      "sha256": "d97581270d35faa1ce44eb245bf647cf5d38e0bc57829aedaa90683eb07b1c4e"
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "rights": "Captured from the user's existing local ROM; game imagery copyright NAZCA/SNK. No ROM downloaded or committed.",
+      "purpose": "Real Metal Slug display from the pinned Neo Geo core, mslug.state, port 0 Start for 15 frames, then 600 neutral frames. Native core output 304x224.",
+      "sha256": "5c7dd04a31993ff2f8627cbf5916f0b634feaad2cf7b3cc72504e455bb579a73"
+    }
+  },
+  "textures": {
+    "left": {
+      "canvas": [128, 384], "fill": [211, 43, 36], "size": [18, 54],
+      "patches": [
+        {"source": "cabinet", "quad": [[51, 340], [241, 370], [240, 426], [56, 404]], "placement": [14, 95, 100, 35], "white_ink": true},
+        {"source": "cabinet", "quad": [[104, 451], [187, 466], [190, 512], [103, 497]], "placement": [36, 143, 56, 31], "white_ink": true},
+        {"source": "cabinet", "quad": [[87, 672], [215, 723], [222, 769], [89, 716]], "placement": [24, 220, 80, 38], "white_ink": true}
+      ]
+    },
+    "right": {
+      "canvas": [128, 384], "fill": [211, 43, 36], "size": [18, 54],
+      "patches": [
+        {"source": "cabinet", "quad": [[51, 340], [241, 370], [240, 426], [56, 404]], "placement": [14, 95, 100, 35], "white_ink": true},
+        {"source": "cabinet", "quad": [[104, 451], [187, 466], [190, 512], [103, 497]], "placement": [36, 143, 56, 31], "white_ink": true},
+        {"source": "cabinet", "quad": [[87, 672], [215, 723], [222, 769], [89, 716]], "placement": [24, 220, 80, 38], "white_ink": true}
+      ]
+    },
+    "marquee": {
+      "canvas": [200, 80], "fill": [211, 43, 36], "size": [24, 9],
+      "rectangles": [
+        {"box": [11, 29, 43, 69], "color": [239, 231, 209]},
+        {"box": [58, 29, 90, 69], "color": [239, 231, 209]},
+        {"box": [105, 29, 137, 69], "color": [239, 231, 209]},
+        {"box": [152, 29, 184, 69], "color": [239, 231, 209]}
+      ],
+      "patches": [
+        {"source": "cabinet", "quad": [[452, 79], [598, 88], [596, 123], [451, 115]], "placement": [57, 3, 86, 21], "white_ink": true},
+        {"source": "marquee", "placement": [12, 30, 31, 38]}
+      ]
+    },
+    "controls": {"source": "controls", "quad": [[57, 37], [667, 37], [713, 209], [14, 209]], "rectified_size": [192, 64], "size": [24, 9]},
+    "screen": {"source": "screen", "size": [18, 10]}
+  },
+  "uncertainties": [
+    "This is a supported MVS big-red interpretation, not a unique factory-dedicated Metal Slug cabinet; the game was a cartridge/kit.",
+    "The photographed red cabinet has custom deck artwork. The pilot deliberately uses a separate SNK-striped panel reference instead.",
+    "Metal Slug occupies one mini-marquee bay; other bays are blank rather than misrepresenting other games. The game remains mslug only, not a selectable multi-game machine.",
+    "Only one red cabinet side is documented. The generic Neo Geo/MVS/SNK print is reused on the opposite side with readable orientation; no game-specific character side art is invented.",
+    "Publisher-hosted digital master art was not found. Third-party scans/photos and their underlying artwork rights need review before redistribution/deployment."
+  ]
+}

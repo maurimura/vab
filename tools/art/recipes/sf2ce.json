@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "skin": "sf2ce",
+  "rom": "sf2ce",
+  "title": "STREET FIGHTER II' CHAMPION EDITION / ONLINE REFERENCES",
+  "variant": "Champion Edition conversion upright, granite operator kit, dark brown sides and black molding",
+  "renderer": "upright",
+  "shell": "upright",
+  "size": [
+    32,
+    48
+  ],
+  "players": 2,
+  "control_stations": 2,
+  "buttons_per_player": 6,
+  "stations": [
+    10.5,
+    5.5
+  ],
+  "buttons": [
+    {
+      "position": [
+        11,
+        -1.4
+      ],
+      "color": [
+        224,
+        42,
+        36
+      ]
+    },
+    {
+      "position": [
+        11,
+        -2.3
+      ],
+      "color": [
+        232,
+        230,
+        211
+      ]
+    },
+    {
+      "position": [
+        11,
+        -3.2
+      ],
+      "color": [
+        36,
+        113,
+        211
+      ]
+    },
+    {
+      "position": [
+        12.2,
+        -1.1
+      ],
+      "color": [
+        224,
+        42,
+        36
+      ]
+    },
+    {
+      "position": [
+        12.2,
+        -2.0
+      ],
+      "color": [
+        232,
+        230,
+        211
+      ]
+    },
+    {
+      "position": [
+        12.2,
+        -2.9
+      ],
+      "color": [
+        36,
+        113,
+        211
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      20,
+      23,
+      27
+    ],
+    "side": [
+      56,
+      34,
+      30
+    ],
+    "trim": [
+      19,
+      21,
+      25
+    ],
+    "stick": [
+      22,
+      24,
+      27
+    ]
+  },
+  "preview_note": "Champion Edition conversion upright, granite operator kit, dark brown sides and black molding",
+  "sources": {
+    "marquee": {
+      "file": "marquee.png",
+      "kind": "original-art-scan",
+      "purpose": "Original-design operator marquee; corroborated by game branding/printed credits, not independently authenticated by publisher.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/101366",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=101366&part=e&download",
+      "rights": "Underlying original-design artwork Capcom; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "0945443cfeb1a60d0c89f0a13bfc6df3ea9e417f508f1d57a9b99438d5d38814",
+      "download_sha256": "1948b91238386c4fa12d205ed43d1879b7628b001797ed2e8a0c771741c00525",
+      "processing": "Working reference reduced with Pillow BOX to at most 2048px; downloaded size [7800, 1950], stored size [2048, 512]."
+    },
+    "controls": {
+      "file": "controls.png",
+      "kind": "original-cabinet-photo",
+      "purpose": "Photographed original-design operator control panel; informs placement/colors and carries the actual printed instructions.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=sf2ce",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/sf2ce.png",
+      "rights": "Underlying original-design artwork Capcom; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "5d738bcbaacf231faf1e96554822f41ffa7a659d3f76bbe23dd40583fdf73150"
+    },
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Archive cabinet/restoration reference for geometry; unverified replacement prints are not silently treated as original masters.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=sf2ce",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/sf2ce.png",
+      "rights": "Underlying original-design artwork Capcom; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "45c509ceb2d05a27b608228e714ac3aceb7f6a93337d225a18d9abb95211153c"
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real display captured with tools/art/capture_screen.mjs from an existing user-supplied local ROM and matching local startup state; Start 15 frames then 600 neutral frames. No ROM fetched or committed.",
+      "rights": "Game imagery Capcom, captured from user-supplied local game; no redistribution license inferred.",
+      "sha256": "40d9c33b3397997d5a5548d95c9b6bbfe2b480fb71dc88e11b27e2fcf8b50cb7"
+    },
+    "bezel": {
+      "file": "bezel.jpg",
+      "kind": "original-art-scan",
+      "purpose": "Champion Edition granite fighter-character operator bezel carrying 1992 Capcom credits.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=sf2ce",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcartmore168/sf2ce_bezel.png",
+      "rights": "Underlying original-design artwork Capcom; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "5053569d46692c3c2afb8bb59cc88ce8c43bff141b271828665bb7ec800cc2ef"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "marquee",
+      "size": [
+        16,
+        6
+      ]
+    },
+    "controls": {
+      "source": "controls",
+      "quad": [
+        [
+          24,
+          2
+        ],
+        [
+          674,
+          2
+        ],
+        [
+          691,
+          153
+        ],
+        [
+          8,
+          161
+        ]
+      ],
+      "rectified_size": [
+        160,
+        60
+      ],
+      "size": [
+        16,
+        9
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        12,
+        12
+      ]
+    },
+    "bezel": {
+      "source": "bezel",
+      "size": [
+        18,
+        18
+      ]
+    }
+  },
+  "uncertainties": [
+    "Publisher-hosted masters were not found; archive scans/photos retain underlying rights and are not deployment permission.",
+    "Only the requested game runs at this skin; artwork does not change ROM/core or seat count.",
+    "Plain brown conversion sides follow the photo; no unverified side decal is invented. Six modeled buttons per player are fighting actions; photographed start buttons remain in the overlay."
+  ],
+  "station_colors": [
+    [
+      22,
+      24,
+      27
+    ],
+    [
+      221,
+      35,
+      34
+    ]
+  ]
+}

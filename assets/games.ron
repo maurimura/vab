@@ -6,12 +6,15 @@
 // the editor gives a cabinet in one of them the game.
 [
     (rom: "mk2", core: "midway", title: "Mortal Kombat II", cabinets: ["mk2", "mk2_v2"]),
-    (rom: "mslug", core: "neogeo", title: "Metal Slug", bios: Some("neogeo")),
+    (rom: "nbajam", core: "midway", title: "NBA Jam", players: 4, cabinets: ["nbajam"]),
+    (rom: "mslug", core: "neogeo", title: "Metal Slug", bios: Some("neogeo"), cabinets: ["mslug"]),
     (rom: "snowbrosb", core: "snowbros", title: "Snow Bros.", cabinets: ["snowbros"]),
-    (rom: "mvscu", core: "capcom", title: "Marvel vs. Capcom"),
+    (rom: "mvscu", core: "capcom", title: "Marvel vs. Capcom", cabinets: ["mvsc"]),
     (rom: "ssriders", core: "konami", title: "Sunset Riders", players: 4, cabinets: ["sunsetriders"]),
-    (rom: "sf2ce", core: "capcom", title: "Street Fighter II' Champion Edition"),
-    (rom: "pacman", core: "classics", title: "Pac-Man", turns: true),
-    (rom: "atetris", core: "classics", title: "Tetris"),
-    (rom: "wboy", core: "classics", title: "Wonder Boy", turns: true),
+    (rom: "dinou", core: "capcom", title: "Cadillacs and Dinosaurs", players: 3, cabinets: ["dino"]),
+    (rom: "simpsons", core: "konami", title: "The Simpsons", players: 4, cabinets: ["simpsons"]),
+    (rom: "sf2ce", core: "capcom", title: "Street Fighter II' Champion Edition", cabinets: ["sf2ce"]),
+    (rom: "pacman", core: "classics", title: "Pac-Man", turns: true, cabinets: ["pacman"]),
+    (rom: "atetris", core: "classics", title: "Tetris", cabinets: ["atetris"]),
+    (rom: "wboy", core: "classics", title: "Wonder Boy", turns: true, cabinets: ["wboy"]),
 ]

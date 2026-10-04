@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "skin": "simpsons",
+  "rom": "simpsons",
+  "title": "THE SIMPSONS / REFERENCE PASS",
+  "variant": "Four-player cabinet with cyan family-stack side decals and yellow molding, approved by the user",
+  "renderer": "simpsons-legacy",
+  "size": [48, 56],
+  "players": 4,
+  "buttons_per_player": 2,
+  "preview_note": "48 x 56 px | four players / cyan family-stack sides / yellow molding / twin coin doors",
+  "sources": {
+    "front": {
+      "file": "front.png",
+      "kind": "user-supplied-reference",
+      "rights": "User-supplied photo; photographer/redistribution rights unknown, printed artwork Konami/The Simpsons rights holders.",
+      "purpose": "Marquee, cyan character deck, monitor and control colors.",
+      "sha256": "c66e6d4b62a0bc6974296157992ce06ea7e3481bb30ac7d78981180da38e74fd"
+    },
+    "decals": {
+      "file": "decals.png",
+      "kind": "user-supplied-reference",
+      "rights": "User-supplied decal sheet; original/reproduction status and redistribution rights unverified.",
+      "purpose": "Both outside-facing family-stack side prints and title lettering.",
+      "sha256": "e0b2c0c5290c694def17ce444d82a14e7ae63bc0cbcbe649cc27ab3de46ab3b3"
+    },
+    "side_left": {
+      "file": "side_left.png",
+      "kind": "user-supplied-reference",
+      "rights": "User-supplied cabinet photo; photographer/redistribution rights unknown.",
+      "purpose": "Yellow cabinet and projecting deck T-molding.",
+      "sha256": "a5313527ef084792599330bc9195d52cedef3eaebf21879789d57151a1e4cba8"
+    }
+  },
+  "approved_sha256": {
+    "down_left": "ce67d5f000378b2bc0cbee16c7ba637f58e983123834825e445957e1a1f0f74d",
+    "down_right": "8b952232aa32910595d5372aa15c57501af6aa2b1c9d1fcbdbb4a07e3ffd84b9",
+    "up_left": "aad600abfce7ebcb6cea5047acf8909949714987a2938c5e7e14aeb7eb80818d",
+    "up_right": "efc047395d364a0ec4a47959e3b17847b8e7f9bc6adf28359f39a056dcb7e5a3"
+  },
+  "uncertainties": ["This legacy adapter deliberately preserves approved output; crop/model parameters still live in build_simpsons.py until a separately reviewed migration."]
+}

@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "skin": "atetris",
+  "rom": "atetris",
+  "title": "TETRIS / ONLINE REFERENCES",
+  "variant": "Atari Games conversion upright with cathedral side decals, red molding and Soviet skyline operator kit",
+  "renderer": "upright",
+  "shell": "upright",
+  "size": [
+    32,
+    48
+  ],
+  "players": 2,
+  "control_stations": 2,
+  "buttons_per_player": 2,
+  "stations": [
+    10.5,
+    5.5
+  ],
+  "buttons": [
+    {
+      "position": [
+        11,
+        -1.5
+      ],
+      "color": [
+        224,
+        42,
+        36
+      ]
+    },
+    {
+      "position": [
+        12.1,
+        -2.5
+      ],
+      "color": [
+        36,
+        113,
+        211
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      19,
+      22,
+      25
+    ],
+    "side": [
+      27,
+      25,
+      24
+    ],
+    "trim": [
+      206,
+      36,
+      43
+    ],
+    "stick": [
+      226,
+      37,
+      32
+    ]
+  },
+  "preview_note": "Cathedral side decals and red molding from the supplied photo; existing Atari operator kit retained",
+  "sources": {
+    "side_reference": {
+      "file": "side-reference.png",
+      "kind": "user-supplied-reference",
+      "purpose": "Supplied cabinet photo: rectified cathedral/TETRIS side decal and red T-molding placement. Complements the retained archive operator kit.",
+      "supplied_filename": "clipboard-2026-10-04-150358-9303A4A5.png",
+      "rights": "User-supplied photo; photographer and original-versus-restored print status unknown. Underlying Tetris/Atari artwork rights retained; no redistribution permission inferred.",
+      "sha256": "724f803e28136c21271427a7ba5c3aa76c7e39c6f97cf3af487fdd32f7a4b36c"
+    },
+    "marquee": {
+      "file": "marquee.jpg",
+      "kind": "original-art-scan",
+      "purpose": "Original-design operator marquee; corroborated by game branding/printed credits, not independently authenticated by publisher.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/12466",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=12466&part=e&download",
+      "rights": "Underlying original-design artwork Atari Games/Tetris rights holders; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "a8e9d24701a06903e1eb9cdfea426735180e66a9688e85a90a1d4855af96d0dc",
+      "download_sha256": "d7767f560a0deb72d1da93b06c6f9b0708d60b7807586d6151f77e3a2d813161",
+      "processing": "Working reference reduced with Pillow BOX to at most 2048px; downloaded size [6832, 2400], stored size [2048, 719]."
+    },
+    "controls": {
+      "file": "controls.png",
+      "kind": "original-cabinet-photo",
+      "purpose": "Photographed original-design operator control panel; informs placement/colors and carries the actual printed instructions.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=atetris",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/atetris.png",
+      "rights": "Underlying original-design artwork Atari Games/Tetris rights holders; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "fb97500b128ae7b1f2b79c5e94427df1a7acc6d57770705c7b3c4ac1dfb20fb9"
+    },
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Archive cabinet/restoration reference for geometry; unverified replacement prints are not silently treated as original masters.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=atetris",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/atetris.png",
+      "rights": "Underlying original-design artwork Atari Games/Tetris rights holders; third-party archive, not publisher authorization. Photographer/scan redistribution rights and original-versus-restored object status unverified.",
+      "sha256": "ac2c18eb0a58349fe85ef1947c038cbbcfb6aa0d58d91a7836b12178de406acf"
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real display captured with tools/art/capture_screen.mjs from the existing user-supplied local ROM/state, using --confirm --frames=1200: Start 15 frames, neutral 120, action 15 to confirm difficulty, neutral 1200 to reach actual play. No ROM fetched or committed.",
+      "rights": "Game imagery Atari Games/Tetris rights holders, captured from user-supplied local game; no redistribution license inferred.",
+      "sha256": "39d0e66fc7beccd26f23a2b4da50da0f9a52a0d24d0a9291dfc6cb68a139d874"
+    }
+  },
+  "textures": {
+    "left": {
+      "canvas": [90, 320],
+      "fill": [27, 25, 24],
+      "size": [18, 48],
+      "patches": [{
+        "source": "side_reference",
+        "quad": [[398, 181], [538, 192], [522, 489], [388, 516]],
+        "rectified_size": [180, 360],
+        "placement": [8, 55, 50, 116]
+      }]
+    },
+    "right": {
+      "canvas": [90, 320],
+      "fill": [27, 25, 24],
+      "size": [18, 48],
+      "patches": [{
+        "source": "side_reference",
+        "quad": [[398, 181], [538, 192], [522, 489], [388, 516]],
+        "rectified_size": [180, 360],
+        "placement": [32, 55, 50, 116]
+      }]
+    },
+    "marquee": {
+      "source": "marquee",
+      "size": [
+        16,
+        6
+      ]
+    },
+    "controls": {
+      "source": "controls",
+      "quad": [
+        [
+          25,
+          20
+        ],
+        [
+          723,
+          20
+        ],
+        [
+          743,
+          161
+        ],
+        [
+          7,
+          159
+        ]
+      ],
+      "rectified_size": [
+        160,
+        60
+      ],
+      "size": [
+        16,
+        9
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        12,
+        12
+      ]
+    },
+    "bezel": {
+      "source": "cabinet",
+      "quad": [
+        [
+          57,
+          168
+        ],
+        [
+          366,
+          157
+        ],
+        [
+          373,
+          400
+        ],
+        [
+          77,
+          431
+        ]
+      ],
+      "rectified_size": [
+        120,
+        120
+      ],
+      "size": [
+        16,
+        16
+      ]
+    },
+    "panel": {
+      "source": "cabinet",
+      "quad": [
+        [
+          85,
+          497
+        ],
+        [
+          435,
+          447
+        ],
+        [
+          427,
+          517
+        ],
+        [
+          104,
+          583
+        ]
+      ],
+      "rectified_size": [
+        160,
+        32
+      ],
+      "size": [
+        16,
+        4
+      ]
+    }
+  },
+  "uncertainties": [
+    "Publisher-hosted masters were not found; archive scans/photos retain underlying rights and are not deployment permission.",
+    "Only the requested game runs at this skin; artwork does not change ROM/core or seat count.",
+    "The supplied photo documents one cathedral side decal, reused on both sides with readable lettering and corresponding placement; the opposite-side original print is not independently verified. Plain black surrounds the decal, not enlarged full-height artwork.",
+    "Red molding follows the supplied conversion/restoration cabinet, not a universal factory color claim. Existing archived marquee/bezel/deck remain the selected Atari operator kit.",
+    "Modeled buttons are two Rotate buttons per player; photographed start buttons remain in the overlay."
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "skill_name": "create-cabinet",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Create a Metal Slug cabinet using references you find online. Prefer original official operator artwork, not fan art. Preserve the map and do not deploy.",
+      "expected_output": "A documented MVS variant, four cabinet sprites and editable layers, an online-source record and preview for human approval. Third-party scans are not represented as publisher permission.",
+      "files": [],
+      "expectations": [
+        "Recipe retains source URLs and SHA-256 for every downloaded image.",
+        "Mini-marquee is classified as an original-art scan with underlying NAZCA/SNK rights and third-party-hosting caveat.",
+        "Two players have four physical MVS buttons each, distinct from three game actions.",
+        "All four views fit their canvases and editable layers recompose exactly.",
+        "No map changes or deployment are performed by the cabinet pipeline."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Rebuild the approved Simpsons cabinet through the new pipeline without changing its appearance.",
+      "expected_output": "The existing four approved sprites remain byte-identical; source metadata and a legacy renderer adapter allow the new workflow to validate and build them.",
+      "files": [],
+      "expectations": [
+        "The four generated PNGs match their recorded approved SHA-256 hashes.",
+        "The source references retain their user-supplied status rather than fabricated online provenance.",
+        "The cyan family-stack side art and yellow trim are preserved."
+      ]
+    }
+  ]
+}

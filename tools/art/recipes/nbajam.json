@@ -1,0 +1,114 @@
+{
+  "version": 1,
+  "skin": "nbajam",
+  "rom": "nbajam",
+  "title": "NBA JAM / ORIGINAL FOUR-PLAYER STYLE",
+  "variant": "1993 Midway four-player upright: basketball-textured NBA logo sides, black molding and blue/red court deck",
+  "renderer": "wide",
+  "size": [48, 56],
+  "players": 4,
+  "control_stations": 4,
+  "buttons_per_player": 3,
+  "stations": [15.5, 10.5, 5.5, 0.5],
+  "station_colors": [[34, 137, 221], [34, 137, 221], [226, 37, 35], [226, 37, 35]],
+  "buttons": [
+    {"position": [11.8, -1.0], "color": [226, 37, 35]},
+    {"position": [12.7, -1.8], "color": [34, 137, 221]},
+    {"position": [13.2, 1.0], "color": [239, 237, 218]}
+  ],
+  "colors": {"body": [18, 20, 25], "trim": [15, 18, 23]},
+  "preview_note": "48 x 56 px | four players / three action buttons each / NBA side logos / black trim / real tip-off capture",
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Photograph of the basketball-textured dedicated-style four-player cabinet. Supplies side branding, bezel/placement and fascia; shape and original-design kit corroborated by the 1993 Midway flyer. Restoration status unverified.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/96041",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/nbajam.png",
+      "rights": "Third-party photograph: photographer/license unverified. Underlying Midway/NBA artwork and trademarks retained; archive hosting is not publisher authorization or redistribution permission.",
+      "sha256": "43a1612f5d03520e75edb5c20378224a1cec8f0b1b1ca28f34e8a7409369d64e"
+    },
+    "controls": {
+      "file": "controls.png",
+      "kind": "operator-panel-photo-unverified",
+      "purpose": "Blue/red four-station court overlay. Two blue and two red joysticks; red Shoot/Block, blue Pass/Steal, white Turbo, and four photographed red Start buttons. NBA Jam Session branding also appears on the cabinet in the 1993 original Midway flyer, not Tournament Edition or another game's panel.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/5397",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/nbajam.png",
+      "rights": "Third-party panel photograph, photographer/license and original-versus-reproduction print unverified. Underlying Midway/NBA artwork retained; no redistribution permission inferred.",
+      "sha256": "0e5f0850b24eaed61804f507ada558987e3aa1b959b989122b8916705a94d53a"
+    },
+    "marquee": {
+      "file": "marquee.jpg",
+      "kind": "archive-artwork-unverified",
+      "purpose": "Archive preview of the NBA Jam marquee PSD, original-design branding corroborated by the Midway flyer; scan versus redrawn/restoration artwork unverified. Fantasy/Tournament Edition side-art results were not used.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/11669",
+      "image_url": "https://www.arcadeartwork.org/_data/i/galleries/ultraqualityartworkLarge/NBA-Jam-marquee.psd-me.jpg",
+      "rights": "Underlying Midway/NBA copyright and trademarks retained. PSD preview is third-party hosted; author/license and redistribution rights unverified, not a publisher-hosted master.",
+      "sha256": "e0adf056eeac019b03b931d14fbce25ae699dcfab65c1986a4c9dd89ac611b16"
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "kind": "original-print-scan",
+      "purpose": "Corroborating 1993 Midway sales flyer carrying manufacturer/copyright credits, showing the same orange basketball sides, NBA badge, four-station blue/red court and NBA Jam Session fascia. Not used to invent unseen artwork.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/87152",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadeflyers168/nbajam.png",
+      "rights": "Printed flyer credits Midway Manufacturing Company, NBA/NBA Properties and depicted athletes. Third-party scan, scanner/redistribution license unverified; not publisher authentication or permission.",
+      "sha256": "01ea89c96b24c7b7239f8f06e9c0d484788e9717bf72eb6997ed059132bfac1d"
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Actual NBA Jam tip-off/tutorial captured from the user's nbajam.zip (revision 3.01) with the existing pinned Midway WASM core. Startup state generated with 2 coins; capture_screen.mjs --confirm=12 --action=2 --frames=600. Native 400x254; no replacement game or synthetic screen. In-game MK II advertising is part of NBA Jam's real court.",
+      "rights": "Game imagery Midway/NBA and depicted players; captured from a supplied local ROM. No redistribution license inferred, and no ROM included with art sources.",
+      "sha256": "17695a9f26b4a2766b9e88f36c87da75d5cdb8ae36bfc5aac43e1a79470eb118"
+    }
+  },
+  "textures": {
+    "left": {
+      "source": "cabinet",
+      "mask_polygon": [[83, 128], [213, 59], [217, 149], [172, 197], [171, 219], [220, 407], [220, 462], [288, 492], [309, 827], [85, 713]],
+      "background": [189, 92, 41],
+      "quad": [[83, 128], [213, 59], [309, 827], [85, 713]],
+      "rectified_size": [96, 320],
+      "size": [18, 54],
+      "brightness": 1.12
+    },
+    "right": {
+      "source": "cabinet",
+      "mask_polygon": [[83, 128], [213, 59], [217, 149], [172, 197], [171, 219], [220, 407], [220, 462], [288, 492], [309, 827], [85, 713]],
+      "background": [189, 92, 41],
+      "quad": [[83, 128], [213, 59], [309, 827], [85, 713]],
+      "rectified_size": [96, 320],
+      "flip_x": true,
+      "size": [18, 54],
+      "brightness": 1.12
+    },
+    "marquee": {"source": "marquee", "size": [24, 6]},
+    "controls": {
+      "source": "controls",
+      "quad": [[65, 10], [935, 10], [998, 285], [1, 285]],
+      "rectified_size": [240, 84],
+      "size": [30, 10]
+    },
+    "panel": {
+      "source": "controls",
+      "quad": [[8, 291], [992, 291], [971, 354], [61, 354]],
+      "rectified_size": [240, 40],
+      "size": [30, 4]
+    },
+    "bezel": {
+      "source": "cabinet",
+      "quad": [[171, 230], [338, 222], [414, 410], [219, 435]],
+      "rectified_size": [160, 144],
+      "size": [24, 16]
+    },
+    "screen": {"source": "screen", "size": [20, 12]}
+  },
+  "uncertainties": [
+    "One photographed NBA side print is reused on the opposite side with readable branding. The opposite-side original print is not independently documented; black page margins/cut-outs are replaced with matching orange.",
+    "The silhouette is a low-resolution four-player upright interpretation using the existing wide shell, not a dimensionally exact factory model.",
+    "Twelve action buttons are modeled. Four Start buttons remain in the photographed overlay rather than additional raised geometry. The pictured two-slot coin door does not alter the core's four logical coin/controller ports.",
+    "Publisher-hosted artwork masters were not found; copyrighted archive photographs/scans and uncertain restoration artwork are not deployment permission.",
+    "The startup state uses 2 coins for one playable quarter. The generic 9-coin startup leaves this revision asking USE UP REMAINING CREDITS during selection; it is not used. Additional seated players can insert coins with the existing controls."
+  ]
+}
