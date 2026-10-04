@@ -1,8 +1,8 @@
 //! The room's chat: Y opens a line to type in, Enter sends it to everyone in the bar room and
 //! Esc closes it. The latest messages show in the bottom-left corner for a while (all of them
 //! while typing). `/name <name>` sets the name shown above your head and next to what you say;
-//! the page keeps it in a cookie (web/index.html). `/help` shows the controls, and `/settings`
-//! what can be tuned (settings.rs). On a touch screen the line is typed in the
+//! the page keeps it in a cookie (web/index.html). `/help` shows the controls, `/settings` what
+//! can be tuned (settings.rs), and `/netstats` how an air hockey match's connection is doing. On a touch screen the line is typed in the
 //! page instead, with the phone's keyboard, and comes in through `chat_typed`.
 
 use std::cell::RefCell;
@@ -59,6 +59,7 @@ pub struct ChatPlugin;
 impl Plugin for ChatPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Chat>()
+            .add_message::<ShowNetStats>()
             .add_systems(Startup, spawn_chat)
             // Before anything reads the keys this frame, so typing neither walks nor plays.
             .add_systems(PreUpdate, type_in_chat.after(InputSystems))
@@ -116,6 +117,9 @@ impl Chat {
             Some("/settings") => {
                 panels.settings.write(ShowSettings);
             }
+            Some("/netstats") => {
+                panels.netstats.write(ShowNetStats);
+            }
             Some("/name") => {
                 let name = line["/name".len()..]
                     .split_whitespace()
@@ -144,7 +148,12 @@ impl Chat {
 pub struct Panels<'w> {
     help: MessageWriter<'w, ShowHelp>,
     settings: MessageWriter<'w, ShowSettings>,
+    netstats: MessageWriter<'w, ShowNetStats>,
 }
+
+/// Shows or hides how an air hockey match's connection is doing (`/netstats`).
+#[derive(Message)]
+pub struct ShowNetStats;
 
 pub fn type_in_chat(
     mut keyboard: MessageReader<KeyboardInput>,
