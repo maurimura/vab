@@ -80,8 +80,8 @@
         player_left,
         player_moved,
         players_reset,
-        pool_message,
-        pool_seats,
+        table_message,
+        table_seats,
         push_frame,
       } from "./pkg/client.js";
       // Whether the client was built gzipped (any build but wasm-release: see the Makefile).
@@ -145,7 +145,7 @@
         room?.setName(name);
         own_name(name);
         myName = name;
-        poolSeatsChanged();
+        tableSeatsChanged();
       };
 
       // Everyone else's names, for saying who plays a game, and this player's own.
@@ -522,23 +522,25 @@
       document.addEventListener("pointerlockerror", () => (lockFailed ||= ++lockRefusals >= 3));
       document.addEventListener("pointerlockchange", () => document.pointerLockElement && (lockRefusals = 0));
 
-      // Pool tables (client/src/pool/online.rs): a place with two seats in the room, as a
-      // cabinet is ("pool:x,y"). The players at one send each other what they do as messages
-      // with `pool` set to the table; Bevy plays the game and says what to send.
-      window.poolSit = (table) => joined.then(() => room.sit(table, 2));
-      window.poolStand = () => room?.stand();
-      window.poolSend = (to, json) => room?.message(to, JSON.parse(json));
-      /** Tells Bevy who sits at a pool table (`players`, an id or null per seat) and their names. */
-      function poolSeats(table, players) {
+      // Tables players sit at together, the pool and air hockey tables (client/src/seats.rs): a
+      // place with seats in the room, as a cabinet is ("pool:x,y", "hockey:x,y"). The players at
+      // one send each other what they do as messages with `table` set; Bevy plays the game and
+      // says what to send.
+      const isTable = (place) => place.startsWith("pool:") || place.startsWith("hockey:");
+      window.tableSit = (table, seats) => joined.then(() => room.sit(table, seats));
+      window.tableStand = () => room?.stand();
+      window.tableSend = (to, json) => room?.message(to, JSON.parse(json));
+      /** Tells Bevy who sits at a table (`players`, an id or null per seat) and their names. */
+      function tableSeats(table, players) {
         // An empty seat is 0, an id no player has; ids go past 2^31, so unsigned.
         const ids = players.map((id) => id ?? 0);
         const seatNames = players.map((id) => (id === null ? "" : id === room.id ? myName : names.get(id) ?? ""));
-        pool_seats(table, room.id, Uint32Array.from(ids), seatNames);
+        table_seats(table, room.id, Uint32Array.from(ids), seatNames);
       }
-      /** Again for every pool table, after a name changed. */
-      function poolSeatsChanged() {
+      /** Again for every table, after a name changed. */
+      function tableSeatsChanged() {
         if (!room) return;
-        for (const [table, players] of room.seats) if (table.startsWith("pool:")) poolSeats(table, players);
+        for (const [table, players] of room.seats) if (isTable(table)) tableSeats(table, players);
       }
 
       // A gzipped client is unpacked as it downloads.
@@ -568,7 +570,7 @@
           const renamed = names.has(id) && names.get(id) !== name;
           names.set(id, name);
           player_moved(id, x, y, flip, name);
-          if (renamed) poolSeatsChanged();
+          if (renamed) tableSeatsChanged();
         },
         left(id) {
           names.delete(id);
@@ -577,7 +579,7 @@
         said: (id, name, text) => chat_said(name, text),
         seats(cabinet, players) {
           cabinet_seats(cabinet, players.filter((id) => id !== null).length);
-          if (cabinet.startsWith("pool:")) poolSeats(cabinet, players);
+          if (isTable(cabinet)) tableSeats(cabinet, players);
           if (play?.cabinet === cabinet) play.seated(players);
         },
         full(cabinet) {
@@ -587,7 +589,8 @@
           cabinet_watchers(cabinet, players.length);
           if (play?.cabinet === cabinet) play.watchers?.(players);
         },
-        message: (from, data) => (data.pool ? pool_message(from, JSON.stringify(data)) : play?.message?.(from, data)),
+        message: (from, data) =>
+          data.table ? table_message(data.table, from, JSON.stringify(data)) : play?.message?.(from, data),
         handover: (from, epoch, bytes) => play?.handover?.(from, epoch, bytes),
         watchState: (from, stream, bytes) => play?.watchState?.(from, stream, bytes),
         watchInputs: (from, stream, frame, inputs) => play?.watchInputs?.(from, stream, frame, inputs),

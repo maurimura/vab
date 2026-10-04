@@ -13,6 +13,7 @@ use crate::cabinets::{hint_label, place_hint};
 use crate::chat::chat_closed;
 use crate::help::help_closed;
 use crate::player::Player;
+use crate::seats;
 use crate::settings::settings_closed;
 use crate::touch::{self, Touch, TouchButton};
 
@@ -112,7 +113,7 @@ fn show_hint(
     let near = tables.next_to(player.feet);
     // A table with both seats taken has no seat to offer.
     let near = near.filter(|table| {
-        online::seated(&online::table_id(IVec2::new(table.x, table.y))) < 2 || !touch.is_on()
+        seats::seated(&online::table_id(IVec2::new(table.x, table.y))) < 2 || !touch.is_on()
     });
     for (button, mut shown) in &mut buttons {
         if *button == TouchButton::Pool {
@@ -127,7 +128,7 @@ fn show_hint(
         *visibility = Visibility::Hidden;
         return;
     };
-    let seated = online::seated(&online::table_id(IVec2::new(table.x, table.y)));
+    let seated = seats::seated(&online::table_id(IVec2::new(table.x, table.y)));
     // The button says what to press.
     let label = match (seated, touch.is_on()) {
         (0, true) => "Pool".to_string(),
@@ -158,7 +159,7 @@ fn sit(
     };
     let id = online::table_id(IVec2::new(table.x, table.y));
     // Both seats taken: nowhere to sit (watching comes later).
-    if online::seated(&id) >= 2 {
+    if seats::seated(&id) >= 2 {
         return;
     }
     commands.insert_resource(game::AtTable(id));

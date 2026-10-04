@@ -22,11 +22,12 @@ use billiards::{BALL_RADIUS, HEIGHT, Pocket, RAIL, STEP, Table, WIDTH, pockets};
 
 use wasm_bindgen::prelude::*;
 
-use super::online::{self, Message};
+use super::online::Message;
 use crate::Mode;
 use crate::chat::{Chat, chat_closed};
 use crate::help::Help;
 use crate::pixels::Pixels;
+use crate::seats;
 use crate::settings::{Knob, NewRack, Settings};
 use crate::touch::{self, Touch, TouchButton};
 
@@ -167,7 +168,7 @@ fn settings_from_message(values: [f32; 6]) -> billiards::Settings {
     }
 }
 
-/// The pool table the player sits at, as the room names it (online::table_id). Set before
+/// The pool table the player sits at, as the room names it (online::table_id, seats.rs). Set before
 /// switching to `Mode::Pool`.
 #[derive(Resource)]
 pub struct AtTable(pub String);
@@ -294,7 +295,7 @@ impl Game {
 
     fn send(&self, to: u32, message: Message) {
         if let Some(table) = &self.table_id {
-            online::send(table, to, message);
+            seats::send(table, to, &message);
         }
     }
 
@@ -510,21 +511,13 @@ fn sync(at: Option<Res<AtTable>>, mut game: ResMut<Game>) {
     let game = &mut *game;
     if game.table_id.as_deref() != Some(at.0.as_str()) {
         game.table_id = Some(at.0.clone());
-        online::sit(&at.0);
+        seats::sit(&at.0);
     }
 
-    let now = online::seats_at(&at.0).and_then(|seats| {
+    let now = seats::seats_at(&at.0).and_then(|seats| {
         let me = seats.mine()?;
         let (_, id) = seats.opponent()?;
-        let names = [0, 1].map(|seat| {
-            let name = seats.name(seat).unwrap_or_default();
-            if name.is_empty() {
-                format!("Player {}", seat + 1)
-            } else {
-                name.to_string()
-            }
-        });
-        Some((me, id, names))
+        Some((me, id, seats.names()))
     });
     match (&mut game.opponent, now) {
         (Some(opponent), Some((me, id, names))) if opponent.id == id && opponent.me == me => {
@@ -554,7 +547,7 @@ fn sync(at: Option<Res<AtTable>>, mut game: ResMut<Game>) {
         (None, None) => {}
     }
 
-    let messages = online::take_messages();
+    let messages = seats::take_messages::<Message>(&at.0);
     let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
         return;
     };
@@ -1156,7 +1149,7 @@ fn hide_table(
 ) {
     // Up from the table: whoever is left there plays both sides, and so does this player when
     // they come back alone.
-    online::stand();
+    seats::stand();
     game.table_id = None;
     game.opponent = None;
     game.waiting_for_start = false;

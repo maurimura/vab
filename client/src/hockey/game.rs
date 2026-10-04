@@ -1,11 +1,12 @@
 //! Playing air hockey: the rink seen from above, upright, the player's goal at the bottom and
-//! the bot's at the top, drawn pixel by pixel into a small image that fills the screen at a
-//! whole-number zoom, as the pool table is. The player's paddle moves with the mouse, kept in
+//! the other one's at the top, drawn pixel by pixel into a small image that fills the screen at
+//! a whole-number zoom, as the pool table is. The player's paddle moves with the mouse, kept in
 //! their half: the page locks the pointer (a click on the table does), so it never wanders off,
-//! and Esc lets it go, pausing the game, as a second Esc leaves. On a touch screen the paddle
-//! sits under the finger. The bot slides its paddle across its goal (the hockey
-//! crate). First to 7 wins, and a click starts the next game. Esc goes back to the bar, and the
-//! game stays as it was for next time. How it plays can be tuned with `/settings`.
+//! and Esc lets it go, as a second Esc leaves. On a touch screen the paddle sits under the
+//! finger. Alone at the table, the player plays a bot that slides its paddle across its goal
+//! (the hockey crate), and letting the pointer go pauses; when someone sits at the other seat,
+//! they play each other (online.rs). First to 7 wins, and a click starts the next game (player
+//! 1's, against someone). Esc goes back to the bar. How it plays can be tuned with `/settings`.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
@@ -19,10 +20,12 @@ use hockey::{
 
 use wasm_bindgen::prelude::*;
 
+use super::online::Message;
 use crate::Mode;
 use crate::chat::{Chat, chat_closed};
 use crate::help::Help;
 use crate::pixels::Pixels;
+use crate::seats;
 use crate::settings::Settings;
 use crate::touch::{self, Touch, TouchButton};
 
@@ -31,10 +34,10 @@ const CANVAS: UVec2 = UVec2::new(320, 180);
 const RINK: Vec2 = Vec2::new(112.0, 10.0);
 /// The rail around the rink, in pixels.
 const RAIL: i32 = 6;
-/// The scores, left of the rink: the bot's across from its half and the player's from theirs,
+/// The scores, left of the rink: the other side's across from its half and the player's from theirs,
 /// and the line right of the rink, from their left edges, how wide, and their tops (canvas
 /// pixels).
-const BOT_SCORE: (f32, f32, f32) = (20.0, 80.0, 40.0);
+const THEIR_SCORE: (f32, f32, f32) = (20.0, 80.0, 40.0);
 const YOUR_SCORE: (f32, f32, f32) = (20.0, 80.0, 110.0);
 const STATUS: (f32, f32, f32) = (222.0, 90.0, 80.0);
 /// Text heights, in canvas pixels, and the smallest they get, in logical pixels.
@@ -46,6 +49,18 @@ const GOAL_SHOWN_FOR: f32 = 1.5;
 /// An Esc this soon after the pointer was let go is the one that let it go (the browser takes
 /// it, and may pass it on too): it doesn't also leave the table.
 const ESC_AFTER_UNLOCK: f32 = 0.3;
+/// How often each player tells the other where things are, in seconds.
+const TICK_EVERY: f32 = 1.0 / 30.0;
+/// The puck is handed over once it's this far into the other half.
+const HANDOVER_PAST: f32 = 1.0;
+/// Handed the puck, a player keeps their own rink's puck if it's this close to where the other
+/// player let it go: it's been following it, and is likely a little further along already.
+const KEEP_OWN_PUCK: f32 = 24.0;
+
+/// The air hockey table the player sits at, as the room names it (online::table_id, seats.rs).
+/// Set before switching to `Mode::Hockey`.
+#[derive(Resource)]
+pub struct AtTable(pub String);
 
 // Defined in index.html.
 #[wasm_bindgen]
@@ -104,7 +119,7 @@ const GOAL_SLOT: [u8; 4] = [22, 20, 28, 255];
 const PUCK: [u8; 4] = [30, 30, 36, 255];
 const PUCK_RIM: [u8; 4] = [70, 70, 82, 255];
 const SHINE: [u8; 4] = [255, 255, 255, 255];
-/// The player's paddle and its knob, then the bot's.
+/// The player's paddle and its knob, then the other side's.
 const PADDLES: [([u8; 4], [u8; 4]); 2] = [
     ([214, 48, 48, 255], [150, 28, 28, 255]),
     ([48, 96, 214, 255], [28, 60, 150, 255]),
@@ -119,6 +134,7 @@ impl Plugin for GamePlugin {
                 Update,
                 (
                     fit_canvas,
+                    sync,
                     play,
                     draw,
                     show_text,
@@ -153,6 +169,87 @@ struct Game {
     /// The pointer was locked last frame, and when it was last let go (in seconds of `Time`).
     was_locked: bool,
     unlocked_at: Option<f32>,
+    /// The table, as the room names it, while the player sits at it.
+    table_id: Option<String>,
+    /// The other player at the table, when there is one: then they play each other, not the bot.
+    opponent: Option<Opponent>,
+    /// This player runs the puck (it's in their half), and the other player's rink follows.
+    owner: bool,
+    /// Where the other player's paddle is, as they last said.
+    their_paddle: Vec2,
+    /// Time since this player last told the other where things are.
+    since_tick: f32,
+}
+
+/// Who the player is playing against.
+struct Opponent {
+    /// The player's own seat (0 has their goal at the rink's bottom), and the other player's id.
+    me: usize,
+    id: u32,
+    /// Both seats' names.
+    names: [String; 2],
+}
+
+impl Game {
+    /// The player's seat: 0 against the bot.
+    fn me(&self) -> usize {
+        self.opponent.as_ref().map_or(0, |opponent| opponent.me)
+    }
+
+    /// A fresh game, with the same players: the puck served to seat 0, who runs it.
+    fn new_game(&mut self) {
+        let settings = self.rink.settings;
+        self.rink = Rink {
+            settings,
+            ..Rink::new()
+        };
+        self.bot = Bot::default();
+        self.goal = None;
+        self.owner = self.me() == 0;
+        self.their_paddle = self.rink.paddles[1 - self.me()];
+        self.paddle_placed = false;
+        self.slack = Vec2::ZERO;
+    }
+
+    /// Against `opponent` now, or against the bot (`None`): a new game either way.
+    fn play_against(&mut self, opponent: Option<Opponent>) {
+        self.opponent = opponent;
+        self.target = None;
+        self.new_game();
+    }
+
+    /// Tells the other player where this player's paddle is, the puck while it's theirs (and
+    /// that they're handing it over), and how many goals they've let in.
+    fn tick(&mut self, handover: bool) {
+        self.since_tick = 0.0;
+        let (Some(table), Some(opponent)) = (&self.table_id, &self.opponent) else {
+            return;
+        };
+        let me = opponent.me;
+        let rink = &self.rink;
+        let puck = (self.owner || handover).then_some([
+            rink.puck.x,
+            rink.puck.y,
+            rink.velocity.x,
+            rink.velocity.y,
+        ]);
+        let tick = Message::Tick {
+            paddle: rink.paddles[me].into(),
+            puck,
+            handover,
+            conceded: rink.score[1 - me],
+        };
+        seats::send(table, opponent.id, &tick);
+    }
+}
+
+/// The rink as `me` sees it, their own goal at the bottom, from as seat 0 sees it, and back.
+fn turned(me: usize, at: Vec2) -> Vec2 {
+    if me == 1 {
+        Vec2::new(WIDTH, HEIGHT) - at
+    } else {
+        at
+    }
 }
 
 #[derive(Component)]
@@ -174,7 +271,7 @@ struct OnCanvas {
 /// What a text says.
 #[derive(Component, Clone, Copy, PartialEq)]
 enum Says {
-    BotScore,
+    TheirScore,
     YourScore,
     Status,
 }
@@ -244,7 +341,7 @@ fn show_rink(
         GlobalZIndex(1),
         children![
             (Canvas, ImageNode::new(images.add(image)), Node::default()),
-            text(Says::BotScore, BOT_SCORE, SCORE_SIZE),
+            text(Says::TheirScore, THEIR_SCORE, SCORE_SIZE),
             text(Says::YourScore, YOUR_SCORE, SCORE_SIZE),
             text(Says::Status, STATUS, STATUS_SIZE),
         ],
@@ -275,6 +372,84 @@ fn fit_canvas(window: Single<&Window>, mut canvas: Single<&mut Node, With<Canvas
     if canvas.width != width || canvas.height != height {
         canvas.width = width;
         canvas.height = height;
+    }
+}
+
+/// Sits at the table in the room, starts a match when someone sits at the other seat (and goes
+/// back to the bot when they leave), and follows what they say: their paddle, the puck while
+/// it's theirs, the puck when they hand it over, and the goals they've let in.
+fn sync(at: Option<Res<AtTable>>, mut game: ResMut<Game>) {
+    let Some(at) = at else {
+        return;
+    };
+    let game = &mut *game;
+    if game.table_id.as_deref() != Some(at.0.as_str()) {
+        game.table_id = Some(at.0.clone());
+        seats::sit(&at.0);
+    }
+
+    let now = seats::seats_at(&at.0).and_then(|seats| {
+        let me = seats.mine()?;
+        let (_, id) = seats.opponent()?;
+        Some(Opponent {
+            me,
+            id,
+            names: seats.names(),
+        })
+    });
+    match (&mut game.opponent, now) {
+        (Some(opponent), Some(now)) if opponent.id == now.id && opponent.me == now.me => {
+            opponent.names = now.names;
+        }
+        (_, Some(now)) => game.play_against(Some(now)),
+        (Some(_), None) => game.play_against(None),
+        (None, None) => {}
+    }
+
+    let messages = seats::take_messages::<Message>(&at.0);
+    let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
+        return;
+    };
+    let me = game.me();
+    for (_, message) in messages.into_iter().filter(|(from, _)| *from == id) {
+        match message {
+            Message::Start => game.new_game(),
+            Message::Tick {
+                paddle,
+                puck,
+                handover,
+                conceded,
+            } => {
+                game.their_paddle = Vec2::from(paddle);
+                if conceded > game.rink.score[me] {
+                    game.goal = Some((me, 0.0));
+                }
+                game.rink.score[me] = conceded;
+                let Some([x, y, vx, vy]) = puck else {
+                    continue;
+                };
+                let (theirs, going) = (Vec2::new(x, y), Vec2::new(vx, vy));
+                let keep_mine = handover
+                    && game.rink.puck.distance(theirs) < KEEP_OWN_PUCK
+                    && in_half(me, game.rink.puck);
+                if (handover || !game.owner) && !keep_mine {
+                    game.rink.puck = theirs;
+                    game.rink.velocity = going;
+                }
+                if handover {
+                    game.owner = true;
+                }
+            }
+        }
+    }
+}
+
+/// Whether `at` (as seat 0 sees the rink) is in `seat`'s half.
+fn in_half(seat: usize, at: Vec2) -> bool {
+    if seat == 0 {
+        at.y > HEIGHT / 2.0
+    } else {
+        at.y < HEIGHT / 2.0
     }
 }
 
@@ -319,15 +494,19 @@ fn play(
     let (node, transform) = *canvas;
     // Physical pixels per canvas pixel; until the canvas has been laid out it has no size.
     let zoom = node.size().x / CANVAS.x as f32;
-    let (low, high) = Rink::half(0);
+    let me = game.me();
+    let online = game.opponent.is_some();
+    let (low, high) = Rink::half(me);
     match control {
         _ if busy || zoom <= 0.0 => {}
         Control::Locked => {
             // From where the paddle is when the pointer was just locked, not counting how the
             // mouse moved before that (onto the table, to click it): no jump.
+            // The player sees the rink turned their way round: so does the mouse.
+            let moved = turned(me, motion.delta / zoom) - turned(me, Vec2::ZERO);
             game.target = Some(match game.target {
-                Some(target) if !just_locked => (target + motion.delta / zoom).clamp(low, high),
-                _ => game.rink.paddles[0],
+                Some(target) if !just_locked => (target + moved).clamp(low, high),
+                _ => game.rink.paddles[me],
             });
             game.paddle_placed = true;
         }
@@ -336,7 +515,7 @@ fn play(
             if let Some(at) = pointer {
                 let corner = transform.translation - node.size() / 2.0;
                 let on_canvas = (at * window.scale_factor() - corner) / zoom;
-                let pointed = on_canvas - RINK;
+                let pointed = turned(me, on_canvas - RINK);
                 if pointed.is_finite() {
                     // A finger has the paddle right under it. A hidden pointer pushed past a
                     // rail leaves the paddle there, and the rest is forgotten (`slack`).
@@ -359,39 +538,63 @@ fn play(
     let fresh_press = pressed && !game.was_pressed;
     game.was_pressed = pressed;
     if game.rink.winner().is_some() {
-        if fresh_press {
-            let settings = game.rink.settings;
-            *game = Game {
-                rink: Rink {
-                    settings,
-                    ..Rink::new()
-                },
-                target: game.target,
-                was_pressed: true,
-                was_locked: game.was_locked,
-                unlocked_at: game.unlocked_at,
-                ..default()
-            };
+        // Against someone, player 1 starts the next game, for both.
+        if fresh_press && me == 0 {
+            game.new_game();
+            if let (Some(table), Some(opponent)) = (&game.table_id, &game.opponent) {
+                seats::send(table, opponent.id, &Message::Start);
+            }
         }
         return;
     }
-    // Waiting for a click, or for the chat or a panel to close: time stands still.
-    if busy || control == Control::Paused {
+    // Against the bot, waiting for a click, or for the chat or a panel to close, time stands
+    // still. Against someone it can't: the paddle just stays where it is.
+    if !online && (busy || control == Control::Paused) {
         return;
     }
 
     if !game.paddle_placed
         && let Some(target) = game.target
     {
-        game.rink.paddles[0] = target.clamp(low, high);
+        game.rink.paddles[me] = target.clamp(low, high);
         game.paddle_placed = true;
     }
-    let bot = game.bot.target(&game.rink, seconds);
-    let mine = game.target.unwrap_or(game.rink.paddles[0]);
-    for event in game.rink.advance([mine, bot], seconds) {
+    let mut targets = [Vec2::ZERO; 2];
+    targets[me] = game.target.unwrap_or(game.rink.paddles[me]);
+    targets[1 - me] = if online {
+        game.their_paddle
+    } else {
+        game.bot.target(&game.rink, seconds)
+    };
+    // The puck is run by whoever's half it's in: the other rink follows, and doesn't score.
+    let events = if !online || game.owner {
+        game.rink.advance(targets, seconds)
+    } else {
+        game.rink.advance_following(targets, seconds)
+    };
+    for event in events {
         if let Event::Goal(scorer) = event {
             game.goal = Some((scorer, 0.0));
+            // Let in here, and served again on this side: say so straight away.
+            game.tick(false);
         }
+    }
+    if !online {
+        return;
+    }
+    // How far the puck is into the other player's half (seat 0's is the bottom one).
+    let into_theirs = if me == 0 {
+        HEIGHT / 2.0 - game.rink.puck.y
+    } else {
+        game.rink.puck.y - HEIGHT / 2.0
+    };
+    if game.owner && into_theirs > HANDOVER_PAST {
+        game.tick(true);
+        game.owner = false;
+    }
+    game.since_tick += seconds;
+    if game.since_tick >= TICK_EVERY {
+        game.tick(false);
     }
 }
 
@@ -406,14 +609,16 @@ fn draw(
     };
     let mut pixels = rink_art.get_or_insert_with(draw_rink).clone();
     let rink = &game.rink;
-    for (player, paddle) in rink.paddles.iter().enumerate() {
-        let (body, knob) = PADDLES[player];
-        let at = *paddle + RINK;
+    // Turned the player's way round: their paddle at the bottom, in their colour.
+    let me = game.me();
+    for (seat, paddle) in rink.paddles.iter().enumerate() {
+        let (body, knob) = PADDLES[usize::from(seat != me)];
+        let at = turned(me, *paddle) + RINK;
         pixels.disc(at, PADDLE_RADIUS, body);
         pixels.disc(at, PADDLE_RADIUS * 0.45, knob);
         pixels.set((at.x - 3.0) as i32, (at.y - 4.0) as i32, SHINE);
     }
-    let puck = rink.puck + RINK;
+    let puck = turned(me, rink.puck) + RINK;
     pixels.disc(puck, PUCK_RADIUS, PUCK_RIM);
     pixels.disc(puck, PUCK_RADIUS - 1.0, PUCK);
     pixels.set((puck.x - 2.0) as i32, (puck.y - 2.0) as i32, SHINE);
@@ -497,26 +702,47 @@ fn draw_rink() -> Pixels {
 fn show_text(game: Res<Game>, touch: Res<Touch>, mut texts: Query<(&Says, &mut Text)>) {
     let rink = &game.rink;
     let control = Control::now(&touch);
+    let me = game.me();
+    // The bot, or the other player by name, and player 1, who starts games against someone.
+    let (them, first) = match &game.opponent {
+        Some(opponent) => (
+            opponent.names[1 - me].clone(),
+            Some(opponent.names[0].clone()),
+        ),
+        None => ("Bot".to_string(), None),
+    };
     for (says, mut text) in &mut texts {
         let line = match says {
-            Says::BotScore => format!("Bot\n{}", rink.score[1]),
-            Says::YourScore => format!("{}\nYou", rink.score[0]),
+            Says::TheirScore => format!("{them}\n{}", rink.score[1 - me]),
+            Says::YourScore => format!("{}\nYou", rink.score[me]),
             Says::Status => match (rink.winner(), game.goal) {
                 (Some(winner), _) => {
-                    let again = if touch.is_on() { "Tap" } else { "Click" };
-                    let who = if winner == 0 {
-                        "You win"
+                    let who = if winner == me {
+                        "You win".to_string()
                     } else {
-                        "The bot wins"
+                        format!("{them} wins")
                     };
-                    format!("{who}!\n{again} to play again.")
+                    let again = match (&first, touch.is_on()) {
+                        (Some(first), _) if me != 0 => {
+                            format!("Waiting for {first} to play again.")
+                        }
+                        (_, true) => "Tap to play again.".to_string(),
+                        (_, false) => "Click to play again.".to_string(),
+                    };
+                    format!("{who}!\n{again}")
                 }
                 (None, Some((scorer, since))) if since < GOAL_SHOWN_FOR => {
-                    let who = if scorer == 0 { "you" } else { "the bot" };
-                    format!("Goal for {who}!")
+                    if scorer == me {
+                        "Goal for you!".to_string()
+                    } else {
+                        format!("Goal for {them}!")
+                    }
+                }
+                (None, _) if control == Control::Paused && game.opponent.is_none() => {
+                    "Click the table to play.\nEsc leaves.".to_string()
                 }
                 (None, _) if control == Control::Paused => {
-                    "Click the table to play.\nEsc leaves.".to_string()
+                    "Click the table to take your paddle.\nEsc leaves.".to_string()
                 }
                 (None, _) => {
                     let how = match control {
@@ -586,12 +812,20 @@ fn leave(
 
 fn hide_rink(
     mut commands: Commands,
+    mut game: ResMut<Game>,
     overlays: Query<Entity, With<Overlay>>,
     mut cursor: Query<&mut CursorOptions>,
 ) {
     pointer_lock_wanted(false);
     for mut options in &mut cursor {
         options.visible = true;
+    }
+    // Up from the table: whoever is left there plays the bot, and so does this player when they
+    // come back alone, in a new game if they were playing someone.
+    seats::stand();
+    game.table_id = None;
+    if game.opponent.is_some() {
+        game.play_against(None);
     }
     for overlay in &overlays {
         commands.entity(overlay).despawn();
