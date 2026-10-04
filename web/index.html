@@ -81,6 +81,7 @@
         player_moved,
         players_reset,
         table_message,
+        table_packet,
         table_seats,
         push_frame,
       } from "./pkg/client.js";
@@ -537,6 +538,23 @@
         const seatNames = players.map((id) => (id === null ? "" : id === room.id ? myName : names.get(id) ?? ""));
         table_seats(table, room.id, Uint32Array.from(ids), seatNames);
       }
+      // Rollback packets between the two players at an air hockey table (client/src/hockey/
+      // online.rs), over the room's link: straight between the browsers once WebRTC connects,
+      // through the room until then.
+      const tableLinks = new Map();
+      window.tableLink = (partner, offers, match) => {
+        window.tableUnlink(partner);
+        const link = room.link(partner, offers, match);
+        link.onpacket = (packet) => table_packet(partner, new Uint8Array(packet));
+        tableLinks.set(partner, link);
+      };
+      window.tableLinkSend = (partner, bytes) => tableLinks.get(partner)?.send(bytes);
+      window.tableUnlink = (partner) => {
+        const link = tableLinks.get(partner);
+        if (!link) return;
+        room.unlink(link);
+        tableLinks.delete(partner);
+      };
       /** Again for every table, after a name changed. */
       function tableSeatsChanged() {
         if (!room) return;

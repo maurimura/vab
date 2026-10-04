@@ -3,7 +3,9 @@
 //! the one at the top; each moves a paddle in their own half.
 //!
 //! Paddles go exactly where they're told, sliding there over the frame in small steps, so a
-//! fast paddle can't pass through the puck. The puck glides, slowing down a little, bounces
+//! fast paddle can't pass through the puck. Between two players, the rink moves on a fixed frame
+//! at a time from both their inputs (`play_frame`), the same way on both their machines, so
+//! each can run the whole game (with rollback: client/src/hockey). The puck glides, slowing down a little, bounces
 //! off the rails, and takes on a paddle's speed when one hits it, up to a top speed. A puck
 //! that goes all the way into a goal scores, and is served to the player who let it in.
 
@@ -20,6 +22,10 @@ pub const GOAL_WIDTH: f32 = 32.0;
 pub const WINNING_SCORE: u32 = 7;
 /// Seconds per step, at most: a frame is split into steps no longer than this.
 pub const STEP: f32 = 1.0 / 480.0;
+/// A frame of a game between two players, in seconds.
+pub const FRAME: f32 = 1.0 / 60.0;
+/// Input positions are in this many parts of a pixel.
+const INPUT_SCALE: f32 = 64.0;
 /// At most this much time is played in one go, after the tab was in the background.
 const MAX_ADVANCE: f32 = 0.1;
 
@@ -118,16 +124,6 @@ impl Rink {
     /// Moves time on by `seconds`, the paddles going to `targets` (kept in their halves) on the
     /// way.
     pub fn advance(&mut self, targets: [Vec2; 2], seconds: f32) -> Vec<Event> {
-        self.advance_scoring(targets, seconds, true)
-    }
-
-    /// As `advance`, but a puck reaching a goal only stops there, without scoring: for a rink
-    /// that follows another one, which says when goals are scored.
-    pub fn advance_following(&mut self, targets: [Vec2; 2], seconds: f32) -> Vec<Event> {
-        self.advance_scoring(targets, seconds, false)
-    }
-
-    fn advance_scoring(&mut self, targets: [Vec2; 2], seconds: f32, scoring: bool) -> Vec<Event> {
         let mut events = Vec::new();
         let seconds = seconds.clamp(0.0, MAX_ADVANCE);
         if seconds == 0.0 || self.winner().is_some() {
@@ -148,7 +144,7 @@ impl Rink {
                 paddle_velocities[player] = (next - self.paddles[player]) / step;
                 self.paddles[player] = next;
             }
-            self.step(step, paddle_velocities, scoring, &mut events);
+            self.step(step, paddle_velocities, &mut events);
             if events.iter().any(|event| matches!(event, Event::Goal(_))) {
                 // The puck has been served: the rest of the frame is for the paddles alone.
                 self.paddles = to;
@@ -158,13 +154,7 @@ impl Rink {
         events
     }
 
-    fn step(
-        &mut self,
-        step: f32,
-        paddle_velocities: [Vec2; 2],
-        scoring: bool,
-        events: &mut Vec<Event>,
-    ) {
+    fn step(&mut self, step: f32, paddle_velocities: [Vec2; 2], events: &mut Vec<Event>) {
         self.puck += self.velocity * step;
         let speed = self.velocity.length();
         let slowdown = self.settings.friction * step;
@@ -198,11 +188,6 @@ impl Rink {
         // Into a goal: past the end rail, inside its mouth.
         let in_mouth = (self.puck.x - WIDTH / 2.0).abs() < GOAL_WIDTH / 2.0;
         let past_line = self.puck.y < -PUCK_RADIUS || self.puck.y > HEIGHT + PUCK_RADIUS;
-        if in_mouth && past_line && !scoring {
-            self.puck.y = self.puck.y.clamp(-PUCK_RADIUS, HEIGHT + PUCK_RADIUS);
-            self.velocity = Vec2::ZERO;
-            return;
-        }
         if in_mouth && past_line {
             let scorer = if self.puck.y < 0.0 { 0 } else { 1 };
             self.score[scorer] += 1;
@@ -250,6 +235,91 @@ impl Rink {
             events.push(Event::Rail);
         }
         self.velocity = self.velocity.clamp_length_max(self.settings.max_speed);
+    }
+}
+
+impl Rink {
+    /// One frame of a game between two players, from both their inputs (seat 0's, then seat
+    /// 1's): the same inputs on the same rink always give the same rink. A player with no input
+    /// yet leaves their paddle where it is. Once someone has won, player 1's new-game press
+    /// starts the next game.
+    pub fn play_frame(&mut self, inputs: [Input; 2]) -> Vec<Event> {
+        if self.winner().is_some() {
+            if inputs[0].new_game() {
+                *self = Rink {
+                    settings: self.settings,
+                    ..Rink::new()
+                };
+            }
+            return Vec::new();
+        }
+        let targets = [0, 1].map(|seat| inputs[seat].target().unwrap_or(self.paddles[seat]));
+        self.advance(targets, FRAME)
+    }
+
+    /// A hash of everything about the rink, to check two players' rinks still match.
+    pub fn checksum(&self) -> u64 {
+        let rink = self;
+        let numbers = [
+            rink.puck.x,
+            rink.puck.y,
+            rink.velocity.x,
+            rink.velocity.y,
+            rink.paddles[0].x,
+            rink.paddles[0].y,
+            rink.paddles[1].x,
+            rink.paddles[1].y,
+        ];
+        // FNV-1a over their bits and the score.
+        let words = numbers
+            .iter()
+            .map(|number| number.to_bits())
+            .chain(rink.score);
+        words.fold(0xcbf2_9ce4_8422_2325, |hash: u64, word| {
+            word.to_le_bytes().iter().fold(hash, |hash, &byte| {
+                (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+            })
+        })
+    }
+}
+
+/// One player's input for a frame of a game between two players, as it goes between them:
+/// where their paddle should be, as seat 0 sees the rink, in 64ths of a pixel, and what else
+/// they're doing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Input {
+    pub x: u16,
+    pub y: u16,
+    pub flags: u8,
+}
+
+impl Input {
+    /// An input, as opposed to none yet (all zeros).
+    const PRESENT: u8 = 1;
+    /// Starts the next game, once someone has won (player 1's).
+    const NEW_GAME: u8 = 2;
+
+    pub fn new(target: Vec2, new_game: bool) -> Self {
+        let scaled = (target * INPUT_SCALE)
+            .round()
+            .clamp(Vec2::ZERO, Vec2::splat(f32::from(u16::MAX)));
+        let new_game = if new_game { Self::NEW_GAME } else { 0 };
+        Self {
+            x: scaled.x as u16,
+            y: scaled.y as u16,
+            flags: Self::PRESENT | new_game,
+        }
+    }
+
+    /// Where the paddle should be; none before the player has said.
+    pub fn target(&self) -> Option<Vec2> {
+        (self.flags & Self::PRESENT != 0)
+            .then(|| Vec2::new(f32::from(self.x), f32::from(self.y)) / INPUT_SCALE)
+    }
+
+    pub fn new_game(&self) -> bool {
+        self.flags & Self::NEW_GAME != 0
     }
 }
 
@@ -436,18 +506,62 @@ mod tests {
         }
     }
 
+    /// A long, busy game between two made-up players, a frame at a time: their paddles sweep
+    /// across their halves at different paces, hitting the puck about.
+    fn busy_inputs(frame: u32) -> [Input; 2] {
+        let t = frame as f32 / 60.0;
+        let x = |pace: f32| WIDTH / 2.0 + (t * pace).sin() * (WIDTH / 2.0 - PADDLE_RADIUS);
+        let bottom = Vec2::new(x(2.3), HEIGHT * 0.75 + (t * 3.1).sin() * 30.0);
+        let top = Vec2::new(x(1.7), HEIGHT * 0.25 + (t * 2.6).cos() * 30.0);
+        [Input::new(bottom, false), Input::new(top, false)]
+    }
+
     #[test]
-    fn a_following_rink_holds_the_puck_in_a_goal_without_scoring() {
-        let mut rink = rink_with(Vec2::new(WIDTH / 2.0, 40.0), Vec2::new(0.0, -300.0));
-        let paddles = rink.paddles;
-        let mut events = Vec::new();
-        for _ in 0..30 {
-            events.extend(rink.advance_following(paddles, 1.0 / 60.0));
+    fn the_same_inputs_play_out_the_same_way() {
+        let (mut a, mut b) = (Rink::new(), Rink::new());
+        for frame in 0..3600 {
+            a.play_frame(busy_inputs(frame));
+            b.play_frame(busy_inputs(frame));
         }
-        assert!(!events.iter().any(|event| matches!(event, Event::Goal(_))));
+        assert_eq!(a, b);
+        assert_eq!(a.checksum(), b.checksum());
+        // And it was a game: the puck got around.
+        assert_ne!(a.checksum(), Rink::new().checksum());
+    }
+
+    #[test]
+    fn a_rink_saved_and_played_on_again_matches_one_that_never_stopped() {
+        // What rollback does: keep a copy, play on, go back to the copy, play the same again.
+        let mut rink = Rink::new();
+        for frame in 0..600 {
+            rink.play_frame(busy_inputs(frame));
+        }
+        let saved = rink.clone();
+        for frame in 600..1200 {
+            rink.play_frame(busy_inputs(frame));
+        }
+        let mut again = saved;
+        for frame in 600..1200 {
+            again.play_frame(busy_inputs(frame));
+        }
+        assert_eq!(again, rink);
+    }
+
+    #[test]
+    fn inputs_carry_the_paddle_and_the_new_game_press() {
+        let input = Input::new(Vec2::new(48.25, 140.5), true);
+        assert_eq!(input.target(), Some(Vec2::new(48.25, 140.5)));
+        assert!(input.new_game());
+        assert_eq!(Input::default().target(), None);
+
+        // A paddle with no input yet stays put; player 1's press starts the next game.
+        let mut rink = Rink::new();
+        let paddles = rink.paddles;
+        rink.play_frame([Input::default(); 2]);
+        assert_eq!(rink.paddles, paddles);
+        rink.score = [7, 2];
+        rink.play_frame([Input::new(paddles[0], true), Input::default()]);
         assert_eq!(rink.score, [0, 0]);
-        assert!(rink.puck.y <= 0.0);
-        assert_eq!(rink.velocity, Vec2::ZERO);
     }
 
     #[test]

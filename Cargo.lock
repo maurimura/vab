@@ -1986,6 +1986,8 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "billiards",
+ "bincode",
+ "ggrs",
  "hockey",
  "log",
  "serde",
@@ -3300,6 +3302,7 @@ name = "hockey"
 version = "0.1.0"
 dependencies = [
  "glam",
+ "serde",
 ]
 
 [[package]]

@@ -7,3 +7,8 @@ edition = "2024"
 [dependencies]
 # The vector math Bevy uses, the same version.
 glam = "0.32"
+# With the `serde` feature: inputs, as they go between two players' rinks.
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+serde = ["dep:serde"]
