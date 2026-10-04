@@ -5,8 +5,9 @@
 //!
 //! The palette lists every PNG in assets/tiles/floor and assets/tiles/objects (on the web, as
 //! they were when it was built), and on the desktop images reload when their files change, so
-//! art edited in draw mode or a pixel-art app shows up right away. Besides painting, the Move
-//! tool (M) picks up what is on the map: drag it elsewhere, turn a cabinet with R, or delete it.
+//! art edited in draw mode or a pixel-art app shows up right away. Clicking an object already
+//! on the map selects it rather than painting over it, in the Move tool (also M): drag it
+//! elsewhere, turn a cabinet with R, or delete it.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod draw;
@@ -152,7 +153,7 @@ struct Editor {
 }
 
 /// What left click paints: a tile, or a cabinet in the view R has turned it to. Or the Move
-/// tool, which picks up what is there instead.
+/// tool, which picks up what is there instead; a click on an object switches to it.
 #[derive(Clone, PartialEq, Eq)]
 enum Brush {
     None,
@@ -586,8 +587,9 @@ fn brush_anchors(center: IVec2, brush: &str, size: i32) -> Vec<IVec2> {
     }
 }
 
-/// Left click paints the brush on the hovered cells, or with the Move tool picks up what is
-/// there and drags it; right click erases them (objects first).
+/// Left click paints the brush on the hovered cells, unless an object is there: that is
+/// selected instead, in the Move tool, where a click picks up what is there and drags it.
+/// Right click erases the hovered cells (objects first).
 fn paint(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Single<&Window>,
@@ -620,6 +622,14 @@ fn paint(
 
     // A click over in one frame is pressed and released before this runs: paint on the press too.
     let held = |button| buttons.pressed(button) || buttons.just_pressed(button);
+    // Whatever the brush, a click on an object selects it, and the same press can drag it.
+    // Floor is painted over as always, or there would be no painting over it.
+    if buttons.just_pressed(MouseButton::Left)
+        && editor.brush != Brush::Move
+        && editor.map.objects.iter().any(|p| p.covers(center))
+    {
+        toggle_move_tool(editor);
+    }
     if editor.brush == Brush::Move {
         if buttons.just_pressed(MouseButton::Left) {
             editor.selection = pick(&editor.map, center);
@@ -1042,6 +1052,6 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.label(&editor.status);
     ui.separator();
     ui.small(
-                "Left click: paint\nRight click: erase\n[ / ]: brush size\nR: turn a cabinet\nM: move things (drag; Delete removes)\nScroll, arrows, WASD: pan\n+ / -, pinch: zoom",
+                "Left click: paint, or select what is there\nRight click: erase\n[ / ]: brush size\nR: turn a cabinet\nM: move things (drag; Delete removes)\nScroll, arrows, WASD: pan\n+ / -, pinch: zoom",
             );
 }
