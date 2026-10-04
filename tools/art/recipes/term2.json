@@ -1,0 +1,545 @@
+{
+  "version": 1,
+  "skin": "term2",
+  "rom": "term2",
+  "title": "TERMINATOR 2 / MIDWAY MOUNTED-GUN UPRIGHT",
+  "variant": "Midway blue Arnold/T2 sides, white title, red molding and two fixed-base machine guns",
+  "renderer": "upright",
+  "shell": "upright",
+  "size": [
+    32,
+    48
+  ],
+  "players": 2,
+  "control_stations": 2,
+  "buttons_per_player": 2,
+  "stations": [
+    10.5,
+    5.5
+  ],
+  "buttons": [
+    {
+      "name": "Trigger",
+      "position": [
+        12.2,
+        -0.4
+      ],
+      "height": 19.7,
+      "color": [
+        205,
+        35,
+        32
+      ]
+    },
+    {
+      "name": "Grenade",
+      "position": [
+        9.8,
+        0.6
+      ],
+      "height": 20.7,
+      "color": [
+        205,
+        35,
+        32
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      15,
+      18,
+      26
+    ],
+    "side": [
+      17,
+      29,
+      59
+    ],
+    "trim": [
+      218,
+      36,
+      32
+    ],
+    "stick": [
+      0,
+      0,
+      0
+    ],
+    "bezel": [
+      9,
+      13,
+      18
+    ],
+    "deck": [
+      15,
+      18,
+      24
+    ],
+    "back": [
+      20,
+      22,
+      27
+    ]
+  },
+  "preview_note": "32 x 48 px | Midway blue Arnold/T2 sides, white title, red molding and two fixed-base machine guns",
+  "rom_validation": {
+    "fbneo_commit": "aceeebed9e7edc8a28652365a064baee9a16e274",
+    "core": "midway",
+    "required_roms": 17,
+    "matching_required_roms": 17,
+    "matching": "All required files match pinned FBNeo CRC32 and size; existing legacy aliases are accepted.",
+    "optional_absent": [],
+    "zip_sha256": "5fdc2fa4d23d3be1aa889192c6ff5f5016fca3e9813d68c63d89f93c145fc3f8",
+    "state_sha256": "58f27ad801bb8648bc10c21aba5e6c0c29c3d63ad5473bc40b30c5e56d5c5112",
+    "core_sha256": "c4c2514b58b48d5da9d744ef8363ce378fd40d069384248a0ff17be6f6984058",
+    "coins": 9,
+    "bios": null
+  },
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/98221",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=98221&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Photographed Midway Terminator 2 cabinet: blue Arnold/T2 side print, white Midway/title marks, red molding, black front, fixed gun bases and machine-gun handles rather than ordinary joysticks.",
+      "rights": "Underlying printed artwork Midway / Carolco / licensors; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "735344b8224557632d8064b8950eb69eb6e04fe1e17f6f4a9a6d7fa746e61ecb",
+      "download_sha256": "735344b8224557632d8064b8950eb69eb6e04fe1e17f6f4a9a6d7fa746e61ecb",
+      "download_size": [
+        424,
+        750
+      ]
+    },
+    "marquee": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/98221",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=98221&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "White Terminator 2 Judgment Day title and blue Arnold portrait rectified from the same cabinet photo; no console/movie box art is substituted.",
+      "rights": "Underlying printed artwork Midway / Carolco / licensors; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "735344b8224557632d8064b8950eb69eb6e04fe1e17f6f4a9a6d7fa746e61ecb",
+      "download_sha256": "735344b8224557632d8064b8950eb69eb6e04fe1e17f6f4a9a6d7fa746e61ecb",
+      "download_size": [
+        424,
+        750
+      ]
+    },
+    "controls": {
+      "file": "controls.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/6099",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=6099&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Archive control photo indexed term2la3; the cabinet artwork is common to the game revisions, while the supplied ROM remains LA4. Cyberdyne blue/red Arnold operator deck, blue/red Start buttons, gun-base/trigger/grenade details and lower instructions. Printed center/caption patches are extracted without baking photographed 3D guns into the flat deck.",
+      "rights": "Underlying printed artwork Midway / Carolco / licensors; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "710919d6dba68567b8d06c0ba32da8c1c760b13860e4beb736de1bbd8f677ac6",
+      "download_sha256": "710919d6dba68567b8d06c0ba32da8c1c760b13860e4beb736de1bbd8f677ac6",
+      "download_size": [
+        732,
+        520
+      ]
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/88434",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=88434&part=e&download",
+      "kind": "original-print-scan",
+      "purpose": "1991 Midway promotional print describing two-player gun operation and carrying Midway/Carolco/licensor credits; corroborates game/cabinet identity, not copyright permission.",
+      "rights": "Underlying printed artwork Midway / Carolco / licensors; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "be7d4749b14bf949f7c4969b46856fa02fbf0b83d2b1fadb14d4c2d428dda97e",
+      "download_sha256": "be7d4749b14bf949f7c4969b46856fa02fbf0b83d2b1fadb14d4c2d428dda97e",
+      "download_size": [
+        850,
+        1096
+      ]
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real 400x255 game display from supplied LA4 ROMs and existing Midway WASM core: nine-coin startup, Start 15 frames, one first-action confirmation, then 2000 neutral frames. TMS34010 emits one fewer scanline than initial 400x256 geometry; actual output dimensions are retained.",
+      "rights": "Game imagery Midway / Carolco / licensors, captured from user-supplied local ROM only. No ROM downloaded, uploaded or committed; no redistribution license inferred.",
+      "sha256": "3ce5a4649b149c616487fcded2f9a18109708b060d3ba2574522e5d07151fe5b"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "marquee",
+      "quad": [
+        [
+          123,
+          10
+        ],
+        [
+          391,
+          27
+        ],
+        [
+          380,
+          112
+        ],
+        [
+          118,
+          93
+        ]
+      ],
+      "rectified_size": [
+        160,
+        48
+      ],
+      "size": [
+        16,
+        6
+      ]
+    },
+    "controls": {
+      "canvas": [
+        192,
+        72
+      ],
+      "fill": [
+        16,
+        20,
+        28
+      ],
+      "size": [
+        16,
+        9
+      ],
+      "patches": [
+        {
+          "source": "controls",
+          "crop": [
+            223,
+            248,
+            493,
+            496
+          ],
+          "placement": [
+            52,
+            1,
+            88,
+            70
+          ]
+        },
+        {
+          "source": "controls",
+          "quad": [
+            [
+              61,
+              394
+            ],
+            [
+              187,
+              438
+            ],
+            [
+              168,
+              482
+            ],
+            [
+              34,
+              449
+            ]
+          ],
+          "placement": [
+            2,
+            42,
+            45,
+            28
+          ]
+        },
+        {
+          "source": "controls",
+          "quad": [
+            [
+              526,
+              409
+            ],
+            [
+              668,
+              430
+            ],
+            [
+              689,
+              480
+            ],
+            [
+              531,
+              488
+            ]
+          ],
+          "placement": [
+            144,
+            42,
+            45,
+            28
+          ]
+        }
+      ]
+    },
+    "bezel": {
+      "canvas": [
+        128,
+        128
+      ],
+      "fill": [
+        9,
+        13,
+        18
+      ],
+      "size": [
+        16,
+        16
+      ],
+      "patches": [
+        {
+          "source": "cabinet",
+          "crop": [
+            103,
+            119,
+            317,
+            144
+          ],
+          "placement": [
+            0,
+            0,
+            128,
+            12
+          ]
+        },
+        {
+          "source": "controls",
+          "crop": [
+            217,
+            146,
+            511,
+            221
+          ],
+          "placement": [
+            16,
+            112,
+            96,
+            16
+          ]
+        }
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        12,
+        12
+      ],
+      "fit": "contain",
+      "background": [
+        0,
+        0,
+        0
+      ]
+    },
+    "front": {
+      "canvas": [
+        128,
+        256
+      ],
+      "fill": [
+        15,
+        18,
+        26
+      ],
+      "size": [
+        16,
+        24
+      ],
+      "patches": [
+        {
+          "source": "cabinet",
+          "quad": [
+            [
+              183,
+              694
+            ],
+            [
+              291,
+              656
+            ],
+            [
+              291,
+              689
+            ],
+            [
+              182,
+              726
+            ]
+          ],
+          "placement": [
+            18,
+            205,
+            92,
+            28
+          ]
+        }
+      ]
+    },
+    "left": {
+      "source": "cabinet",
+      "quad": [
+        [
+          54,
+          20
+        ],
+        [
+          112,
+          1
+        ],
+        [
+          155,
+          749
+        ],
+        [
+          26,
+          675
+        ]
+      ],
+      "rectified_size": [
+        160,
+        512
+      ],
+      "size": [
+        18,
+        54
+      ],
+      "mask_polygon": [
+        [
+          52,
+          20
+        ],
+        [
+          113,
+          1
+        ],
+        [
+          116,
+          100
+        ],
+        [
+          76,
+          138
+        ],
+        [
+          78,
+          334
+        ],
+        [
+          155,
+          389
+        ],
+        [
+          155,
+          748
+        ],
+        [
+          31,
+          669
+        ],
+        [
+          0,
+          183
+        ]
+      ],
+      "background": [
+        17,
+        29,
+        59
+      ]
+    },
+    "right": {
+      "source": "cabinet",
+      "quad": [
+        [
+          54,
+          20
+        ],
+        [
+          112,
+          1
+        ],
+        [
+          155,
+          749
+        ],
+        [
+          26,
+          675
+        ]
+      ],
+      "rectified_size": [
+        160,
+        512
+      ],
+      "size": [
+        18,
+        54
+      ],
+      "mask_polygon": [
+        [
+          52,
+          20
+        ],
+        [
+          113,
+          1
+        ],
+        [
+          116,
+          100
+        ],
+        [
+          76,
+          138
+        ],
+        [
+          78,
+          334
+        ],
+        [
+          155,
+          389
+        ],
+        [
+          155,
+          748
+        ],
+        [
+          31,
+          669
+        ],
+        [
+          0,
+          183
+        ]
+      ],
+      "background": [
+        17,
+        29,
+        59
+      ]
+    }
+  },
+  "uncertainties": [
+    "Publisher-hosted artwork masters were not found. Archive photographs/scans are not proof of factory prints or artwork redistribution permission.",
+    "This selected shell/kit interpretation is explicit; ROM, hardware and seat count are not changed to suit artwork. No map placement or uploads included.",
+    "One photographed side is reused on the opposite side with readable lettering; the distinct opposite factory print is unverified and is not invented.",
+    "Two mounted machine guns with gray receiver, barrel, grip and fixed base are modeled separately; no ball-top joystick is substituted. Two small red action details per gun represent trigger/grenade controls, not panel firing buttons; Start buttons remain photographed.",
+    "The panel photo is indexed under LA3 but supplies common physical cabinet art, not the ROM/software. The supplied game/driver remains LA4, with all 17 required files matching CRC/size.",
+    "Terminator 2's relative gun axes accept the existing RetroPad directions through FBNeo's fake-digital fallback. Both guns and saved aiming positions have been checked with independent-seat movement and RAM replay, alongside ordinary two-player/spectator checks. Pointer/mouse aiming is not implemented.",
+    "Some TMS34010 outputs crop the last advertised scanline. Capture validation accepts only that one-row crop or the corresponding rotation, while still requiring valid machine RAM and image geometry."
+  ],
+  "control_kind": "mounted-guns",
+  "turns": false,
+  "game_actions": [
+    "Machine-gun trigger",
+    "Grenade"
+  ],
+  "input_note": "Arrow keys / touch D-pad move the gun using FBNeo fake-digital relative axes; the existing action keys fire and throw grenades. Independent guns keep their positions in core savestates. Mouse aiming is not added or claimed."
+}

@@ -1,0 +1,472 @@
+{
+  "version": 1,
+  "skin": "asteroid",
+  "rom": "asteroid",
+  "title": "ASTEROIDS / ATARI BUTTONS-ONLY UPRIGHT",
+  "variant": "Atari black upright with spaceship/planet side art, blue-red operator panel and five shared action buttons",
+  "renderer": "upright",
+  "shell": "upright",
+  "size": [
+    32,
+    48
+  ],
+  "players": 2,
+  "control_stations": 1,
+  "buttons_per_player": 5,
+  "stations": [
+    8
+  ],
+  "buttons": [
+    {
+      "name": "Rotate Left",
+      "position": [
+        11.4,
+        3.0
+      ],
+      "color": [
+        239,
+        237,
+        215
+      ]
+    },
+    {
+      "name": "Rotate Right",
+      "position": [
+        11.4,
+        1.8
+      ],
+      "color": [
+        239,
+        237,
+        215
+      ]
+    },
+    {
+      "name": "Hyperspace",
+      "position": [
+        12.2,
+        0.0
+      ],
+      "color": [
+        239,
+        237,
+        215
+      ]
+    },
+    {
+      "name": "Thrust",
+      "position": [
+        11.4,
+        -1.6
+      ],
+      "color": [
+        239,
+        237,
+        215
+      ]
+    },
+    {
+      "name": "Fire",
+      "position": [
+        11.4,
+        -2.8
+      ],
+      "color": [
+        239,
+        237,
+        215
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      19,
+      21,
+      27
+    ],
+    "side": [
+      19,
+      21,
+      27
+    ],
+    "trim": [
+      25,
+      27,
+      30
+    ],
+    "stick": [
+      0,
+      0,
+      0
+    ],
+    "bezel": [
+      11,
+      13,
+      18
+    ],
+    "deck": [
+      17,
+      20,
+      26
+    ],
+    "back": [
+      22,
+      24,
+      29
+    ]
+  },
+  "preview_note": "32 x 48 px | Atari black upright with spaceship/planet side art, blue-red operator panel and five shared action buttons",
+  "rom_validation": {
+    "fbneo_commit": "aceeebed9e7edc8a28652365a064baee9a16e274",
+    "core": "classics",
+    "required_roms": 5,
+    "matching_required_roms": 5,
+    "matching": "All required files match pinned FBNeo CRC32 and size; existing legacy aliases are accepted.",
+    "optional_absent": [],
+    "zip_sha256": "a76385f075c5c880fa05d38dd40358776a4aa2b84991b98628b868e402c10bfc",
+    "state_sha256": "9d3e683fb664cd84fcc5f3267975afd3caa201fafd44b14e562668733d9ae477",
+    "core_sha256": "130610ee62d49881f25524b8adf26e693a961c38e6189b07b738c93e8903e16a",
+    "coins": 9,
+    "bios": null
+  },
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/92301",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=92301&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Photographed Atari upright with black molding, spaceship/orange-blue planets on the side, Asteroids title marquee, striped scene bezel and five-action operator panel. Print restoration status unverified; no Asteroids Deluxe artwork is substituted.",
+      "rights": "Underlying printed artwork Atari; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "e657b2ee3e4b6a66fdedcd891e2cb0a1f578100a0029aa1563a2f849fcce7356",
+      "download_sha256": "e657b2ee3e4b6a66fdedcd891e2cb0a1f578100a0029aa1563a2f849fcce7356",
+      "download_size": [
+        600,
+        900
+      ]
+    },
+    "marquee": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/92301",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=92301&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Original-design title marquee rectified from the cabinet photograph. A separately indexed marquee recreation was not presented as an original scan.",
+      "rights": "Underlying printed artwork Atari; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "e657b2ee3e4b6a66fdedcd891e2cb0a1f578100a0029aa1563a2f849fcce7356",
+      "download_sha256": "e657b2ee3e4b6a66fdedcd891e2cb0a1f578100a0029aa1563a2f849fcce7356",
+      "download_size": [
+        600,
+        900
+      ]
+    },
+    "controls": {
+      "file": "controls.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/4305",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=4305&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Atari blue/red/white operator panel photograph: five white Rotate Left/Right, Hyperspace, Thrust and Fire actions, plus two metal/LED Start buttons. No joystick.",
+      "rights": "Underlying printed artwork Atari; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "ad633856c19dfffe81c77544c6e800f99adade124fa7f069263f97c7776dc2d2",
+      "download_sha256": "ad633856c19dfffe81c77544c6e800f99adade124fa7f069263f97c7776dc2d2",
+      "download_size": [
+        750,
+        370
+      ]
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/84567",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=84567&part=e&download",
+      "kind": "original-print-scan",
+      "purpose": "Promotional print corroborating Atari Asteroids branding/cabinet; original-versus-reprint physical provenance unverified.",
+      "rights": "Underlying printed artwork Atari; third-party archive, not publisher authorization. Photo/scan author, replacement-print status and redistribution permission remain unverified.",
+      "sha256": "be0805a3157df58ac297a39e80be98fadd547a26af9329767d6bb3bab068978e",
+      "download_sha256": "be0805a3157df58ac297a39e80be98fadd547a26af9329767d6bb3bab068978e",
+      "download_size": [
+        472,
+        662
+      ]
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real 640x480 vector-rendered gameplay from supplied rev 4 ROMs and rebuilt classics core: nine-coin state, Start 15 frames, 300 neutral frames. White vector lines retained and brightened only in downsampled sprite texture.",
+      "rights": "Game imagery Atari, captured from user-supplied local ROM only. No ROM downloaded, uploaded or committed; no redistribution license inferred.",
+      "sha256": "4feb462d08b7dd077f42cfdeb281cd2f3937273b682424e71c36374c8dcee88c"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "marquee",
+      "quad": [
+        [
+          82,
+          51
+        ],
+        [
+          293,
+          39
+        ],
+        [
+          295,
+          137
+        ],
+        [
+          88,
+          151
+        ]
+      ],
+      "rectified_size": [
+        160,
+        60
+      ],
+      "size": [
+        16,
+        6
+      ]
+    },
+    "controls": {
+      "source": "controls",
+      "quad": [
+        [
+          44,
+          2
+        ],
+        [
+          690,
+          2
+        ],
+        [
+          746,
+          314
+        ],
+        [
+          3,
+          310
+        ]
+      ],
+      "rectified_size": [
+        160,
+        72
+      ],
+      "size": [
+        16,
+        9
+      ]
+    },
+    "bezel": {
+      "source": "cabinet",
+      "quad": [
+        [
+          197,
+          189
+        ],
+        [
+          337,
+          191
+        ],
+        [
+          366,
+          374
+        ],
+        [
+          205,
+          342
+        ]
+      ],
+      "rectified_size": [
+        128,
+        128
+      ],
+      "size": [
+        16,
+        16
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        12,
+        12
+      ],
+      "fit": "contain",
+      "brightness": 4.0,
+      "line_boost": 3,
+      "background": [
+        0,
+        0,
+        0
+      ]
+    },
+    "left": {
+      "source": "cabinet",
+      "quad": [
+        [
+          305,
+          42
+        ],
+        [
+          500,
+          225
+        ],
+        [
+          496,
+          746
+        ],
+        [
+          338,
+          868
+        ]
+      ],
+      "rectified_size": [
+        160,
+        512
+      ],
+      "size": [
+        18,
+        54
+      ],
+      "mask_polygon": [
+        [
+          305,
+          36
+        ],
+        [
+          349,
+          35
+        ],
+        [
+          498,
+          252
+        ],
+        [
+          498,
+          750
+        ],
+        [
+          341,
+          868
+        ],
+        [
+          342,
+          556
+        ],
+        [
+          311,
+          499
+        ],
+        [
+          311,
+          454
+        ],
+        [
+          366,
+          379
+        ],
+        [
+          334,
+          176
+        ]
+      ],
+      "background": [
+        19,
+        21,
+        27
+      ]
+    },
+    "right": {
+      "source": "cabinet",
+      "quad": [
+        [
+          305,
+          42
+        ],
+        [
+          500,
+          225
+        ],
+        [
+          496,
+          746
+        ],
+        [
+          338,
+          868
+        ]
+      ],
+      "rectified_size": [
+        160,
+        512
+      ],
+      "size": [
+        18,
+        54
+      ],
+      "mask_polygon": [
+        [
+          305,
+          36
+        ],
+        [
+          349,
+          35
+        ],
+        [
+          498,
+          252
+        ],
+        [
+          498,
+          750
+        ],
+        [
+          341,
+          868
+        ],
+        [
+          342,
+          556
+        ],
+        [
+          311,
+          499
+        ],
+        [
+          311,
+          454
+        ],
+        [
+          366,
+          379
+        ],
+        [
+          334,
+          176
+        ]
+      ],
+      "background": [
+        19,
+        21,
+        27
+      ]
+    }
+  },
+  "uncertainties": [
+    "Publisher-hosted artwork masters were not found. Archive photographs/scans are not proof of factory prints or artwork redistribution permission.",
+    "This selected shell/kit interpretation is explicit; ROM, hardware and seat count are not changed to suit artwork. No map placement or uploads included.",
+    "One photographed side is reused on the opposite side with readable lettering; the distinct opposite factory print is unverified and is not invented.",
+    "Asteroids has one shared five-button action panel, not a joystick; its two Start buttons remain photographed in the overlay. Both catalog seats share gameplay while starting separately.",
+    "Pinned FBNeo maps 2P Start to player 1 RetroPad R3. The frontend routes seat two Start to that descriptor-defined alias and shares the one coin chute; no new network input format is introduced.",
+    "A photographed original-design marquee is used rather than the archive's explicitly named marquee recreation. Publisher master/physical print authenticity remains unverified.",
+    "Thin white vectors receive a 3x3 maximum-filter stroke boost before downsampling, then 4x brightness, with black letterboxing and original reference unchanged. The 640x480 capture is rasterized emulated vector output, not replacement pixel art.",
+    "The same rebuilt-classics startup-state compatibility note applies as for Space Invaders. Older local Pac-Man/Tetris/Wonder Boy states are backed up, refreshed, and not uploaded automatically."
+  ],
+  "control_kind": "buttons",
+  "turns": true,
+  "game_actions": [
+    "Rotate Left",
+    "Rotate Right",
+    "Hyperspace",
+    "Thrust",
+    "Fire"
+  ]
+}

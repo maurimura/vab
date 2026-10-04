@@ -1,0 +1,528 @@
+{
+  "version": 1,
+  "skin": "kof98",
+  "rom": "kof98",
+  "title": "THE KING OF FIGHTERS '98 / NEO GEO MVS",
+  "variant": "Neo Geo MVS four-slot big-red shell, with the original-design KOF '98 mini-marquee in one bay and its photographed SNK panel",
+  "renderer": "mvs",
+  "size": [
+    40,
+    56
+  ],
+  "players": 2,
+  "buttons_per_player": 4,
+  "game_actions": [
+    "A: Weak Punch",
+    "B: Weak Kick",
+    "C: Strong Punch",
+    "D: Strong Kick"
+  ],
+  "preview_note": "40 x 56 px | SNK MVS big red / KOF 98 mini-marquee / two players / four action buttons / other bays blank",
+  "stations": [
+    12,
+    5
+  ],
+  "buttons": [
+    {
+      "name": "A",
+      "position": [
+        11.4,
+        -1.2
+      ],
+      "color": [
+        224,
+        39,
+        36
+      ]
+    },
+    {
+      "name": "B",
+      "position": [
+        12.1,
+        -1.5
+      ],
+      "color": [
+        245,
+        209,
+        37
+      ]
+    },
+    {
+      "name": "C",
+      "position": [
+        12.8,
+        -2.1
+      ],
+      "color": [
+        48,
+        182,
+        70
+      ]
+    },
+    {
+      "name": "D",
+      "position": [
+        13.5,
+        -2.7
+      ],
+      "color": [
+        40,
+        128,
+        222
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      211,
+      43,
+      36
+    ],
+    "trim": [
+      17,
+      19,
+      22
+    ],
+    "stick": [
+      23,
+      25,
+      28
+    ]
+  },
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "page_url": "https://commons.wikimedia.org/wiki/File:Neo_Geo_full_on.png",
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/d/d5/Neo_Geo_full_on.png",
+      "author": "Beeblebrox (Wikipedia)",
+      "kind": "original-cabinet-photo",
+      "rights": "Photo CC BY-SA 3.0, https://creativecommons.org/licenses/by-sa/3.0/; printed SNK artwork and trademarks retain their underlying rights. Derived logo extractions and renders acknowledge this photo license.",
+      "purpose": "Existing documented red MVS cabinet photograph guides shell, black molding and Neo Geo/MVS/SNK generic side/header logos. Its custom deck is not used; the separate KOF panel supplies the SNK overlay.",
+      "sha256": "58b99846db866e9e62a8f89af1d02d4d8756c553efe811a37d72523720a4a8e8"
+    },
+    "marquee": {
+      "file": "mini-marquee.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/99792",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=99792&part=e&download",
+      "kind": "original-art-scan",
+      "purpose": "Original-design English The Slugfest mini-marquee with Kyo artwork, Advanced/Extra instructions and printed SNK 1998 / Neo Geo credits. Archive scan, not an authenticated publisher master.",
+      "rights": "Underlying printed artwork SNK; third-party archive, not publisher authorization. Scan/photo authorship, original-versus-restored status and redistribution permission remain unverified.",
+      "sha256": "9e3bb808a4a1a4e8ead8233820b46750b09c00d327476abccf8fb7c6f1318b15",
+      "download_sha256": "9e3bb808a4a1a4e8ead8233820b46750b09c00d327476abccf8fb7c6f1318b15",
+      "download_size": [
+        825,
+        1002
+      ]
+    },
+    "controls": {
+      "file": "controls.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/5028",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=5028&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Photographed KOF '98 MVS operator panel: red diagonal SNK stripes, black sticks, red/yellow/green/blue A/B/C/D buttons and two black Start buttons; character move strips corroborate the game/variant. Worn right A cap is not copied as an invented uniform color change.",
+      "rights": "Underlying printed artwork SNK; third-party archive, not publisher authorization. Scan/photo authorship, original-versus-restored status and redistribution permission remain unverified.",
+      "sha256": "7053d24542b2c3bbca316aaee375f57b18e7ba84eff4dd3b1e4ef3062a185f25",
+      "download_sha256": "7053d24542b2c3bbca316aaee375f57b18e7ba84eff4dd3b1e4ef3062a185f25",
+      "download_size": [
+        1000,
+        700
+      ]
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/86495",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=86495&part=e&download",
+      "kind": "original-print-scan",
+      "purpose": "Archive promotional print corroborating KOF '98 title, characters and SNK release branding; not used as fabricated dedicated cabinet side art.",
+      "rights": "Underlying printed artwork SNK; third-party archive, not publisher authorization. Scan/photo authorship, original-versus-restored status and redistribution permission remain unverified.",
+      "sha256": "60ba5616eb183243d8527c744d9e752bcc0202b2952a4ca7a0c9da476bcfabc7",
+      "download_sha256": "60ba5616eb183243d8527c744d9e752bcc0202b2952a4ca7a0c9da476bcfabc7",
+      "download_size": [
+        850,
+        1063
+      ]
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real 304x224 Kyo-versus-Chris gameplay from the existing Neo Geo WASM core, supplied kof98.zip and neogeo.zip, nine-coin startup state, Start 15 frames, ten first-action confirmations 120 frames apart, then 900 neutral frames.",
+      "rights": "Game imagery SNK, captured from the user-supplied local ROM. No ROM downloaded, uploaded or committed; no redistribution license inferred.",
+      "sha256": "6c90bfad0b9e53929b45bf616ba31f44636208857209ad18eb22f82600018d6a"
+    }
+  },
+  "textures": {
+    "left": {
+      "canvas": [
+        128,
+        384
+      ],
+      "fill": [
+        211,
+        43,
+        36
+      ],
+      "size": [
+        18,
+        54
+      ],
+      "patches": [
+        {
+          "source": "cabinet",
+          "quad": [
+            [
+              51,
+              340
+            ],
+            [
+              241,
+              370
+            ],
+            [
+              240,
+              426
+            ],
+            [
+              56,
+              404
+            ]
+          ],
+          "placement": [
+            14,
+            95,
+            100,
+            35
+          ],
+          "white_ink": true
+        },
+        {
+          "source": "cabinet",
+          "quad": [
+            [
+              104,
+              451
+            ],
+            [
+              187,
+              466
+            ],
+            [
+              190,
+              512
+            ],
+            [
+              103,
+              497
+            ]
+          ],
+          "placement": [
+            36,
+            143,
+            56,
+            31
+          ],
+          "white_ink": true
+        },
+        {
+          "source": "cabinet",
+          "quad": [
+            [
+              87,
+              672
+            ],
+            [
+              215,
+              723
+            ],
+            [
+              222,
+              769
+            ],
+            [
+              89,
+              716
+            ]
+          ],
+          "placement": [
+            24,
+            220,
+            80,
+            38
+          ],
+          "white_ink": true
+        }
+      ]
+    },
+    "right": {
+      "canvas": [
+        128,
+        384
+      ],
+      "fill": [
+        211,
+        43,
+        36
+      ],
+      "size": [
+        18,
+        54
+      ],
+      "patches": [
+        {
+          "source": "cabinet",
+          "quad": [
+            [
+              51,
+              340
+            ],
+            [
+              241,
+              370
+            ],
+            [
+              240,
+              426
+            ],
+            [
+              56,
+              404
+            ]
+          ],
+          "placement": [
+            14,
+            95,
+            100,
+            35
+          ],
+          "white_ink": true
+        },
+        {
+          "source": "cabinet",
+          "quad": [
+            [
+              104,
+              451
+            ],
+            [
+              187,
+              466
+            ],
+            [
+              190,
+              512
+            ],
+            [
+              103,
+              497
+            ]
+          ],
+          "placement": [
+            36,
+            143,
+            56,
+            31
+          ],
+          "white_ink": true
+        },
+        {
+          "source": "cabinet",
+          "quad": [
+            [
+              87,
+              672
+            ],
+            [
+              215,
+              723
+            ],
+            [
+              222,
+              769
+            ],
+            [
+              89,
+              716
+            ]
+          ],
+          "placement": [
+            24,
+            220,
+            80,
+            38
+          ],
+          "white_ink": true
+        }
+      ]
+    },
+    "marquee": {
+      "canvas": [
+        200,
+        80
+      ],
+      "fill": [
+        211,
+        43,
+        36
+      ],
+      "size": [
+        24,
+        9
+      ],
+      "rectangles": [
+        {
+          "box": [
+            11,
+            29,
+            43,
+            69
+          ],
+          "color": [
+            239,
+            231,
+            209
+          ]
+        },
+        {
+          "box": [
+            58,
+            29,
+            90,
+            69
+          ],
+          "color": [
+            239,
+            231,
+            209
+          ]
+        },
+        {
+          "box": [
+            105,
+            29,
+            137,
+            69
+          ],
+          "color": [
+            239,
+            231,
+            209
+          ]
+        },
+        {
+          "box": [
+            152,
+            29,
+            184,
+            69
+          ],
+          "color": [
+            239,
+            231,
+            209
+          ]
+        }
+      ],
+      "patches": [
+        {
+          "source": "cabinet",
+          "quad": [
+            [
+              452,
+              79
+            ],
+            [
+              598,
+              88
+            ],
+            [
+              596,
+              123
+            ],
+            [
+              451,
+              115
+            ]
+          ],
+          "placement": [
+            57,
+            3,
+            86,
+            21
+          ],
+          "white_ink": true
+        },
+        {
+          "source": "marquee",
+          "placement": [
+            12,
+            30,
+            31,
+            38
+          ]
+        }
+      ]
+    },
+    "controls": {
+      "source": "controls",
+      "quad": [
+        [
+          24,
+          303
+        ],
+        [
+          970,
+          303
+        ],
+        [
+          995,
+          680
+        ],
+        [
+          10,
+          680
+        ]
+      ],
+      "rectified_size": [
+        192,
+        80
+      ],
+      "size": [
+        24,
+        9
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        18,
+        10
+      ],
+      "fit": "contain",
+      "background": [
+        0,
+        0,
+        0
+      ]
+    }
+  },
+  "uncertainties": [
+    "KOF '98 is an MVS cartridge/kit, not a unique factory-dedicated big-red cabinet. The selected SNK shell/panel variant is disclosed rather than inventing character sides.",
+    "The original-design English mini-marquee occupies one of four MVS bays. Other bays remain blank; this skin runs only kof98, not a multi-game selector.",
+    "One cabinet side photograph supplies generic Neo Geo/MVS/SNK logos on both sides with readable orientation; the opposite original print is unverified.",
+    "Two black Start buttons remain photographed in the overlay. Both stations have four modeled A/B/C/D action buttons; all four are used by this game.",
+    "The panel character instruction strips sit above the Start strip in the photo and are not stretched across the red deck; the mini-marquee retains the operator action diagram.",
+    "Neo Geo BIOS is required and reused from the already supplied local neogeo.zip. Nine-coin startup state does not auto-start a match.",
+    "Publisher-hosted artwork masters were not found. Archive artwork/photo rights remain uncertain; the MVS photograph retains Beeblebrox CC BY-SA 3.0 attribution and underlying SNK artwork rights."
+  ],
+  "control_stations": 2,
+  "rom_validation": {
+    "fbneo_commit": "aceeebed9e7edc8a28652365a064baee9a16e274",
+    "required_roms": 16,
+    "matching_required_roms": 16,
+    "matching": "All required files match the pinned driver by CRC32 and size; supplied legacy short names are accepted by FBNeo.",
+    "optional_absent": [],
+    "zip_sha256": "6cdd96b53e118c07412de2c439a4718861e969910b06a833f11feefbf9d697df",
+    "state_sha256": "f5cac4fb6439df6b959afce40ee4b49ae55a77f0336a81d95cb5aa973e6efe4a",
+    "coins": 9,
+    "bios": "neogeo"
+  }
+}

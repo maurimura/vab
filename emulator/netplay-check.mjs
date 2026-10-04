@@ -66,7 +66,7 @@ if (!isMainThread) {
     core: url(corePath),
     rom: url(romPath),
     files: biosPaths.map(url),
-    turns: Boolean(process.env.TURNS),
+    turns: process.env.TURNS === '1',
     hold: true,
   });
   // In order, each LATENCY ± JITTER ms after the one before at the earliest.
@@ -79,6 +79,7 @@ if (!isMainThread) {
   const boot = async () => {
     const core = await Core.create(createFBNeo, { onFrame() {}, onAudio() {} });
     core.netplay = true;
+    core.turns = process.env.TURNS === '1';
     for (const path of biosPaths) core.addFile(basename(path), await readFile(path));
     core.loadGame(basename(romPath), await readFile(romPath));
     core.present = false;
@@ -111,10 +112,6 @@ if (!isMainThread) {
         const ports = check.core.inputs;
         for (let i = 0; i < message.inputs.length; i += 4) {
           ports.set(message.inputs.subarray(i, i + 4));
-          if (process.env.TURNS) {
-            ports[0] |= ports[1] & ~0b1100;
-            ports[1] &= 0b1100;
-          }
           check.core.run();
         }
         check.frame += message.inputs.length / 4;
@@ -152,7 +149,7 @@ if (!isMainThread) {
         files: biosPaths.map(url),
         state: statePath && url(statePath),
         seat,
-        turns: Boolean(process.env.TURNS),
+        turns: process.env.TURNS === '1',
         port: inside,
         hold,
       },

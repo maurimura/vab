@@ -17,18 +17,39 @@ def model(recipe):
         ]
         for ymin, ymax in ((0, 1), (15, 16)):
             solids.append(base.Solid('side', 2, 9.5, ymin, ymax, 22, 38))
+    elif recipe.get('shell') == 'flat-upright':
+        solids = [
+            base.Solid('lower', 2, 11, 3, 13, 0, 16),
+            base.Solid('upper', 2, 10.3, 4, 12, 16, 29),
+            base.Solid('hood', 2, 10.5, 4, 12, 29, 32),
+            base.Solid('deck', 8, 14, 3, 13, 15.5, 18.5, (((1, 0, 6), 122),)),
+        ]
+        for ymin, ymax in ((3, 4), (12, 13)):
+            solids.append(base.Solid('side', 2, 11, ymin, ymax, 0, 32))
     else:
         solids = [s for s in base.model() if s.part not in ('button', 'stick', 'upper')]
         solids.insert(1, base.Solid('upper', 2, 9, 4, 12, 16, 28, (((1, 0, .65), 20.75),)))
+    kind = recipe.get('control_kind', 'joystick')
     for i, y in enumerate(recipe['stations']):
-        color = recipe.get('station_colors', [recipe['colors']['stick']] * len(recipe['stations']))[i]
-        solids.append(base.Solid('stick', 10.4, 10.8, y - .2, y + .2, 17, 19.1))
-        solids.append(base.Ball((10.6, y, 19.4), .7, tuple(color)))
+        if kind == 'joystick':
+            color = recipe.get('station_colors', [recipe['colors']['stick']] * len(recipe['stations']))[i]
+            solids.append(base.Solid('stick', 10.4, 10.8, y - .2, y + .2, 17, 19.1))
+            solids.append(base.Ball((10.6, y, 19.4), .7, tuple(color)))
+        elif kind == 'mounted-guns':
+            # Fixed-base machine guns point back toward the monitor, not ball-top sticks.
+            solids.extend([
+                base.Solid('gun_mount', 10, 12.8, y - 1.1, y + 1.1, 17.8, 18.5, color=(32, 35, 39)),
+                base.Solid('gun_grip', 11.7, 12.5, y - .45, y + .45, 18, 21, color=(43, 47, 53)),
+                base.Solid('gun', 9.1, 12.8, y - .55, y + .55, 20.3, 21.4, color=(59, 63, 69)),
+                base.Solid('gun_barrel', 7.7, 9.2, y - .35, y + .35, 20.6, 21.1, color=(30, 33, 38)),
+            ])
         for button in recipe['buttons']:
-            x, dy = button['position']
-            z = (122 - x) / 6
+            positions = button.get('position_by_station', [button['position']] * len(recipe['stations']))
+            x, dy = positions[i]
+            z = button.get('height', (122 - x) / 6)
+            color = button.get('color_by_station', [button['color']] * len(recipe['stations']))[i]
             solids.append(base.Solid('button', x - .35, x + .35, y + dy - .35,
-                                     y + dy + .35, z, z + .25, color=tuple(button['color'])))
+                                     y + dy + .35, z, z + .25, color=tuple(color)))
     return solids
 
 
@@ -39,7 +60,7 @@ def paint(solid, p, n, tex, *, recipe):
     colors = {name: tuple(color) for name, color in recipe['colors'].items()}
     pedestal = recipe.get('shell') == 'pedestal'
     if part == 'side':
-        front = 9.5 if pedestal else base.side_front(z)
+        front = 9.5 if pedestal else 11 if recipe.get('shell') == 'flat-upright' else base.side_front(z)
         top = 38 if pedestal else 32
         if abs(ny) < .9 or x > front - .65 or z > top - .65:
             return 'trim', colors.get('hood_trim', colors['trim']) if pedestal else colors['trim'], False
@@ -64,7 +85,14 @@ def paint(solid, p, n, tex, *, recipe):
         return 'marquee', base.sample(tex['marquee'], (hi - y) / (hi - lo), (top - z) / 4), True
     if part == 'upper' and nx > .5:
         lo, hi = (1, 15) if pedestal else (4, 12)
-        bottom, top = (23, 32.5) if pedestal else (18.8, 25.1)
+        if pedestal:
+            bottom, top = 23, 32.5
+        elif recipe.get('shell') == 'flat-upright':
+            bottom, top = 18.3, 28.4
+        elif recipe.get('portrait_monitor'):
+            bottom, top = 18.3, 27.6
+        else:
+            bottom, top = 18.8, 25.1
         if lo + .6 < y < hi - .6 and bottom + .6 < z < top - .6:
             return 'screen', base.sample(tex['screen'], (hi - .6 - y) / (hi - lo - 1.2),
                                        (top - .6 - z) / (top - bottom - 1.2)), True
@@ -87,6 +115,8 @@ def paint(solid, p, n, tex, *, recipe):
         return 'controls', solid.color, False
     if part == 'stick':
         return 'controls', (57, 57, 64), False
+    if part.startswith('gun'):
+        return 'controls', solid.color, False
     if nx < -.9:
         if 5 < y < 11 and 22 < z < 28 and int(z) % 2 == 0:
             return 'body', (9, 11, 16), False

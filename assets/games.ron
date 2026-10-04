@@ -5,7 +5,9 @@
 // controls. `cabinets` names the cabinet skins drawn for the game (tiles/objects/cabinet_<skin>_*):
 // the editor gives a cabinet in one of them the game.
 [
-    (rom: "mk2", core: "midway", title: "Mortal Kombat II", cabinets: ["mk2", "mk2_v2"]),
+    (rom: "mk2", core: "midway", title: "mkII", cabinets: ["mk2_v2"]),
+    (rom: "umk3", core: "midway", title: "Ultimate Mortal Kombat 3", cabinets: ["umk3"]),
+    (rom: "kof98", core: "neogeo", title: "The King of Fighters '98", bios: Some("neogeo"), cabinets: ["kof98"]),
     (rom: "nbajam", core: "midway", title: "NBA Jam", players: 4, cabinets: ["nbajam"]),
     (rom: "mslug", core: "neogeo", title: "Metal Slug", bios: Some("neogeo"), cabinets: ["mslug"]),
     (rom: "snowbrosb", core: "snowbros", title: "Snow Bros.", cabinets: ["snowbros"]),
@@ -17,4 +19,8 @@
     (rom: "pacman", core: "classics", title: "Pac-Man", turns: true, cabinets: ["pacman"]),
     (rom: "atetris", core: "classics", title: "Tetris", cabinets: ["atetris"]),
     (rom: "wboy", core: "classics", title: "Wonder Boy", turns: true, cabinets: ["wboy"]),
+    (rom: "invaders", core: "classics", title: "Space Invaders", turns: true, cabinets: ["invaders"]),
+    (rom: "asteroid", core: "classics", title: "Asteroids", turns: true, cabinets: ["asteroid"]),
+    (rom: "s1945", core: "psikyo", title: "Strikers 1945", cabinets: ["s1945"]),
+    (rom: "term2", core: "midway", title: "Terminator 2: Judgment Day", cabinets: ["term2"]),
 ]

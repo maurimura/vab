@@ -1,6 +1,8 @@
 // Minimal libretro frontend for the FBNeo Emscripten cores (emulator/build.sh).
 // Runs wherever the core runs: the Web Worker (worker.js) or Node.
 
+import { controllerRouting, routedButton } from './controller-routing.js';
+
 // https://github.com/libretro/RetroArch/blob/master/libretro-common/include/libretro.h
 const ENV = {
   SET_ROTATION: 1,
@@ -31,6 +33,8 @@ const DEVICE_JOYPAD = 1;
 export class Core {
   /** Per-port RetroPad masks: bit (1 << id) per held button, ids from libretro.h. */
   inputs = new Uint16Array(4);
+  /** Sequential seats share the physical upright's gameplay controls. */
+  turns = false;
   /**
    * Rollback netplay: FBNeo then keeps its states free of anything machine-local
    * (hiscores, the host clock) so both players' machines stay identical.
@@ -53,6 +57,7 @@ export class Core {
   #slotSize = 0;
   #pixelFormat = PIXEL_FORMAT.RGB1555;
   #rotation = 0; // quarter turns counter-clockwise, for vertical games like Pac-Man
+  #routing = { sharedCoin: false, secondStart: undefined };
   #onFrame;
   #onAudio;
   #onLog;
@@ -81,7 +86,7 @@ export class Core {
     m._retro_set_audio_sample_batch(m.addFunction((data, frames) => this.#audio(data, frames), "iii"));
     m._retro_set_input_poll(m.addFunction(() => {}, "v"));
     m._retro_set_input_state(m.addFunction((port, device, _index, id) =>
-      device === DEVICE_JOYPAD ? (this.inputs[port] >> id) & 1 : 0, "iiiii"));
+      device === DEVICE_JOYPAD ? routedButton(this.inputs, port, id, this.#routing, this.turns) : 0, "iiiii"));
     m._retro_init();
   }
 
@@ -205,12 +210,18 @@ export class Core {
         // struct retro_input_descriptor { unsigned port, device, index, id; const char *description; }[],
         // ended by one without a description.
         this.buttons.clear();
+        const descriptors = Array.from({ length: this.inputs.length }, () => new Map());
         for (let at = data; ; at += 20) {
           const description = m.getValue(at + 16, "i32");
           if (!description) break;
           const [port, device, index, id] = [0, 4, 8, 12].map((offset) => m.getValue(at + offset, "i32"));
-          if (port === 0 && device === DEVICE_JOYPAD && index === 0) this.buttons.set(id, m.UTF8ToString(description));
+          if (device === DEVICE_JOYPAD && index === 0 && descriptors[port]) {
+            const label = m.UTF8ToString(description);
+            descriptors[port].set(id, label);
+            if (port === 0) this.buttons.set(id, label);
+          }
         }
+        this.#routing = controllerRouting(descriptors);
         return 1;
       }
       case ENV.SET_PIXEL_FORMAT: {

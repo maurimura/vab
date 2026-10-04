@@ -11,7 +11,7 @@ import json
 from pathlib import Path
 import re
 
-from PIL import Image, ImageDraw, ImageEnhance
+from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
 import build_mk2 as base
 import build_snowbros as previews
 import build_simpsons
@@ -37,6 +37,11 @@ def load_recipe(name):
         raise ValueError('Invalid player count')
     if recipe.get('buttons_per_player') not in range(1, 7):
         raise ValueError('Invalid physical button count')
+    kind = recipe.get('control_kind', 'joystick')
+    if kind not in ('joystick', 'buttons', 'mounted-guns'):
+        raise ValueError('Invalid physical control kind')
+    if kind != 'joystick' and recipe['renderer'] != 'upright':
+        raise ValueError('Special controls require the reviewed upright renderer')
     if recipe.get('control_stations', recipe['players']) not in range(1, 5):
         raise ValueError('Invalid physical station count')
     if len(recipe.get('size', [])) != 2 or any(type(n) is not int or not 16 <= n <= 128 for n in recipe['size']):
@@ -126,6 +131,13 @@ def textures(recipe):
                     image.paste(source, (x, y))
         else:
             image = extract(recipe, spec)
+        line_boost = spec.get('line_boost', 1)
+        if type(line_boost) is not int or line_boost not in (1, 3, 5):
+            raise ValueError('Invalid screen line boost')
+        if line_boost != 1:
+            if name != 'screen':
+                raise ValueError('Line boost is only for thin gameplay strokes')
+            image = image.filter(ImageFilter.MaxFilter(line_boost))
         size = tuple(spec['size'])
         if spec.get('fit') == 'contain':
             image.thumbnail(size, Image.Resampling.BOX)
@@ -154,7 +166,12 @@ def prepare(recipe):
     balls = sum(isinstance(s, base.Ball) for s in solids)
     buttons = sum(s.part == 'button' and isinstance(s, base.Solid) for s in solids)
     stations = recipe.get('control_stations', recipe['players'])
-    if sticks != stations or balls != sticks or buttons != sticks * recipe['buttons_per_player']:
+    kind = recipe.get('control_kind', 'joystick')
+    expected_sticks = stations if kind == 'joystick' else 0
+    guns = sum(s.part == 'gun' for s in solids)
+    expected_guns = stations if kind == 'mounted-guns' else 0
+    if (sticks != expected_sticks or balls != sticks or guns != expected_guns
+            or buttons != stations * recipe['buttons_per_player']):
         raise ValueError('Physical controls disagree with the recipe')
     return tex, solids, painter
 

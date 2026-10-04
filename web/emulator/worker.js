@@ -38,9 +38,6 @@
 //      time the stream starts over (a new session); inputs go on from that stream's states.
 import { Core } from "./libretro.js";
 
-// RetroPad bits (libretro.h).
-const SELECT = 1 << 2; // coin
-const START = 1 << 3;
 /** Controller ports, as many as libretro.js has. */
 const PORTS = 4;
 /** How often watchers get the frames since the last time, in ms. */
@@ -126,7 +123,6 @@ class Cabinet {
   fps = 60;
 
   #seat;
-  #turns;
   #port;
   /** Online: the GGRS session, its epoch, and the seats of its players in handle order. */
   #session;
@@ -152,8 +148,8 @@ class Cabinet {
 
   constructor(core, { seat, turns, port }) {
     this.core = core;
+    core.turns = turns;
     this.#seat = seat;
-    this.#turns = turns;
     this.#port = port;
     if (!port) return; // watching
     port.onmessage = ({ data: [seat, packet] }) => {
@@ -266,13 +262,8 @@ class Cabinet {
   #run(masks, present) {
     const ports = this.core.inputs;
     ports.set(masks);
-    // Turn-based games (Pac-Man, Wonder Boy) read player 1's controls on either player's turn,
-    // like an upright cabinet, so player 2's stick and buttons go there too; only their Start
-    // and Coin stay on port 2.
-    if (this.#turns) {
-      ports[0] |= ports[1] & ~(START | SELECT);
-      ports[1] &= START | SELECT;
-    }
+    // Core routes shared upright gameplay and descriptor-defined Start/Coin aliases;
+    // the original masks remain intact for rollback and the spectator input stream.
     this.core.present = present;
     this.core.run();
     // The core names the game's buttons on its first frame.

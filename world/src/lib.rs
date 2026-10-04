@@ -255,18 +255,21 @@ mod tests {
         assert_eq!(mslug.core, "neogeo");
         assert_eq!(mslug.players, 2);
         let mk2 = games.iter().find(|g| g.rom == "mk2").unwrap();
-        assert_eq!(mk2.cabinets, ["mk2", "mk2_v2"]);
-        for (rom, core, players, skin) in [
-            ("dinou", "capcom", 3, "dino"),
-            ("simpsons", "konami", 4, "simpsons"),
-            ("nbajam", "midway", 4, "nbajam"),
+        assert_eq!(mk2.title, "mkII");
+        assert_eq!(mk2.cabinets, ["mk2_v2"]);
+        for (rom, core, players, skin, bios) in [
+            ("dinou", "capcom", 3, "dino", None),
+            ("simpsons", "konami", 4, "simpsons", None),
+            ("nbajam", "midway", 4, "nbajam", None),
+            ("umk3", "midway", 2, "umk3", None),
+            ("kof98", "neogeo", 2, "kof98", Some("neogeo")),
         ] {
             let game = games.iter().find(|g| g.rom == rom).unwrap();
             assert_eq!(game.core, core);
             assert_eq!(game.players, players);
             assert_eq!(game.cabinets, [skin]);
             assert!(!game.turns);
-            assert!(game.bios.is_none());
+            assert_eq!(game.bios.as_deref(), bios);
         }
         assert!(
             games
@@ -276,6 +279,25 @@ mod tests {
                 .bios
                 .is_none()
         );
+    }
+
+    #[test]
+    fn shooter_catalog_preserves_hardware_and_sequential_seats() {
+        let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
+        for (rom, core, title, turns) in [
+            ("invaders", "classics", "Space Invaders", true),
+            ("asteroid", "classics", "Asteroids", true),
+            ("s1945", "psikyo", "Strikers 1945", false),
+            ("term2", "midway", "Terminator 2: Judgment Day", false),
+        ] {
+            let game = games.iter().find(|g| g.rom == rom).unwrap();
+            assert_eq!(game.core, core);
+            assert_eq!(game.title, title);
+            assert_eq!(game.players, 2);
+            assert_eq!(game.turns, turns);
+            assert_eq!(game.cabinets, [rom]);
+            assert!(game.bios.is_none());
+        }
     }
 
     #[test]

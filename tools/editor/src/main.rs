@@ -443,6 +443,8 @@ fn load_palette(editor: &mut Editor) {
     editor.cabinets = Vec::new();
     for tile in tiles_in("objects") {
         match cabinet_parts(&tile).map(|(skin, _)| skin) {
+            // Retain legacy artwork for existing maps, but offer only its v2 replacement.
+            Some(Some(skin)) if skin == "mk2" => {}
             Some(skin) => {
                 if !editor.cabinets.iter().any(|cabinet| cabinet.skin == skin) {
                     let game = editor
@@ -1090,6 +1092,29 @@ mod tests {
                 assert_eq!(cabinet.label(), game.title);
             }
         }
+    }
+
+    #[test]
+    fn palette_offers_only_mk2_v2_named_mkii() {
+        let mut editor = Editor {
+            games: games_from_ron(GAMES).unwrap(),
+            ..Default::default()
+        };
+        load_palette(&mut editor);
+        assert!(
+            editor
+                .cabinets
+                .iter()
+                .all(|cabinet| cabinet.skin.as_deref() != Some("mk2"))
+        );
+        let cabinets: Vec<_> = editor
+            .cabinets
+            .iter()
+            .filter(|cabinet| cabinet.game.as_ref().is_some_and(|game| game.rom == "mk2"))
+            .collect();
+        assert_eq!(cabinets.len(), 1);
+        assert_eq!(cabinets[0].skin.as_deref(), Some("mk2_v2"));
+        assert_eq!(cabinets[0].label(), "mkII");
     }
 
     #[test]

@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { deflateSync } from 'node:zlib';
 import { Core } from '../../web/emulator/libretro.js';
+import { actionButtons } from '../../emulator/action-buttons.mjs';
 
 const [corePath, romPath, output, statePath, ...extraPaths] = process.argv.slice(2);
 if (!corePath || !romPath || !output || !statePath) throw new Error('Expected core, ROM, output, state|-, then optional local BIOS/parent sets');
@@ -32,8 +33,9 @@ core.inputs[0] = 1 << 3;
 for (let i = 0; i < 15; i++) core.run();
 core.inputs[0] = 0;
 if (confirmations) {
+  // Use each core's actual action order without assuming English button names.
   // Tetris has one selector; NBA Jam needs repeated confirms for initials/team.
-  const action = [...core.buttons].filter(([, label]) => /rotate|fire|button/i.test(label))[actionIndex - 1];
+  const action = actionButtons(core.buttons)[actionIndex - 1];
   if (!action) throw new Error('Selected action button descriptor not found to confirm selection');
   for (let step = 0; step < confirmations; step++) {
     for (let i = 0; i < 120; i++) core.run();
@@ -44,10 +46,10 @@ if (confirmations) {
 }
 for (let i = 0; i < frames; i++) core.run();
 // Libretro reports pre-rotation geometry; vertical games rotate in onFrame.
-const matchesGeometry = frame && (
-  (frame.width === av.width && frame.height === av.height) ||
-  (frame.width === av.height && frame.height === av.width)
-);
+// Midway Y Unit can omit the last advertised scanline (Terminator 2: 256 -> 255).
+const matchesGeometry = frame && [
+  [av.width, av.height], [av.height, av.width],
+].some(([width, height]) => frame.width === width && frame.height >= height - 1 && frame.height <= height);
 if (!matchesGeometry || !core.systemRam().length) {
   throw new Error('Core did not produce a valid game display; inspect ROM compatibility');
 }

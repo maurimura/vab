@@ -19,7 +19,8 @@ page/image URLs, hashes, rights/uncertainties, dimensions, control layout, and
 texture crops/rectification. The pipeline shares the established raycaster,
 lighting and editable-layer export. Its texture loader handles crops, perspective
 corners, polygon masks, quarter-turn rotation, aspect-preserving letterboxing,
-brightness adjustment, patches and photographed white-logo ink extraction. A reviewed renderer
+brightness adjustment, thin gameplay-stroke boosting, patches and photographed
+white-logo ink extraction. A reviewed renderer
 registry keeps recipe metadata from selecting arbitrary Python code. All four
 views are validated before writing files. Neither validate nor build edits the
 map/catalog or performs network access, ROM uploads, commits or deployment.
@@ -136,6 +137,167 @@ confirms progress through initials/birthday/team menus. Update the reference has
 if recapturing. Serving the ROM/state from R2, placing a cabinet and deploying
 remain separate permissioned steps.
 
+### The King of Fighters '98 and Ultimate Mortal Kombat 3
+
+```sh
+for skin in kof98 umk3; do
+  python3 tools/art/cabinet_pipeline.py validate "$skin"
+  python3 tools/art/cabinet_pipeline.py build "$skin"
+done
+python3 tools/art/preview_catalog.py kof98 umk3 \
+  --filename=kof98-umk3.png --title="KOF '98 + ULTIMATE MORTAL KOMBAT 3"
+node --test emulator/action-buttons.test.mjs
+```
+
+Both games use the existing browser-local emulators, two simultaneous seats and
+unchanged join/watch/input flow. No map placement or ROM upload is included.
+Four views and seven editable layers per view are exported for each skin;
+individual previews are `art/previews/{kof98,umk3}.png` and the separate batch
+preview is `art/previews/kof98-umk3.png` (earlier catalog previews stay intact).
+
+- **KOF '98**: **40×56** red Neo Geo MVS interpretation, not an invented
+  factory-dedicated cabinet. The English *The Slugfest* mini-marquee occupies one
+  of four bays; the others are blank. Generic Neo Geo/MVS/SNK sides, black trim,
+  photographed SNK-striped deck, two black sticks and four red/yellow/green/blue
+  A/B/C/D actions per player follow the documented hardware. Start buttons remain
+  photographed. Uses `neogeo` core and the already supplied `neogeo` BIOS;
+  **all 16 ROMs** match pinned FBNeo by CRC/size.
+- **UMK3**: **32×48** documented MK3-family upgrade cabinet, with Ultimate's
+  purple-skeleton marquee above retained MK3 character sides and blue operator
+  deck/fascia. Black body, red molding/sticks and six MK-layout actions per player:
+  red punches, blue kicks, white Block, yellow Run. This is not a Street Fighter
+  two-row layout or fabricated UMK3 skeleton side art. Start buttons remain
+  photographed. Uses the existing `midway` core without BIOS; **all 26 required
+  revision 1.2 ROMs** match. The missing security PIC is optional for FBNeo.
+
+All artwork URLs/hashes/classifications, adaptations, supplied ZIP/state hashes
+and remaining rights uncertainties are in the recipes. Archive hosting is not
+publisher authorization; photo restoration/print authenticity remains unverified.
+The MVS photo retains Beeblebrox's CC BY-SA 3.0 attribution. One photographed side
+is repeated readably on the opposite side of each cabinet; unseen prints are not
+invented. UMK3's photographed side retains glare/limited detail. Real captures show
+Kyo versus Chris (**304×224**) and Kitana versus Reptile (**400×254**), never another
+game's screen.
+
+Reproducible startup/capture, using only supplied local files:
+
+```sh
+node emulator/snapshot.mjs emulator/dist/neogeo/fbneo.mjs \
+  /path/to/kof98.zip emulator/dist/kof98.state 9 /path/to/neogeo.zip
+node tools/art/capture_screen.mjs emulator/dist/neogeo/fbneo.mjs \
+  /path/to/kof98.zip art/references/kof98/screen.png emulator/dist/kof98.state \
+  --confirm=10 --frames=900 /path/to/neogeo.zip
+node emulator/snapshot.mjs emulator/dist/midway/fbneo.mjs \
+  /path/to/umk3.zip emulator/dist/umk3.state 9
+node tools/art/capture_screen.mjs emulator/dist/midway/fbneo.mjs \
+  /path/to/umk3.zip art/references/umk3/screen.png emulator/dist/umk3.state \
+  --confirm=3 --frames=600
+```
+
+UMK3's initial CMOS warning requires **High Punch (RetroPad Y)**, not Low Punch
+(B). `emulator/action-buttons.mjs` identifies actual action IDs, independent of
+English labels; snapshot boot uses the first reported action and capture uses
+that same order. The shared fix does not rewrite existing startup states.
+Both new states contain nine credits and leave players to start/select normally.
+
+Both games pass deterministic rollback and two-seat joins, departure and
+spectators with zero mismatches. KOF '98 fits eight-frame rollbacks (7.4 ms p99
+versus 16.9 ms budget in this Node check). UMK3's eight-frame stress test remains
+in sync but exceeds budget (35.2 ms p99 versus 18.3 ms); the **existing** worker
+benchmark automatically selects three rollback frames / three-frame input delay
+on this machine, with 16.6 ms p99 for three-frame stress. Browser/hardware results
+can vary; no streaming fallback or new emulator is introduced.
+
+### Space Invaders, Asteroids, Strikers 1945 and Terminator 2
+
+Four **32×48** facings and seven editable layers per facing are in the usual
+asset/art folders, with recipes/references for `invaders`, `asteroid`, `s1945`
+and `term2`. Review `art/previews/shooters-batch.png`; individual previews remain
+separate. All marquees are rectified from archived cabinet photographs, not
+misrepresented publisher masters. Exact URLs, download/reference hashes,
+classifications, variant choices and rights uncertainties are in each recipe.
+
+- **Space Invaders**: blue Taito upright, alien/moonscape sides/front,
+  integrated title/bezel, brown edging and one white shared two-way joystick.
+  Yellow Fire plus two red Start buttons follow this photograph; the separately
+  researched red/yellow Taito America conversion deck is not mixed in. The
+  `flat-upright` shell keeps the tall glass/display near the cabinet front.
+  **Four supplied program ROMs** match; two alternating seats use `classics`.
+  **Audio is missing:** FBNeo requires separate `invaders` samples `1`–`9.wav`
+  and `18.wav`, absent from the supplied program ZIP and local files. No samples
+  were downloaded. A supplied sample pack plus frontend sample mounting will
+  be needed to enable sound; the current game is silent.
+- **Asteroids**: black Atari upright, spaceship/orange-blue planet sides,
+  original-design title and blue/red panel, **no joystick**. Five shared white
+  actions are Rotate Left/Right, Hyperspace, Thrust and Fire; two metal/LED Start
+  buttons stay photographed. **Five supplied ROMs** match, two alternating seats,
+  `classics`. The real 640×480 vector capture receives a 3×3 stroke maximum
+  filter then 4× brightness only in the tiny letterboxed sprite texture; its
+  reference is untouched. Descriptor-driven routing maps seat-two Start to
+  FBNeo's player-one R3 **2P Start** and lets both seats use the shared coin chute.
+  `emulator/asteroid-controls-check.mjs` verifies seat-two Start matches native
+  two-player selection (not one-player), plus shared coins and rotation in game RAM.
+- **Strikers 1945**: black JAMMA conversion, plane/title marquee, portrait screen
+  and gray Fabtek panel, without fabricated aircraft sides. The gray deck is an
+  explicitly selected operator alternative to the photographed red deck, not a
+  claimed factory-dedicated cabinet. Two black sticks and duplicated blue/green
+  Shoot/Bomb pairs follow the panel; white Start buttons stay photographed.
+  **Ten supplied ROMs** match; the absent MCU is undumped and simulated by FBNeo.
+  Two simultaneous seats run the new `psikyo` core, without BIOS. Its low-resolution
+  cabinet/marquee photo limits fine print detail.
+- **Terminator 2: Judgment Day**: Midway blue Arnold/T2 sides, white title,
+  red molding and **two fixed-base machine guns**, separately modeled receiver,
+  barrel, grip and mount. Trigger/grenade details belong to the guns, not a
+  four-button joystick panel. Start stays photographed. The LA3-indexed panel
+  artwork is common to the hardware; the game remains supplied **LA4** with all
+  **17 required ROMs** matching. Two simultaneous seats use existing `midway`.
+  Arrow keys/touch directions aim via FBNeo's digital fallback; the two actions
+  fire/throw grenades. Mouse aiming is not added. Independent guns and saved aim
+  replay have been verified by `emulator/term2-controls-check.mjs`.
+
+The four real screen captures are respectively 224×260, 640×480, 224×320 and
+400×255. Capture accepts the one-row TMS34010 geometry correction, not arbitrary
+sizes. One photographed side is repeated readably when an unseen print is
+unverified; the plain Strikers sides stay plain. No other game's display is used.
+
+```sh
+./emulator/build.sh classics psikyo
+for skin in invaders asteroid s1945 term2; do
+  python3 tools/art/cabinet_pipeline.py build "$skin"
+done
+python3 tools/art/preview_catalog.py invaders asteroid s1945 term2 \
+  --filename=shooters-batch.png \
+  --title='SPACE INVADERS / ASTEROIDS / STRIKERS 1945 / TERMINATOR 2'
+node --test emulator/action-buttons.test.mjs emulator/controller-routing.test.mjs
+node emulator/asteroid-controls-check.mjs emulator/dist/classics/fbneo.mjs \
+  /path/to/asteroid.zip emulator/dist/asteroid.state
+node emulator/term2-controls-check.mjs emulator/dist/midway/fbneo.mjs \
+  /path/to/term2.zip emulator/dist/term2.state
+```
+
+Each ignored startup state was made with `snapshot.mjs` and nine coins. To
+recapture, use `capture_screen.mjs <core> <zip> <screen.png> <state>` with
+`--frames=300` for Invaders/Asteroids, `--confirm --frames=600` for Strikers and
+`--confirm --frames=2000` for T2. `TURNS=1` enables the shared-panel routing in
+both rollback/netplay checks for Invaders/Asteroids. Four two-seat checks pass
+joins, departure and spectators without final errors or mismatches. Asteroids'
+watcher logged temporary missing initial frames while loading, then recovered
+with the periodic full state; this is not a claim of flawless browser startup.
+Eight-frame rollback stays in sync for all four (p99 1.4 / 5.7 / 11.2 / 15.3 ms
+against 16.7 / 16.7 / 16.9 / 18.3 ms budgets on this Node host). Browser results
+still require actual served-core/ROM testing after permissioned upload.
+
+**Core/state compatibility:** the rebuilt classics core includes the existing
+replay fixes, adding 20 bytes to earlier Pac-Man/Tetris/Wonder Boy state layouts.
+Their ignored local startup states were regenerated for this build; earlier
+states and the earlier core are backed up in `/tmp/vab-shooters/`. All three
+refreshed states load/run and pass rollback/two-seat/spectator regression checks;
+their tracked art remains unchanged. When serving
+the rebuilt classics core, upload those three matching states too, together with
+the four new ROMs/states and the Psikyo core. Uploads require separate permission;
+no ROM/core/state has been uploaded, committed or deployed by this batch, and no
+cabinet has been placed on the user's map.
+
 ### Metal Slug: online-source trial
 
 `mslug` uses a **40×56**, two-player Neo Geo MVS big-red shell with red sides,
@@ -182,10 +344,11 @@ Outputs:
 - `art/objects/cabinet_mk2_v2_<facing>/`: seven editable PNG layers and `layers.ron`.
 - `art/previews/mk2-v2.png`: four views, native sizes, and the old cabinet at the same zoom.
 
-Select `cabinet_mk2_v2_*` in the editor's object palette to try it. These are an
-independent alternative: the existing assets and map are not replaced. The PNG
-layers can be edited in Draw mode; rebuilding replaces only this alternative's
-layers and sprites. This custom geometry is generated by the Python script, not
+The editor offers only this v2 design, labeled `mkII`; the internal skin remains
+`mk2_v2` and the ROM remains `mk2`. Legacy `cabinet_mk2_*` assets are retained for
+existing maps but hidden from the cabinet palette. No map is replaced. The PNG
+layers can be edited in Draw mode; rebuilding replaces only the v2 layers and
+sprites. This custom geometry is generated by the Python script, not
 the editor's existing **Make views** skin renderer.
 
 The photos and comparison-only copies of the previous sprites are retained in

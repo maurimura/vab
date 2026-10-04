@@ -1,0 +1,467 @@
+{
+  "version": 1,
+  "skin": "umk3",
+  "rom": "umk3",
+  "title": "ULTIMATE MORTAL KOMBAT 3 / MIDWAY UPGRADE CABINET",
+  "variant": "Midway MK3-style upright upgraded to Ultimate Mortal Kombat 3: original-design Ultimate marquee, MK3 character sides and operator deck, black body and red molding",
+  "renderer": "upright",
+  "shell": "upright",
+  "size": [
+    32,
+    48
+  ],
+  "players": 2,
+  "control_stations": 2,
+  "buttons_per_player": 6,
+  "game_actions": [
+    "High Punch",
+    "Block",
+    "High Kick",
+    "Low Punch",
+    "Low Kick",
+    "Run"
+  ],
+  "stations": [
+    10.5,
+    6.2
+  ],
+  "buttons": [
+    {
+      "name": "High Punch",
+      "position": [
+        11,
+        -1.4
+      ],
+      "color": [
+        224,
+        42,
+        36
+      ]
+    },
+    {
+      "name": "High Kick",
+      "position": [
+        11,
+        -2.3
+      ],
+      "color": [
+        36,
+        113,
+        211
+      ]
+    },
+    {
+      "name": "Low Punch",
+      "position": [
+        12,
+        -1.0
+      ],
+      "color": [
+        224,
+        42,
+        36
+      ]
+    },
+    {
+      "name": "Block",
+      "position": [
+        12,
+        -1.9
+      ],
+      "color": [
+        232,
+        230,
+        211
+      ]
+    },
+    {
+      "name": "Low Kick",
+      "position": [
+        12,
+        -2.8
+      ],
+      "color": [
+        36,
+        113,
+        211
+      ]
+    },
+    {
+      "name": "Run",
+      "position": [
+        13,
+        -0.8
+      ],
+      "color": [
+        245,
+        209,
+        37
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      16,
+      18,
+      24
+    ],
+    "side": [
+      30,
+      19,
+      45
+    ],
+    "trim": [
+      220,
+      34,
+      30
+    ],
+    "stick": [
+      224,
+      42,
+      36
+    ],
+    "bezel": [
+      10,
+      12,
+      18
+    ],
+    "deck": [
+      18,
+      18,
+      25
+    ],
+    "back": [
+      22,
+      24,
+      30
+    ]
+  },
+  "preview_note": "32 x 48 px | documented MK3-to-Ultimate cabinet / character sides / red molding / two players / six-button MK layout",
+  "rom_validation": {
+    "fbneo_commit": "aceeebed9e7edc8a28652365a064baee9a16e274",
+    "required_roms": 26,
+    "matching_required_roms": 26,
+    "matching": "All required files match the pinned driver by CRC32 and size; supplied legacy short names are accepted by FBNeo.",
+    "optional_absent": [
+      "463_mk3_ultimate.u64"
+    ],
+    "zip_sha256": "3f36058ad8c82a8152d9d22349d5e512bde87d221d7337be4b5b2d053de4b763",
+    "state_sha256": "7aea79118157cad3fd891e1aad94a839d2552bc4ebd80bf670747539cf41189f",
+    "coins": 9,
+    "bios": null
+  },
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/98570",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=98570&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Photographed Ultimate-branded marquee over an MK3-style cabinet: purple character side print, red molding, black coin-door front and MK3 fascia. Documents the upgrade combination rather than silently mixing cabinet variants; restoration/print originality unverified.",
+      "rights": "Underlying printed artwork Midway; third-party archive, not publisher authorization. Scan/photo authorship, original-versus-restored status and redistribution permission remain unverified.",
+      "sha256": "423358a4ae6e04ede1191c33caa53f101dc6bd6c4f7dee879f4c2697a4c37d89",
+      "download_sha256": "423358a4ae6e04ede1191c33caa53f101dc6bd6c4f7dee879f4c2697a4c37d89",
+      "download_size": [
+        430,
+        750
+      ]
+    },
+    "controls": {
+      "file": "controls.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/6226",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=6226&part=e&download",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "MK3-family Midway panel photograph associated with UMK3: blue overlay, two red sticks, six actions per station (red punches, blue kicks, white Block, yellow Run), white Start buttons and MK3 fascia. Retained MK3 branding is supported by the upgraded cabinet photograph.",
+      "rights": "Underlying printed artwork Midway; third-party archive, not publisher authorization. Scan/photo authorship, original-versus-restored status and redistribution permission remain unverified.",
+      "sha256": "a78de975355c18aadc2ff70a01dafb9e0d823012886e305778d99dbb483880ae",
+      "download_sha256": "a78de975355c18aadc2ff70a01dafb9e0d823012886e305778d99dbb483880ae",
+      "download_size": [
+        750,
+        361
+      ]
+    },
+    "marquee": {
+      "file": "marquee.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/101010",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=101010&part=e&download",
+      "kind": "original-art-scan",
+      "purpose": "Original-design Ultimate Mortal Kombat 3 marquee with purple skeletons, dragon/3 emblem, Midway copyright and printed part number; archive scan, not an authenticated publisher master.",
+      "rights": "Underlying printed artwork Midway; third-party archive, not publisher authorization. Scan/photo authorship, original-versus-restored status and redistribution permission remain unverified.",
+      "sha256": "56bf66ca691c5626e5a7212352708f57e5b94c35bfd2421e802bf977f64b3b73",
+      "download_sha256": "1221338ec797edcd0ab5ef593314f15d0775e57bcba99f7c9c7d7e277c79c14c",
+      "download_size": [
+        4000,
+        1368
+      ],
+      "processing": "Working reference reduced with Pillow BOX from 4000x1368 to 2048x700; original download dimensions/hash retained."
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/139048",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=139048&part=e&download",
+      "kind": "original-print-scan",
+      "purpose": "Archive Ultimate Mortal Kombat 3 promotional print corroborates the purple skeletons, dragon/3 emblem and Ultimate title; used for provenance, not substituted for photographed cabinet sides.",
+      "rights": "Underlying printed artwork Midway; third-party archive, not publisher authorization. Scan/photo authorship, original-versus-restored status and redistribution permission remain unverified.",
+      "sha256": "724743313b80db41b29d72d61530c70e8c49547c87e2cc7660dfbd206e2a6302",
+      "download_sha256": "724743313b80db41b29d72d61530c70e8c49547c87e2cc7660dfbd206e2a6302",
+      "download_size": [
+        850,
+        1120
+      ]
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Real 400x254 Kitana-versus-Reptile gameplay from the existing Midway WASM core and supplied UMK3 revision 1.2 set. Nine-coin startup dismisses CMOS warning with first reported action High Punch (RetroPad Y), then capture holds Start 15 frames, three first-action confirmations 120 frames apart and 600 neutral frames.",
+      "rights": "Game imagery Midway, captured from the user-supplied local ROM. No ROM downloaded, uploaded or committed; no redistribution license inferred.",
+      "sha256": "c32bb9e3e44994fb1b1c5cbae8149c0dc35c62026d124f77b795893f135067a4"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "marquee",
+      "size": [
+        16,
+        6
+      ],
+      "fit": "contain",
+      "background": [
+        0,
+        0,
+        0
+      ]
+    },
+    "controls": {
+      "source": "controls",
+      "quad": [
+        [
+          59,
+          8
+        ],
+        [
+          684,
+          7
+        ],
+        [
+          736,
+          289
+        ],
+        [
+          12,
+          285
+        ]
+      ],
+      "rectified_size": [
+        192,
+        80
+      ],
+      "size": [
+        16,
+        9
+      ]
+    },
+    "panel": {
+      "source": "controls",
+      "quad": [
+        [
+          16,
+          299
+        ],
+        [
+          742,
+          306
+        ],
+        [
+          711,
+          354
+        ],
+        [
+          32,
+          351
+        ]
+      ],
+      "rectified_size": [
+        160,
+        32
+      ],
+      "size": [
+        16,
+        4
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        12,
+        12
+      ],
+      "fit": "contain",
+      "background": [
+        0,
+        0,
+        0
+      ]
+    },
+    "left": {
+      "source": "cabinet",
+      "mask_polygon": [
+        [
+          330,
+          6
+        ],
+        [
+          429,
+          50
+        ],
+        [
+          417,
+          621
+        ],
+        [
+          238,
+          737
+        ],
+        [
+          218,
+          446
+        ],
+        [
+          217,
+          413
+        ],
+        [
+          293,
+          351
+        ],
+        [
+          355,
+          144
+        ],
+        [
+          354,
+          128
+        ],
+        [
+          320,
+          84
+        ]
+      ],
+      "background": [
+        30,
+        19,
+        45
+      ],
+      "quad": [
+        [
+          329,
+          8
+        ],
+        [
+          428,
+          50
+        ],
+        [
+          417,
+          618
+        ],
+        [
+          235,
+          735
+        ]
+      ],
+      "rectified_size": [
+        160,
+        512
+      ],
+      "size": [
+        18,
+        54
+      ]
+    },
+    "right": {
+      "source": "cabinet",
+      "mask_polygon": [
+        [
+          330,
+          6
+        ],
+        [
+          429,
+          50
+        ],
+        [
+          417,
+          621
+        ],
+        [
+          238,
+          737
+        ],
+        [
+          218,
+          446
+        ],
+        [
+          217,
+          413
+        ],
+        [
+          293,
+          351
+        ],
+        [
+          355,
+          144
+        ],
+        [
+          354,
+          128
+        ],
+        [
+          320,
+          84
+        ]
+      ],
+      "background": [
+        30,
+        19,
+        45
+      ],
+      "quad": [
+        [
+          329,
+          8
+        ],
+        [
+          428,
+          50
+        ],
+        [
+          417,
+          618
+        ],
+        [
+          235,
+          735
+        ]
+      ],
+      "rectified_size": [
+        160,
+        512
+      ],
+      "size": [
+        18,
+        54
+      ]
+    }
+  },
+  "uncertainties": [
+    "This is the documented MK3-family cabinet upgraded with an Ultimate marquee, not a claim that UMK3 shipped with unique purple-skeleton cabinet sides. MK3 character sides and panel/fascia branding deliberately follow the photographed upgrade.",
+    "The cabinet photo documents one character side, reused on the opposite side with readable orientation. The distinct opposite-side factory print is unverified and not invented.",
+    "Side artwork is masked to the photographed cabinet silhouette, rectified and downsampled; glare and low-resolution photographic character detail remain. No publisher-side digital master was found.",
+    "Two white Start buttons remain photographed in the overlay. Both stations model six fighting actions in the MK diamond-plus-Run layout, not a Street Fighter two-row layout.",
+    "All 26 required ROMs match pinned FBNeo revision 1.2; optional security PIC 463_mk3_ultimate.u64 is absent and not required by this core. No new BIOS/core is needed.",
+    "Nine-coin startup confirms the CMOS factory-settings warning with High Punch (RetroPad Y); Low Punch (B) does not dismiss this warning. The shared snapshot helper now selects the driver's first action.",
+    "Eight-frame worst-case rollbacks exceed this machine's frame budget. The existing worker automatically selects shorter rollbacks (three frames and three-frame input delay in this check); three-frame determinism/timing and two-seat join/leave/spectator checks pass.",
+    "Archive hosting does not authenticate original printed objects or grant artwork redistribution permission. Underlying Midway artwork and unknown scan/photo rights require review before deployment."
+  ]
+}

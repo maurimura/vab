@@ -23,6 +23,7 @@ const { default: createFBNeo } = await import(resolve(corePath));
 async function boot() {
   const core = await Core.create(createFBNeo, { onFrame() {}, onAudio() {} });
   core.netplay = true;
+  core.turns = process.env.TURNS === '1';
   for (const path of biosPaths) core.addFile(basename(path), readFileSync(path));
   const { fps } = core.loadGame(basename(romPath), readFileSync(romPath));
   if (statePath) core.unserialize(readFileSync(statePath));
