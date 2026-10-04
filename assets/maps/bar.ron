@@ -1581,5 +1581,10 @@
             y: -1,
             tile: "objects/pool_table",
         ),
+        (
+            x: 3,
+            y: -1,
+            tile: "objects/air_hockey",
+        ),
     ],
 )

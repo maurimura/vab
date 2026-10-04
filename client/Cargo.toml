@@ -22,6 +22,8 @@ log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"
 tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_warn"] }
 # Pool physics for the pool table's game (src/pool).
 billiards = { path = "../billiards" }
+# Air hockey physics for the air hockey table's game (src/hockey).
+hockey = { path = "../hockey" }
 # Messages between the two players at a pool table (src/pool/online.rs).
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
