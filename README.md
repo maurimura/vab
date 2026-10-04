@@ -88,6 +88,11 @@ the web](#editor-on-the-web).
   and stands on the whole area from the cell it's placed on.
 - Left click paints, right click erases, scroll / arrows / WASD pan, `+` / `-` zoom,
   Cmd+S saves `assets/maps/bar.ron`.
+- Clicking an object already on the map selects it instead of painting over it, and the editor
+  switches to the Move tool (M, or "Move things" in the palette, which also picks up floor
+  tiles). Dragging takes the selection to another cell, where nothing else is in its way; R
+  turns a selected cabinet, Delete removes it, Esc lets go, and the panel changes a plain
+  cabinet's game. A cabinet's game moves with it. M again goes back to the brush.
 - Cabinets are one entry per skin (`assets/tiles/objects/cabinet_<skin>_<facing>.png`, made in
   draw mode), and R turns the one about to be placed through its four views. A skin's cabinets
   run the game that names the skin in `cabinets` in `assets/games.ron`; the plain cabinet runs

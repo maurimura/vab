@@ -5,7 +5,9 @@
 //!
 //! The palette lists every PNG in assets/tiles/floor and assets/tiles/objects (on the web, as
 //! they were when it was built), and on the desktop images reload when their files change, so
-//! art edited in draw mode or a pixel-art app shows up right away.
+//! art edited in draw mode or a pixel-art app shows up right away. Clicking an object already
+//! on the map selects it rather than painting over it, in the Move tool (also M): drag it
+//! elsewhere, turn a cabinet with R, or delete it.
 
 #[cfg(not(target_arch = "wasm32"))]
 mod draw;
@@ -86,7 +88,7 @@ fn main() {
     .add_systems(
         Update,
         (
-            (move_camera, resize_brush, paint, draw_grid, shortcuts)
+            (move_camera, tool_keys, paint, draw_grid, shortcuts)
                 .run_if(resource_equals(Mode::Map)),
             receive_map,
             finish_save,
@@ -131,9 +133,16 @@ struct Editor {
     pinch: f32,
     map_changed: bool,
     pointer_over_panel: bool,
-    /// The map before the current paint or erase stroke; `None` when no stroke is under way
-    /// or the press began on the panel.
+    /// The map before the current paint, erase or move stroke; `None` when no stroke is under
+    /// way or the press began on the panel.
     stroke_start: Option<Map>,
+    /// What the Move tool has picked, if anything.
+    selection: Option<Selection>,
+    /// While the selection is dragged: the hovered cell minus the cell it stands on, so it
+    /// keeps its place under the pointer.
+    grab: Option<IVec2>,
+    /// The brush M put aside for the Move tool, to go back to.
+    previous_brush: Option<Brush>,
     history: History<Map>,
     typing_in_panel: bool,
     status: String,
@@ -143,19 +152,21 @@ struct Editor {
     saving: Option<Receiver<Saved>>,
 }
 
-/// What left click paints: a tile, or a cabinet in the view R has turned it to.
+/// What left click paints: a tile, or a cabinet in the view R has turned it to. Or the Move
+/// tool, which picks up what is there instead; a click on an object switches to it.
 #[derive(Clone, PartialEq, Eq)]
 enum Brush {
     None,
     Tile(String),
     Cabinet { skin: Option<String>, facing: usize },
+    Move,
 }
 
 impl Brush {
     /// The tile it paints: for a cabinet, the view it faces. Empty for none.
     fn tile(&self) -> String {
         match self {
-            Self::None => String::new(),
+            Self::None | Self::Move => String::new(),
             Self::Tile(tile) => tile.clone(),
             Self::Cabinet { skin, facing } => cabinet_tile(skin.as_deref(), FACINGS[*facing]),
         }
@@ -177,17 +188,189 @@ fn cabinet_tile(skin: Option<&str>, facing: &str) -> String {
     }
 }
 
-/// The skin of a cabinet view tile: `Some(None)` for the plain one, `None` for any other tile,
-/// including the old single-view objects/cabinet.
-fn cabinet_skin(tile: &str) -> Option<Option<String>> {
+/// The skin and the view (an index into `FACINGS`) of a cabinet tile: `None` as the skin for
+/// the plain one, and no parts at all for any other tile, including the old single-view
+/// objects/cabinet.
+fn cabinet_parts(tile: &str) -> Option<(Option<String>, usize)> {
     let rest = tile.strip_prefix("objects/cabinet")?;
-    let facing = FACINGS
+    let (facing, name) = FACINGS
         .iter()
-        .find(|facing| rest.ends_with(&format!("_{facing}")))?;
-    match &rest[..rest.len() - facing.len() - 1] {
-        "" => Some(None),
-        skin => Some(Some(skin.strip_prefix('_')?.to_owned())),
+        .enumerate()
+        .find(|(_, facing)| rest.ends_with(&format!("_{facing}")))?;
+    let skin = match &rest[..rest.len() - name.len() - 1] {
+        "" => None,
+        skin => Some(skin.strip_prefix('_')?.to_owned()),
+    };
+    Some((skin, facing))
+}
+
+/// The two layers of the map.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Layer {
+    Floor,
+    Objects,
+}
+
+/// What the Move tool has picked. It is found again each time by the cell it stands on, so an
+/// undo that puts something else there selects that, rather than pointing at the wrong thing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Selection {
+    layer: Layer,
+    at: IVec2,
+}
+
+fn layer_of(map: &Map, layer: Layer) -> &Vec<Placed> {
+    match layer {
+        Layer::Floor => &map.floor,
+        Layer::Objects => &map.objects,
     }
+}
+
+fn layer_of_mut(map: &mut Map, layer: Layer) -> &mut Vec<Placed> {
+    match layer {
+        Layer::Floor => &mut map.floor,
+        Layer::Objects => &mut map.objects,
+    }
+}
+
+/// What the Move tool picks at a cell: the object covering it, else the floor tile there.
+fn pick(map: &Map, cell: IVec2) -> Option<Selection> {
+    [Layer::Objects, Layer::Floor]
+        .into_iter()
+        .find_map(|layer| {
+            let placed = layer_of(map, layer).iter().find(|p| p.covers(cell))?;
+            Some(Selection {
+                layer,
+                at: placed.cell(),
+            })
+        })
+}
+
+fn placed(map: &Map, selection: Selection) -> Option<&Placed> {
+    layer_of(map, selection.layer)
+        .iter()
+        .find(|p| p.cell() == selection.at)
+}
+
+/// The selected thing, while something stands where it was picked.
+fn selected(editor: &Editor) -> Option<&Placed> {
+    placed(&editor.map, editor.selection?)
+}
+
+fn selected_mut(editor: &mut Editor) -> Option<&mut Placed> {
+    let selection = editor.selection?;
+    layer_of_mut(&mut editor.map, selection.layer)
+        .iter_mut()
+        .find(|p| p.cell() == selection.at)
+}
+
+/// Moves the selection to stand on `to`, unless something else in its layer is in the way: a
+/// drag across other things leaves them be.
+fn move_selection(editor: &mut Editor, to: IVec2) {
+    let Some(selection) = editor.selection else {
+        return;
+    };
+    let layer = layer_of_mut(&mut editor.map, selection.layer);
+    let Some(index) = layer.iter().position(|p| p.cell() == selection.at) else {
+        return;
+    };
+    let moved = Placed {
+        x: to.x,
+        y: to.y,
+        ..layer[index].clone()
+    };
+    let blocked = layer
+        .iter()
+        .enumerate()
+        .any(|(i, other)| i != index && moved.cells().any(|cell| other.covers(cell)));
+    if blocked {
+        return;
+    }
+    layer[index] = moved;
+    editor.selection = Some(Selection {
+        at: to,
+        ..selection
+    });
+    editor.map_changed = true;
+}
+
+/// R with the Move tool: turns the selected cabinet a quarter turn. Its game stays.
+fn turn_selection(editor: &mut Editor) {
+    let Some((skin, facing)) = selected(editor).and_then(|p| cabinet_parts(&p.tile)) else {
+        return;
+    };
+    let tile = cabinet_tile(skin.as_deref(), FACINGS[(facing + 1) % FACINGS.len()]);
+    let before = editor.map.clone();
+    if let Some(placed) = selected_mut(editor) {
+        placed.tile = tile;
+    }
+    editor.map_changed = true;
+    record_undo(editor, before);
+}
+
+/// Delete or Backspace with the Move tool: removes the selection.
+fn delete_selection(editor: &mut Editor) {
+    let Some(selection) = editor.selection.take() else {
+        return;
+    };
+    let before = editor.map.clone();
+    layer_of_mut(&mut editor.map, selection.layer).retain(|p| p.cell() != selection.at);
+    editor.map_changed = true;
+    record_undo(editor, before);
+}
+
+/// Gives the selected cabinet a game (none for an empty `rom`), as one undo step.
+fn assign_game(editor: &mut Editor, rom: String) {
+    let before = editor.map.clone();
+    if let Some(placed) = selected_mut(editor) {
+        placed.game = (!rom.is_empty()).then_some(rom);
+    }
+    editor.map_changed = true;
+    record_undo(editor, before);
+}
+
+/// M, or Move in the palette: the Move tool, or back to the brush it replaced.
+fn toggle_move_tool(editor: &mut Editor) {
+    if editor.brush == Brush::Move {
+        editor.brush = editor
+            .previous_brush
+            .take()
+            .unwrap_or_else(|| first_floor_tile(editor));
+    } else {
+        editor.previous_brush = Some(std::mem::replace(&mut editor.brush, Brush::Move));
+    }
+}
+
+/// The brush to start with, or fall back to.
+fn first_floor_tile(editor: &Editor) -> Brush {
+    editor
+        .floor_tiles
+        .first()
+        .map_or(Brush::None, |tile| Brush::Tile(tile.clone()))
+}
+
+/// The title of a game in games.ron, or the ROM set's name when it isn't there.
+fn game_title<'a>(games: &'a [Game], rom: &'a str) -> &'a str {
+    games
+        .iter()
+        .find(|game| game.rom == rom)
+        .map_or(rom, |game| game.title.as_str())
+}
+
+/// A dropdown of the games in games.ron, "(none)" first, that writes the pick into `rom`.
+fn game_combo(ui: &mut egui::Ui, id: &str, games: &[Game], rom: &mut String) {
+    let selected = games
+        .iter()
+        .find(|game| game.rom == *rom)
+        .map_or("(none)", |game| game.title.as_str());
+    egui::ComboBox::from_id_salt(id)
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(rom, String::new(), "(none)");
+            for game in games {
+                ui.selectable_value(rom, game.rom.clone(), &game.title);
+            }
+        });
 }
 
 impl Default for Editor {
@@ -207,6 +390,9 @@ impl Default for Editor {
             map_changed: true,
             pointer_over_panel: false,
             stroke_start: None,
+            selection: None,
+            grab: None,
+            previous_brush: None,
             history: History::default(),
             typing_in_panel: false,
             status: String::new(),
@@ -223,10 +409,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>, mut editor: Res
         Err(error) => editor.status = format!("Could not read games.ron: {error}\n"),
     }
     load_palette(&mut editor);
-    editor.brush = editor
-        .floor_tiles
-        .first()
-        .map_or(Brush::None, |tile| Brush::Tile(tile.clone()));
+    editor.brush = first_floor_tile(&editor);
     editor.loading = Some(asset_server.load(MAP_FILE));
     editor.status += &format!("Loading {MAP_FILE}");
 }
@@ -239,7 +422,7 @@ fn load_palette(editor: &mut Editor) {
     editor.object_tiles = Vec::new();
     editor.cabinets = Vec::new();
     for tile in tiles_in("objects") {
-        match cabinet_skin(&tile) {
+        match cabinet_parts(&tile).map(|(skin, _)| skin) {
             Some(skin) => {
                 if !editor.cabinets.iter().any(|cabinet| cabinet.skin == skin) {
                     let game = editor
@@ -258,17 +441,14 @@ fn load_palette(editor: &mut Editor) {
         }
     }
     let gone = match &editor.brush {
-        Brush::None => false,
+        Brush::None | Brush::Move => false,
         Brush::Tile(tile) => {
             !editor.floor_tiles.contains(tile) && !editor.object_tiles.contains(tile)
         }
         Brush::Cabinet { skin, .. } => !editor.cabinets.iter().any(|c| &c.skin == skin),
     };
     if gone {
-        editor.brush = editor
-            .floor_tiles
-            .first()
-            .map_or(Brush::None, |tile| Brush::Tile(tile.clone()));
+        editor.brush = first_floor_tile(editor);
     }
 }
 
@@ -358,21 +538,36 @@ fn move_camera(
     }
 }
 
-/// [ and ] shrink and grow the brush; R turns a cabinet a quarter turn.
-fn resize_brush(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>) {
+/// [ and ] shrink and grow the brush; M switches to the Move tool and back; R turns a cabinet
+/// a quarter turn, the brush's or the selected one; Delete removes the selection, Esc lets go.
+fn tool_keys(keys: Res<ButtonInput<KeyCode>>, mut editor: ResMut<Editor>) {
     if editor.typing_in_panel {
         return;
     }
+    let editor = &mut *editor;
     if keys.just_pressed(KeyCode::BracketLeft) {
         editor.brush_size = (editor.brush_size - 1).max(1);
     }
     if keys.just_pressed(KeyCode::BracketRight) {
         editor.brush_size = (editor.brush_size + 1).min(MAX_BRUSH_SIZE);
     }
-    if keys.just_pressed(KeyCode::KeyR)
-        && let Brush::Cabinet { facing, .. } = &mut editor.brush
-    {
-        *facing = (*facing + 1) % FACINGS.len();
+    if keys.just_pressed(KeyCode::KeyM) {
+        toggle_move_tool(editor);
+    }
+    if keys.just_pressed(KeyCode::KeyR) {
+        if let Brush::Cabinet { facing, .. } = &mut editor.brush {
+            *facing = (*facing + 1) % FACINGS.len();
+        } else if editor.brush == Brush::Move {
+            turn_selection(editor);
+        }
+    }
+    if editor.brush == Brush::Move {
+        if keys.any_just_pressed([KeyCode::Delete, KeyCode::Backspace]) {
+            delete_selection(editor);
+        }
+        if keys.just_pressed(KeyCode::Escape) {
+            editor.selection = None;
+        }
     }
 }
 
@@ -392,7 +587,9 @@ fn brush_anchors(center: IVec2, brush: &str, size: i32) -> Vec<IVec2> {
     }
 }
 
-/// Left click paints the brush on the hovered cells, right click erases them (objects first).
+/// Left click paints the brush on the hovered cells, unless an object is there: that is
+/// selected instead, in the Move tool, where a click picks up what is there and drags it.
+/// Right click erases the hovered cells (objects first).
 fn paint(
     buttons: Res<ButtonInput<MouseButton>>,
     window: Single<&Window>,
@@ -412,6 +609,9 @@ fn paint(
     {
         record_undo(editor, before);
     }
+    if !buttons.pressed(MouseButton::Left) {
+        editor.grab = None;
+    }
     if buttons.any_just_pressed(mouse) && editor.stroke_start.is_none() {
         editor.stroke_start = (!editor.pointer_over_panel).then(|| editor.map.clone());
     }
@@ -422,6 +622,26 @@ fn paint(
 
     // A click over in one frame is pressed and released before this runs: paint on the press too.
     let held = |button| buttons.pressed(button) || buttons.just_pressed(button);
+    // Whatever the brush, a click on an object selects it, and the same press can drag it.
+    // Floor is painted over as always, or there would be no painting over it.
+    if buttons.just_pressed(MouseButton::Left)
+        && editor.brush != Brush::Move
+        && editor.map.objects.iter().any(|p| p.covers(center))
+    {
+        toggle_move_tool(editor);
+    }
+    if editor.brush == Brush::Move {
+        if buttons.just_pressed(MouseButton::Left) {
+            editor.selection = pick(&editor.map, center);
+            editor.grab = editor.selection.map(|selection| center - selection.at);
+        }
+        if held(MouseButton::Left)
+            && let (Some(selection), Some(grab)) = (editor.selection, editor.grab)
+            && center - grab != selection.at
+        {
+            move_selection(editor, center - grab);
+        }
+    }
     let tile = editor.brush.tile();
     if held(MouseButton::Left) && !tile.is_empty() {
         let is_object = tile.starts_with("objects/");
@@ -509,16 +729,32 @@ fn draw_grid(mut gizmos: Gizmos, editor: Res<Editor>) {
             gizmos.linestrip_2d(diamond(x, y), faint);
         }
     }
+    let yellow = Color::srgb(1.0, 0.85, 0.2);
     if let Some(center) = editor.hovered {
-        let tile = editor.brush.tile();
-        let size = footprint(&tile);
-        for anchor in brush_anchors(center, &tile, editor.brush_size) {
-            for dx in 0..size.x {
-                for dy in 0..size.y {
-                    let cell = anchor + IVec2::new(dx, dy);
-                    gizmos.linestrip_2d(diamond(cell.x, cell.y), Color::srgb(1.0, 0.85, 0.2));
+        if editor.brush == Brush::Move {
+            // What a click would pick up.
+            let under = pick(&editor.map, center).and_then(|s| placed(&editor.map, s));
+            for cell in under.into_iter().flat_map(Placed::cells) {
+                gizmos.linestrip_2d(diamond(cell.x, cell.y), yellow.with_alpha(0.5));
+            }
+        } else {
+            let tile = editor.brush.tile();
+            let size = footprint(&tile);
+            for anchor in brush_anchors(center, &tile, editor.brush_size) {
+                for dx in 0..size.x {
+                    for dy in 0..size.y {
+                        let cell = anchor + IVec2::new(dx, dy);
+                        gizmos.linestrip_2d(diamond(cell.x, cell.y), yellow);
+                    }
                 }
             }
+        }
+    }
+    if editor.brush == Brush::Move
+        && let Some(placed) = selected(&editor)
+    {
+        for cell in placed.cells() {
+            gizmos.linestrip_2d(diamond(cell.x, cell.y), Color::srgb(0.4, 0.9, 1.0));
         }
     }
     // A dot above each cabinet that has a game.
@@ -675,6 +911,14 @@ fn panel(
 }
 
 fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
+    if ui
+        .selectable_label(editor.brush == Brush::Move, "Move things (M)")
+        .clicked()
+        && editor.brush != Brush::Move
+    {
+        toggle_move_tool(editor);
+    }
+    ui.add_space(8.0);
     for (heading, tiles) in [
         ("Floor", &editor.floor_tiles),
         ("Objects", &editor.object_tiles),
@@ -724,21 +968,42 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
         }
         Brush::Cabinet { skin: None, .. } => {
             ui.label("Cabinet game");
-            let selected = editor
-                .games
-                .iter()
-                .find(|game| game.rom == editor.game)
-                .map_or("(none)", |game| game.title.as_str());
-            egui::ComboBox::from_id_salt("game")
-                .selected_text(selected)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut editor.game, String::new(), "(none)");
-                    for game in &editor.games {
-                        ui.selectable_value(&mut editor.game, game.rom.clone(), &game.title);
-                    }
-                });
+            game_combo(ui, "game", &editor.games, &mut editor.game);
             ui.small("Paint a cabinet to place or reassign it.");
         }
+        Brush::Move => match selected(editor).cloned() {
+            Some(placed) => {
+                ui.label(format!("Selected: {}", placed.tile));
+                let mut rom = placed.game.clone().unwrap_or_default();
+                match cabinet_parts(&placed.tile) {
+                    // A skin's cabinets keep the skin's game.
+                    Some((Some(_), _)) => {
+                        let title = if rom.is_empty() {
+                            "none"
+                        } else {
+                            game_title(&editor.games, &rom)
+                        };
+                        ui.label(format!("Game: {title}"));
+                    }
+                    Some((None, _)) => {
+                        ui.label("Cabinet game");
+                        game_combo(ui, "selected game", &editor.games, &mut rom);
+                        if rom != placed.game.unwrap_or_default() {
+                            assign_game(editor, rom);
+                        }
+                    }
+                    // Not a cabinet with views (the old objects/cabinet, say): just its game.
+                    None if !rom.is_empty() => {
+                        ui.label(format!("Game: {}", game_title(&editor.games, &rom)));
+                    }
+                    None => {}
+                }
+                ui.small("Drag it to move it. R turns a cabinet, Delete removes it, Esc lets go.");
+            }
+            None => {
+                ui.small("Click something to pick it up; it goes where there is room.");
+            }
+        },
         _ => {}
     }
     ui.separator();
@@ -749,13 +1014,7 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
                 tile,
                 game: Some(rom),
                 ..
-            }) => {
-                let title = editor.games.iter().find(|game| &game.rom == rom);
-                format!(
-                    "{tile} [{}]",
-                    title.map_or(rom.as_str(), |game| &game.title)
-                )
-            }
+            }) => format!("{tile} [{}]", game_title(&editor.games, rom)),
             Some(placed) => placed.tile.clone(),
             None => "empty".into(),
         };
@@ -793,6 +1052,6 @@ fn map_panel(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.label(&editor.status);
     ui.separator();
     ui.small(
-                "Left click: paint\nRight click: erase\n[ / ]: brush size\nR: turn a cabinet\nScroll, arrows, WASD: pan\n+ / -, pinch: zoom",
+                "Left click: paint, or select what is there\nRight click: erase\n[ / ]: brush size\nR: turn a cabinet\nM: move things (drag; Delete removes)\nScroll, arrows, WASD: pan\n+ / -, pinch: zoom",
             );
 }
