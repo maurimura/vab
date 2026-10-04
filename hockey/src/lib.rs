@@ -118,6 +118,16 @@ impl Rink {
     /// Moves time on by `seconds`, the paddles going to `targets` (kept in their halves) on the
     /// way.
     pub fn advance(&mut self, targets: [Vec2; 2], seconds: f32) -> Vec<Event> {
+        self.advance_scoring(targets, seconds, true)
+    }
+
+    /// As `advance`, but a puck reaching a goal only stops there, without scoring: for a rink
+    /// that follows another one, which says when goals are scored.
+    pub fn advance_following(&mut self, targets: [Vec2; 2], seconds: f32) -> Vec<Event> {
+        self.advance_scoring(targets, seconds, false)
+    }
+
+    fn advance_scoring(&mut self, targets: [Vec2; 2], seconds: f32, scoring: bool) -> Vec<Event> {
         let mut events = Vec::new();
         let seconds = seconds.clamp(0.0, MAX_ADVANCE);
         if seconds == 0.0 || self.winner().is_some() {
@@ -138,7 +148,7 @@ impl Rink {
                 paddle_velocities[player] = (next - self.paddles[player]) / step;
                 self.paddles[player] = next;
             }
-            self.step(step, paddle_velocities, &mut events);
+            self.step(step, paddle_velocities, scoring, &mut events);
             if events.iter().any(|event| matches!(event, Event::Goal(_))) {
                 // The puck has been served: the rest of the frame is for the paddles alone.
                 self.paddles = to;
@@ -148,7 +158,13 @@ impl Rink {
         events
     }
 
-    fn step(&mut self, step: f32, paddle_velocities: [Vec2; 2], events: &mut Vec<Event>) {
+    fn step(
+        &mut self,
+        step: f32,
+        paddle_velocities: [Vec2; 2],
+        scoring: bool,
+        events: &mut Vec<Event>,
+    ) {
         self.puck += self.velocity * step;
         let speed = self.velocity.length();
         let slowdown = self.settings.friction * step;
@@ -181,7 +197,13 @@ impl Rink {
 
         // Into a goal: past the end rail, inside its mouth.
         let in_mouth = (self.puck.x - WIDTH / 2.0).abs() < GOAL_WIDTH / 2.0;
-        if in_mouth && (self.puck.y < -PUCK_RADIUS || self.puck.y > HEIGHT + PUCK_RADIUS) {
+        let past_line = self.puck.y < -PUCK_RADIUS || self.puck.y > HEIGHT + PUCK_RADIUS;
+        if in_mouth && past_line && !scoring {
+            self.puck.y = self.puck.y.clamp(-PUCK_RADIUS, HEIGHT + PUCK_RADIUS);
+            self.velocity = Vec2::ZERO;
+            return;
+        }
+        if in_mouth && past_line {
             let scorer = if self.puck.y < 0.0 { 0 } else { 1 };
             self.score[scorer] += 1;
             self.puck = serve_spot(1 - scorer);
@@ -412,6 +434,20 @@ mod tests {
                 rink.puck
             );
         }
+    }
+
+    #[test]
+    fn a_following_rink_holds_the_puck_in_a_goal_without_scoring() {
+        let mut rink = rink_with(Vec2::new(WIDTH / 2.0, 40.0), Vec2::new(0.0, -300.0));
+        let paddles = rink.paddles;
+        let mut events = Vec::new();
+        for _ in 0..30 {
+            events.extend(rink.advance_following(paddles, 1.0 / 60.0));
+        }
+        assert!(!events.iter().any(|event| matches!(event, Event::Goal(_))));
+        assert_eq!(rink.score, [0, 0]);
+        assert!(rink.puck.y <= 0.0);
+        assert_eq!(rink.velocity, Vec2::ZERO);
     }
 
     #[test]

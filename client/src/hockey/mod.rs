@@ -1,8 +1,9 @@
-//! Air hockey tables (objects/air_hockey, two cells long): next to one, a hint says so, and E
-//! (or the Play button on a touch screen) sits the player at it to play against a bot
-//! (game.rs).
+//! Air hockey tables (objects/air_hockey, two cells long): next to one, a hint says so and how
+//! many play at it, and E (or the Play button on a touch screen) sits the player at it to play
+//! (game.rs): against a bot alone, against whoever sits at the other seat (online.rs).
 
 mod game;
+mod online;
 
 use bevy::prelude::*;
 use world::{Map, Placed};
@@ -13,6 +14,7 @@ use crate::chat::chat_closed;
 use crate::help::help_closed;
 use crate::player::Player;
 use crate::pool::next_to;
+use crate::seats;
 use crate::settings::settings_closed;
 use crate::touch::{self, Touch, TouchButton};
 
@@ -103,14 +105,17 @@ fn show_hint(
         *visibility = Visibility::Hidden;
         return;
     };
+    let seated = seats::seated(&online::table_id(IVec2::new(table.x, table.y)));
     // The button says what to press.
-    let label = if touch.is_on() {
-        "Air hockey"
-    } else {
-        "E  Air hockey"
+    let label = match (seated, touch.is_on()) {
+        (0, true) => "Air hockey".to_string(),
+        (0, false) => "E  Air hockey".to_string(),
+        (1, true) => "Air hockey - 1 of 2 playing".to_string(),
+        (1, false) => "E  Air hockey - 1 of 2 playing, join in".to_string(),
+        _ => "Air hockey - 2 playing".to_string(),
     };
     place_hint(
-        label,
+        &label,
         table.center() + Vec2::Y * HINT_HEIGHT,
         *camera,
         (&mut text, &mut node, &mut visibility, computed),
@@ -118,6 +123,7 @@ fn show_hint(
 }
 
 fn sit(
+    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     touch: Res<Touch>,
     tables: Option<Res<HockeyTables>>,
@@ -125,10 +131,20 @@ fn sit(
     mut mode: ResMut<NextState<Mode>>,
 ) {
     let sit = keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Hockey);
-    let near = tables.is_some_and(|tables| next_to(&tables.0, player.feet).is_some());
-    if sit && near {
-        mode.set(Mode::Hockey);
+    let Some(table) = tables
+        .as_ref()
+        .and_then(|tables| next_to(&tables.0, player.feet))
+        .filter(|_| sit)
+    else {
+        return;
+    };
+    let id = online::table_id(IVec2::new(table.x, table.y));
+    // Both seats taken: nowhere to sit.
+    if seats::seated(&id) >= 2 {
+        return;
     }
+    commands.insert_resource(game::AtTable(id));
+    mode.set(Mode::Hockey);
 }
 
 fn hide_hint(

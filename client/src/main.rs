@@ -7,6 +7,7 @@ mod pixels;
 mod player;
 mod pool;
 mod room;
+mod seats;
 mod settings;
 mod touch;
 
