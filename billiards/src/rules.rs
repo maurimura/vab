@@ -12,6 +12,7 @@
 use crate::Table;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Group {
     Solids,
     Stripes,
@@ -40,6 +41,7 @@ impl Group {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Foul {
     /// The cue ball went down.
     Scratch,
@@ -51,12 +53,14 @@ pub enum Foul {
 
 /// How a game ended: who won, and why.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Win {
     pub winner: usize,
     pub how: WinBy,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum WinBy {
     /// The winner pocketed the 8 after their group.
     Eight,
@@ -68,6 +72,7 @@ pub enum WinBy {
 
 /// What the rules made of a shot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Verdict {
     pub foul: Option<Foul>,
     /// The shooter took this group (and the other player the other).
@@ -81,6 +86,7 @@ pub struct Verdict {
 
 /// A game of 8-ball between players 0 and 1.
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Game {
     /// Who broke.
     pub breaker: usize,
