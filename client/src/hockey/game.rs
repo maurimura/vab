@@ -15,14 +15,14 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::ui::UiGlobalTransform;
 use bevy::window::CursorOptions;
 use hockey::{
-    Bot, Event, GOAL_WIDTH, HEIGHT, Input, PADDLE_RADIUS, PUCK_RADIUS, Rink, WIDTH, WINNING_SCORE,
+    Bot, Event, FRAME, GOAL_WIDTH, HEIGHT, PADDLE_RADIUS, PUCK_RADIUS, Rink, WIDTH, WINNING_SCORE,
 };
 
 use wasm_bindgen::prelude::*;
 
 use super::online::{self, Message};
 use crate::Mode;
-use crate::chat::{Chat, chat_closed};
+use crate::chat::{Chat, ShowNetStats, chat_closed};
 use crate::help::Help;
 use crate::pixels::Pixels;
 use crate::seats;
@@ -49,6 +49,12 @@ const GOAL_SHOWN_FOR: f32 = 1.5;
 /// An Esc this soon after the pointer was let go is the one that let it go (the browser takes
 /// it, and may pass it on too): it doesn't also leave the table.
 const ESC_AFTER_UNLOCK: f32 = 0.3;
+/// When a rollback moves the puck or the other player's paddle, they're drawn gliding to where
+/// they really are, the jump fading over this long (seconds), rather than jumping.
+const SMOOTHING: f32 = 0.08;
+/// A jump bigger than this (pixels) isn't smoothed: it's real, or too far to glide.
+const SMOOTH_UP_TO: f32 = 40.0;
+
 /// The air hockey table the player sits at, as the room names it (online::table_id, seats.rs).
 /// Set before switching to `Mode::Hockey`.
 #[derive(Resource)]
@@ -130,6 +136,7 @@ impl Plugin for GamePlugin {
                     play,
                     draw,
                     show_text,
+                    show_net_stats,
                     place_text,
                     leave.run_if(chat_closed),
                 )
@@ -163,6 +170,9 @@ struct Game {
     unlocked_at: Option<f32>,
     /// The table, as the room names it, while the player sits at it.
     table_id: Option<String>,
+    /// How far from where they really are the puck and the other player's paddle are drawn,
+    /// fading: the jumps rollback makes, smoothed over (as seat 0 sees the rink).
+    drawn_off: [Vec2; 2],
     /// The other player at the table, when there is one: then they play each other, not the bot.
     opponent: Option<Opponent>,
 }
@@ -193,6 +203,7 @@ impl Game {
         };
         self.bot = Bot::default();
         self.goal = None;
+        self.drawn_off = [Vec2::ZERO; 2];
         self.paddle_placed = false;
         self.slack = Vec2::ZERO;
     }
@@ -243,6 +254,10 @@ struct OnCanvas {
     top: f32,
     size: f32,
 }
+
+/// How the connection is doing, in the corner (`/netstats`).
+#[derive(Component)]
+struct NetStats;
 
 /// What a text says.
 #[derive(Component, Clone, Copy, PartialEq)]
@@ -320,6 +335,24 @@ fn show_rink(
             text(Says::TheirScore, THEIR_SCORE, SCORE_SIZE),
             text(Says::YourScore, YOUR_SCORE, SCORE_SIZE),
             text(Says::Status, STATUS, STATUS_SIZE),
+            (
+                NetStats,
+                Text::new(""),
+                TextFont {
+                    font_size: FontSize::Px(12.0),
+                    ..default()
+                },
+                TextColor(Color::srgb(0.8, 0.9, 0.8)),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(8.0),
+                    top: Val::Px(8.0),
+                    padding: UiRect::axes(Val::Px(6.0), Val::Px(3.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
+                Visibility::Hidden,
+            ),
         ],
     ));
     if touch.is_on() {
@@ -501,12 +534,38 @@ fn play(
         // press after someone won starts the next game, on both rinks at the same frame.
         let target = game.target.unwrap_or(game.rink.paddles[me]);
         let new_game = fresh_press && me == 0 && game.rink.winner().is_some();
-        let before = game.rink.score;
-        online::play(&mut game.rink, Input::new(target, new_game), seconds);
-        let after = game.rink.score;
-        if after == [0, 0] && before != after {
+        let before = game.rink.clone();
+        let drawn_before = [
+            before.puck + game.drawn_off[0],
+            before.paddles[1 - me] + game.drawn_off[1],
+        ];
+        let played = online::play(&mut game.rink, target, new_game, seconds);
+        let rink = &game.rink;
+        // The jumps fade; a rollback's new ones are taken in (the puck allowed for how far it
+        // was going anyway), unless they're too big, or a goal moved the puck.
+        let fade = (-seconds / SMOOTHING).exp();
+        game.drawn_off = game.drawn_off.map(|off| off * fade);
+        if played.rolled_back && rink.score == before.score {
+            let went = before.velocity * played.frames as f32 * FRAME;
+            let jumps = [
+                drawn_before[0] + went - rink.puck,
+                drawn_before[1] - rink.paddles[1 - me],
+            ];
+            game.drawn_off = jumps.map(|jump| {
+                if jump.length() < SMOOTH_UP_TO {
+                    jump
+                } else {
+                    Vec2::ZERO
+                }
+            });
+        }
+        if rink.score != before.score {
+            game.drawn_off = [Vec2::ZERO; 2];
+        }
+        let after = rink.score;
+        if after == [0, 0] && before.score != after {
             game.goal = None;
-        } else if let Some(scorer) = (0..2).find(|&seat| after[seat] > before[seat]) {
+        } else if let Some(scorer) = (0..2).find(|&seat| after[seat] > before.score[seat]) {
             game.goal = Some((scorer, 0.0));
         }
         return;
@@ -549,16 +608,22 @@ fn draw(
     };
     let mut pixels = rink_art.get_or_insert_with(draw_rink).clone();
     let rink = &game.rink;
-    // Turned the player's way round: their paddle at the bottom, in their colour.
+    // Turned the player's way round: their paddle at the bottom, in their colour. The puck and
+    // the other player's paddle where they're drawn, smoothing over rollback's jumps.
     let me = game.me();
     for (seat, paddle) in rink.paddles.iter().enumerate() {
         let (body, knob) = PADDLES[usize::from(seat != me)];
-        let at = turned(me, *paddle) + RINK;
+        let off = if seat == me {
+            Vec2::ZERO
+        } else {
+            game.drawn_off[1]
+        };
+        let at = turned(me, *paddle + off) + RINK;
         pixels.disc(at, PADDLE_RADIUS, body);
         pixels.disc(at, PADDLE_RADIUS * 0.45, knob);
         pixels.set((at.x - 3.0) as i32, (at.y - 4.0) as i32, SHINE);
     }
-    let puck = turned(me, rink.puck) + RINK;
+    let puck = turned(me, rink.puck + game.drawn_off[0]) + RINK;
     pixels.disc(puck, PUCK_RADIUS, PUCK_RIM);
     pixels.disc(puck, PUCK_RADIUS - 1.0, PUCK);
     pixels.set((puck.x - 2.0) as i32, (puck.y - 2.0) as i32, SHINE);
@@ -708,6 +773,66 @@ fn show_text(game: Res<Game>, touch: Res<Touch>, mut texts: Query<(&Says, &mut T
             text.0 = line;
         }
     }
+}
+
+/// `/netstats` shows or hides how the match's connection is doing, in the corner, every second.
+fn show_net_stats(
+    mut asked: MessageReader<ShowNetStats>,
+    time: Res<Time>,
+    mut since: Local<f32>,
+    mut pictures: Local<u32>,
+    stats: Single<(&mut Text, &mut Visibility), With<NetStats>>,
+) {
+    let (mut text, mut visibility) = stats.into_inner();
+    if asked.read().count() % 2 == 1 {
+        let shown = *visibility == Visibility::Hidden;
+        *visibility = if shown {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        *since = 1.0;
+    }
+    *since += time.delta_secs();
+    *pictures += 1;
+    if *visibility == Visibility::Hidden || *since < 1.0 {
+        return;
+    }
+    // How often the browser draws: below about 30 a second, the game can't look smooth whatever
+    // the connection does.
+    let drawn = format!("pictures/s {:.0}", *pictures as f32 / *since);
+    *since = 0.0;
+    *pictures = 0;
+    text.0 = match online::stats() {
+        None => format!("{drawn}\nNot in a match: playing the bot."),
+        Some(stats) => {
+            let ping = stats
+                .ping
+                .map_or("?".to_string(), |ping| format!("{ping} ms"));
+            let how = if stats.direct {
+                "direct (WebRTC)"
+            } else {
+                "relayed by the room"
+            };
+            let length = if stats.rollbacks > 0 {
+                format!(
+                    " ({:.1} frames each)",
+                    stats.replayed as f32 / stats.rollbacks as f32
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "{drawn}\nping {ping}, {how}\nframes/s {}, ahead {}\nrollbacks/s {}{length}\nskipped/s {}, waited/s {}\ndesyncs {}",
+                stats.frames,
+                stats.frames_ahead,
+                stats.rollbacks,
+                stats.skipped,
+                stats.stalled,
+                stats.desyncs,
+            )
+        }
+    };
 }
 
 /// Puts the texts where they go over the canvas, sized with it.

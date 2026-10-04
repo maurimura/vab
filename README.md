@@ -28,7 +28,12 @@ as at the cabinets: each machine runs the whole game a frame at a time from both
 inputs (their paddles), guessing the other's until it arrives and replaying the frames since
 when a guess was wrong, so each player's own paddle answers at once. Inputs go a frame late
 (`INPUT_DELAY` in `client/src/hockey/online.rs`), straight between the browsers once WebRTC
-connects. `/settings` in the chat tunes how it plays
+connects. While the other player's input is on its way, their paddle is guessed to carry on as
+it was going, and what a correction moves is drawn gliding there rather than jumping.
+`/netstats` in the chat shows how a match is doing: how often the browser draws, the ping,
+whether packets go straight or through the room (if they go through the room, see TURN below),
+rollbacks, and frames skipped or waited. `?lag=120` in the URL holds table packets back about
+that many milliseconds, to try it over a slow connection. `/settings` in the chat tunes how it plays
 (shot speeds, friction, bounce, pocket size, how the cue pulls back) and racks the balls again.
 
 On a phone or tablet (a screen whose main pointer is a finger) the controls are on the screen

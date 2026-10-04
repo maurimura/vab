@@ -284,13 +284,16 @@ impl Rink {
 }
 
 /// One player's input for a frame of a game between two players, as it goes between them:
-/// where their paddle should be, as seat 0 sees the rink, in 64ths of a pixel, and what else
-/// they're doing.
+/// where their paddle should be, as seat 0 sees the rink, in 64ths of a pixel, how far it moved
+/// since their last input (so the other player's machine can guess where it goes next while
+/// their next input is on its way), and what else they're doing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Input {
     pub x: u16,
     pub y: u16,
+    pub dx: i16,
+    pub dy: i16,
     pub flags: u8,
 }
 
@@ -300,15 +303,49 @@ impl Input {
     /// Starts the next game, once someone has won (player 1's).
     const NEW_GAME: u8 = 2;
 
-    pub fn new(target: Vec2, new_game: bool) -> Self {
+    /// How much of its movement a guessed paddle keeps from one frame to the next: it glides to
+    /// a stop rather than on and on, as a real one would, more or less.
+    const GUESS_KEEPS: i32 = 3;
+    const GUESS_OUT_OF: i32 = 4;
+
+    /// The paddle going to `target`, from `last` (the player's previous input, if any).
+    pub fn new(target: Vec2, last: Option<Input>, new_game: bool) -> Self {
         let scaled = (target * INPUT_SCALE)
             .round()
             .clamp(Vec2::ZERO, Vec2::splat(f32::from(u16::MAX)));
+        let (x, y) = (scaled.x as u16, scaled.y as u16);
+        let moved = |now: u16, before: u16| {
+            (i32::from(now) - i32::from(before)).clamp(i16::MIN.into(), i16::MAX.into()) as i16
+        };
+        let (dx, dy) = match last.filter(|last| last.target().is_some()) {
+            Some(last) => (moved(x, last.x), moved(y, last.y)),
+            None => (0, 0),
+        };
         let new_game = if new_game { Self::NEW_GAME } else { 0 };
         Self {
-            x: scaled.x as u16,
-            y: scaled.y as u16,
+            x,
+            y,
+            dx,
+            dy,
             flags: Self::PRESENT | new_game,
+        }
+    }
+
+    /// A guess at the next input from this one, while the real one is on its way: the paddle
+    /// carries on as it was going, slowing down. Never a new-game press.
+    pub fn guess_next(&self) -> Self {
+        if self.target().is_none() {
+            return *self;
+        }
+        let along =
+            |at: u16, by: i16| (i32::from(at) + i32::from(by)).clamp(0, u16::MAX.into()) as u16;
+        let slow = |by: i16| (i32::from(by) * Self::GUESS_KEEPS / Self::GUESS_OUT_OF) as i16;
+        Self {
+            x: along(self.x, self.dx),
+            y: along(self.y, self.dy),
+            dx: slow(self.dx),
+            dy: slow(self.dy),
+            flags: Self::PRESENT,
         }
     }
 
@@ -513,7 +550,10 @@ mod tests {
         let x = |pace: f32| WIDTH / 2.0 + (t * pace).sin() * (WIDTH / 2.0 - PADDLE_RADIUS);
         let bottom = Vec2::new(x(2.3), HEIGHT * 0.75 + (t * 3.1).sin() * 30.0);
         let top = Vec2::new(x(1.7), HEIGHT * 0.25 + (t * 2.6).cos() * 30.0);
-        [Input::new(bottom, false), Input::new(top, false)]
+        [
+            Input::new(bottom, None, false),
+            Input::new(top, None, false),
+        ]
     }
 
     #[test]
@@ -549,10 +589,19 @@ mod tests {
 
     #[test]
     fn inputs_carry_the_paddle_and_the_new_game_press() {
-        let input = Input::new(Vec2::new(48.25, 140.5), true);
+        let input = Input::new(Vec2::new(48.25, 140.5), None, true);
         assert_eq!(input.target(), Some(Vec2::new(48.25, 140.5)));
         assert!(input.new_game());
         assert_eq!(Input::default().target(), None);
+
+        // A guess carries a moving paddle on, slowing down, and never presses new game.
+        let before = Input::new(Vec2::new(40.0, 140.0), None, false);
+        let moving = Input::new(Vec2::new(44.0, 138.0), Some(before), true);
+        let guess = moving.guess_next();
+        assert_eq!(guess.target(), Some(Vec2::new(48.0, 136.0)));
+        assert!(!guess.new_game());
+        let further = guess.guess_next().target().unwrap();
+        assert_eq!(further, Vec2::new(51.0, 134.5));
 
         // A paddle with no input yet stays put; player 1's press starts the next game.
         let mut rink = Rink::new();
@@ -560,7 +609,7 @@ mod tests {
         rink.play_frame([Input::default(); 2]);
         assert_eq!(rink.paddles, paddles);
         rink.score = [7, 2];
-        rink.play_frame([Input::new(paddles[0], true), Input::default()]);
+        rink.play_frame([Input::new(paddles[0], None, true), Input::default()]);
         assert_eq!(rink.score, [0, 0]);
     }
 

@@ -548,7 +548,15 @@
         link.onpacket = (packet) => table_packet(partner, new Uint8Array(packet));
         tableLinks.set(partner, link);
       };
-      window.tableLinkSend = (partner, bytes) => tableLinks.get(partner)?.send(bytes);
+      window.tableLinkDirect = (partner) => tableLinks.get(partner)?.direct ?? false;
+      // ?lag=120 (development): table packets go out about that many milliseconds late, give or
+      // take a third, to try the air hockey rollback over a slow connection.
+      const lag = Number(new URLSearchParams(location.search).get("lag")) || 0;
+      window.tableLinkSend = (partner, bytes) => {
+        if (!lag) return tableLinks.get(partner)?.send(bytes);
+        const copy = bytes.slice();
+        setTimeout(() => tableLinks.get(partner)?.send(copy), lag * (2 / 3 + Math.random() * 2 / 3));
+      };
       window.tableUnlink = (partner) => {
         const link = tableLinks.get(partner);
         if (!link) return;

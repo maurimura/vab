@@ -5,8 +5,9 @@
 //! Each player's machine runs the whole game, a fixed frame at a time (hockey's `play_frame`),
 //! from both players' inputs: where their paddle should be. GGRS carries the inputs between
 //! them, a frame behind (`INPUT_DELAY`), and where the other player's hasn't come yet it
-//! guesses they kept still; when it comes and the guess was wrong, it goes back to the frame
-//! before, plays the frames since again with it, and catches up, all before the next picture.
+//! guesses their paddle carried on as it was going (`Input::guess_next`); when it comes and the
+//! guess was wrong, it goes back to the frame before, plays the frames since again with it, and
+//! catches up, all before the next picture.
 //! So everyone's own paddle answers at once, and both rinks end up the same: GGRS checks that
 //! every second. The packets go straight from one browser to the other where WebRTC can
 //! connect them, and through the room until it does (web/room.js).
@@ -19,8 +20,8 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use ggrs::{
-    Config, DesyncDetection, GgrsError, GgrsEvent, GgrsRequest, NonBlockingSocket, P2PSession,
-    PlayerType, PredictRepeatLast, SessionBuilder, SessionState,
+    Config, DesyncDetection, GgrsError, GgrsEvent, GgrsRequest, InputPredictor, NonBlockingSocket,
+    P2PSession, PlayerType, SessionBuilder, SessionState,
 };
 use hockey::{FRAME, Input, Rink};
 use serde::{Deserialize, Serialize};
@@ -30,14 +31,18 @@ use wasm_bindgen::prelude::*;
 /// fewer, the sooner it answers, and the more often the other rink guesses wrong and puts
 /// things right.
 const INPUT_DELAY: usize = 1;
-/// How many frames ahead of the other player's last input a rink may run on guesses.
-const MAX_PREDICTION: usize = 8;
+/// How many frames ahead of the other player's last input a rink may run on guesses, before it
+/// waits for them: enough for a round trip of about 200 ms.
+const MAX_PREDICTION: usize = 12;
 /// Frames between checks that both rinks still match.
 const DESYNC_INTERVAL: u32 = 60;
-/// At most this many frames are played in one go, catching up after a slow moment.
-const MOST_FRAMES_AT_ONCE: u32 = 4;
-/// Frames between slowing down a frame, while ahead of the other player.
-const SLOW_DOWN_EVERY: u32 = 10;
+/// At most this many frames are played in one go, catching up when the browser draws slowly
+/// (a picture every 1/8 s at worst) or after a slow moment; beyond that, the time is dropped (as
+/// when the tab was in the background).
+const MOST_FRAMES_AT_ONCE: u32 = 8;
+/// At least this many frames between frames skipped to let the other player catch up, so the
+/// slowing down is spread thin.
+const SKIP_SPREAD: u32 = 20;
 
 /// What one player at the table tells the other, besides inputs.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -83,9 +88,18 @@ pub fn settings_from_message(values: [f32; 5]) -> hockey::Settings {
 
 struct Hockey;
 
+/// While the other player's input is on its way, their paddle carries on as it was going.
+struct CarryOn;
+
+impl InputPredictor<Input> for CarryOn {
+    fn predict(previous: Input) -> Input {
+        previous.guess_next()
+    }
+}
+
 impl Config for Hockey {
     type Input = Input;
-    type InputPredictor = PredictRepeatLast;
+    type InputPredictor = CarryOn;
     /// The whole rink: a few numbers, so rollback keeps copies of it.
     type State = Rink;
     /// The other player's seat.
@@ -124,10 +138,44 @@ struct Net {
     partner: u32,
     /// Time not yet played as frames.
     time: f32,
-    /// Frames until slowing down is allowed again.
-    slowed: u32,
+    /// Frames GGRS says to skip, for the other player to catch up, and frames until the next
+    /// may be.
+    to_skip: u32,
+    since_skip: u32,
     /// The other player's packets stopped coming, for now.
     interrupted: bool,
+    /// This player's last input.
+    last_input: Option<Input>,
+    counts: Counts,
+}
+
+/// What the match has been doing, counted for `/netstats`.
+#[derive(Clone, Copy, Default)]
+struct Counts {
+    frames: u32,
+    rollbacks: u32,
+    replayed: u32,
+    skipped: u32,
+    stalled: u32,
+    desyncs: u32,
+}
+
+/// How the match is getting on, over the last second or so (`/netstats`).
+#[derive(Clone, Copy, Default)]
+pub struct Stats {
+    pub ping: Option<u128>,
+    /// Packets go straight to the other browser, not through the room.
+    pub direct: bool,
+    pub frames_ahead: i32,
+    /// Per second: frames played, rollbacks, frames played again in them, frames skipped for the
+    /// other player to catch up, and frames waited on them.
+    pub frames: u32,
+    pub rollbacks: u32,
+    pub replayed: u32,
+    pub skipped: u32,
+    pub stalled: u32,
+    /// Times the two rinks were found to differ, all match.
+    pub desyncs: u32,
 }
 
 thread_local! {
@@ -153,6 +201,9 @@ extern "C" {
     fn table_link_send(partner: u32, bytes: &[u8]);
     #[wasm_bindgen(js_name = tableUnlink)]
     fn table_unlink(partner: u32);
+    /// Whether packets to `partner` go straight to their browser (WebRTC).
+    #[wasm_bindgen(js_name = tableLinkDirect)]
+    fn table_link_direct(partner: u32) -> bool;
 }
 
 /// Begins a match at `table`: this player in seat `me`, against `partner`.
@@ -189,8 +240,11 @@ pub fn start(table: &str, me: usize, partner: u32, my_id: u32) {
             me,
             partner,
             time: 0.0,
-            slowed: 0,
+            to_skip: 0,
+            since_skip: 0,
             interrupted: false,
+            last_input: None,
+            counts: Counts::default(),
         })),
         Err(error) => warn!("Air hockey: no match: {error}"),
     }
@@ -225,10 +279,12 @@ pub fn state() -> State {
     })
 }
 
-/// Plays the frames `seconds` add up to on `rink`, this player's paddle going to `input`'s,
-/// rolling back as GGRS says. Slows down a frame now and then while ahead of the other player,
-/// so neither gets too far ahead.
-pub fn play(rink: &mut Rink, input: Input, seconds: f32) {
+/// Plays the frames `seconds` add up to on `rink`, this player's paddle going to `target`
+/// (and player 1 pressing for a new game, with `new_game`), rolling back as GGRS says. Skips a
+/// frame now and then when GGRS says this player is too far ahead. Says how many frames it
+/// played, and whether it rolled back: then things the other player moved may have jumped.
+pub fn play(rink: &mut Rink, target: Vec2, new_game: bool, seconds: f32) -> Played {
+    let mut played = Played::default();
     NET.with_borrow_mut(|net| {
         let Some(net) = net else {
             return;
@@ -237,10 +293,12 @@ pub fn play(rink: &mut Rink, input: Input, seconds: f32) {
         for event in net.session.events() {
             match event {
                 GgrsEvent::DesyncDetected { frame, .. } => {
+                    net.counts.desyncs += 1;
                     warn!("Air hockey: the two rinks differ at frame {frame}");
                 }
                 GgrsEvent::NetworkInterrupted { .. } => net.interrupted = true,
                 GgrsEvent::NetworkResumed { .. } => net.interrupted = false,
+                GgrsEvent::WaitRecommendation { skip_frames } => net.to_skip += skip_frames,
                 _ => {}
             }
         }
@@ -249,25 +307,35 @@ pub fn play(rink: &mut Rink, input: Input, seconds: f32) {
             return;
         }
         net.time = (net.time + seconds).min(FRAME * MOST_FRAMES_AT_ONCE as f32);
-        net.slowed = net.slowed.saturating_sub(1);
         while net.time >= FRAME {
             net.time -= FRAME;
-            if net.session.frames_ahead() > 0 && net.slowed == 0 {
-                net.slowed = SLOW_DOWN_EVERY;
+            net.since_skip += 1;
+            if net.to_skip > 0 && net.since_skip >= SKIP_SPREAD {
+                net.to_skip -= 1;
+                net.since_skip = 0;
+                net.counts.skipped += 1;
                 continue;
             }
+            let input = Input::new(target, net.last_input, new_game);
             if net.session.add_local_input(net.me, input).is_err() {
                 return;
             }
             let requests = match net.session.advance_frame() {
                 Ok(requests) => requests,
                 // Too far ahead of the other player's inputs: wait for them.
-                Err(GgrsError::PredictionThreshold) => return,
+                Err(GgrsError::PredictionThreshold) => {
+                    net.counts.stalled += 1;
+                    return;
+                }
                 Err(error) => {
                     warn!("Air hockey: {error}");
                     return;
                 }
             };
+            net.last_input = Some(input);
+            net.counts.frames += 1;
+            played.frames += 1;
+            let mut loaded = false;
             for request in requests {
                 match request {
                     GgrsRequest::SaveGameState { cell, frame } => {
@@ -278,14 +346,54 @@ pub fn play(rink: &mut Rink, input: Input, seconds: f32) {
                         if let Some(saved) = cell.load() {
                             *rink = saved;
                         }
+                        loaded = true;
+                        net.counts.rollbacks += 1;
                     }
                     GgrsRequest::AdvanceFrame { inputs } => {
+                        if loaded {
+                            net.counts.replayed += 1;
+                        }
                         rink.play_frame([inputs[0].0, inputs[1].0]);
                     }
                 }
             }
+            played.rolled_back |= loaded;
         }
     });
+    played
+}
+
+/// What `play` did.
+#[derive(Clone, Copy, Default)]
+pub struct Played {
+    pub frames: u32,
+    pub rolled_back: bool,
+}
+
+/// How the match has been getting on since the last call (meant about once a second).
+pub fn stats() -> Option<Stats> {
+    NET.with_borrow_mut(|net| {
+        let net = net.as_mut()?;
+        // Per second, but desyncs all match.
+        let counts = std::mem::take(&mut net.counts);
+        net.counts.desyncs = counts.desyncs;
+        let other = 1 - net.me;
+        Some(Stats {
+            ping: net
+                .session
+                .network_stats(other)
+                .ok()
+                .map(|stats| stats.ping),
+            direct: table_link_direct(net.partner),
+            frames_ahead: net.session.frames_ahead(),
+            frames: counts.frames,
+            rollbacks: counts.rollbacks,
+            replayed: counts.replayed,
+            skipped: counts.skipped,
+            stalled: counts.stalled,
+            desyncs: counts.desyncs,
+        })
+    })
 }
 
 #[cfg(test)]
