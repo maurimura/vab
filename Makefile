@@ -44,7 +44,8 @@ netplay: $(WASM_BINDGEN) $(WASM_OPT)
 	$(WASM_OPT) -Oz --output web/netplay/netplay_bg.opt.wasm web/netplay/netplay_bg.wasm
 	mv web/netplay/netplay_bg.opt.wasm web/netplay/netplay_bg.wasm
 
-# FBNeo cores -> emulator/dist/<core>/, then into local R2 (served at /fbneo/<core>/*).
+# FBNeo cores -> emulator/dist/<core>/, then into local R2 (served at /fbneo/<core>/* by
+# `make dev BUCKET=local`). Only for working on the emulator: `make dev` plays the site's cores.
 emulator:
 	./emulator/build.sh
 	$(MAKE) upload-emulator R2_TARGET=--local
@@ -54,8 +55,8 @@ emulator-remote:
 	$(MAKE) upload-emulator R2_TARGET=--remote
 
 # A ROM set (or its start-up .state) into R2, served at /roms/<file>:
-# make upload-rom ROM=$HOME/Downloads/mk2.zip (add R2_TARGET=--remote for production, and
-# R2_BUCKET=vab-preview for the preview Worker's bucket).
+# make upload-rom ROM=$HOME/Downloads/mk2.zip (local R2, for `make dev BUCKET=local`; add
+# R2_TARGET=--remote for production, and R2_BUCKET=vab-preview for the preview Worker's bucket).
 R2_TARGET ?= --local
 R2_BUCKET ?= vab
 upload-rom:
@@ -71,9 +72,14 @@ upload-emulator:
 			--file $$dir/fbneo.wasm --content-type application/wasm || exit 1; \
 	done
 
-# Worker + Durable Object, serving web/ (http://localhost:8787)
+# Worker + Durable Object, serving web/ (http://localhost:8787). Cores, ROMs and start-up states
+# come from the site's own R2 bucket (`remote` in wrangler.toml; `npx wrangler login` once), so
+# games play with nothing built or uploaded, and the map is assets/maps/bar.ron, not the one
+# saved on the site. BUCKET=local uses the local bucket instead, map included: for a core from
+# `make emulator`, or a map saved from `make editor-dev`.
+BUCKET ?= remote
 dev: client netplay
-	cd server && npx wrangler dev
+	cd server && npx wrangler dev $(if $(filter local,$(BUCKET)),--local,--var MAP_FROM_R2:false)
 
 deploy: PROFILE = wasm-release
 deploy: client netplay
@@ -104,7 +110,8 @@ editor-web: $(WASM_BINDGEN) $(WASM_OPT)
 	echo "export const gzipped = $(if $(filter wasm-release,$(PROFILE)),false,true);" > $(EDITOR_WEB)/pkg/build.js
 
 # The editor Worker serving tools/editor/web/ at http://localhost:8788, next to `make dev`.
-# They share the local R2 bucket, so a map saved here shows in the local bar.
+# It saves into the local R2 bucket, never the site's, so a map saved here shows in the local
+# bar when that runs with BUCKET=local.
 editor-dev: editor-web
 	cd server && npx wrangler dev --env editor --port 8788
 
