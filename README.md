@@ -47,13 +47,25 @@ Needs `rustup`, Node/npm, `git` and `make`. The Rust toolchain (`rust-toolchain.
 
 ```sh
 (cd server && npm install)
+(cd server && npx wrangler login)   # once: make dev reads the site's R2 bucket
+make dev        # builds the client, serves everything at http://localhost:8787
+```
+
+Cores, ROM sets and start-up states live in the site's R2 bucket (see [Deploy](#deploy)), and
+`make dev` reads them from there (`remote = true` on the bucket in `server/wrangler.toml`), so
+games play locally with nothing built or uploaded. The map shown is `assets/maps/bar.ron`, not
+the one saved from the web editor. Working on the emulator itself (`emulator/patches/`, the
+FBNeo version) needs cores built here, in the local bucket, which `make dev BUCKET=local` serves
+instead, map included:
+
+```sh
 make emulator   # FBNeo cores -> emulator/dist, uploaded to local R2. First run takes a while.
 # Each ROM set and BIOS set (neogeo.zip for Neo Geo games), zipped and named as FBNeo expects:
 make upload-rom ROM=$HOME/Downloads/mk2.zip
 # Optional start-up state per game: skips boot screens, inserts 9 coins. Redo after rebuilding cores.
 node emulator/snapshot.mjs emulator/dist/midway/fbneo.mjs $HOME/Downloads/mk2.zip emulator/dist/mk2.state
 make upload-rom ROM=emulator/dist/mk2.state
-make dev        # builds the client, serves everything at http://localhost:8787
+make dev BUCKET=local
 ```
 
 Local builds (`make client`, `make dev`) use the `wasm-dev` profile: a change rebuilds in
@@ -93,11 +105,11 @@ the map built into it. `make pull-map` copies R2's map into `assets/maps/bar.ron
 which also keeps the built-in copy current.
 
 Merging to `main` deploys it; `make editor-dev` runs it at <http://localhost:8788> next to `make
-dev`, sharing its local bucket (built and gzipped like the client, `wasm-dev` unless told
-otherwise), and `make editor-preview` deploys it as `vab-editor-preview`, saving into the
-preview site's bucket. It must only be reachable by people you let in, so once
-it is deployed, put Cloudflare Access in front of it (the site stays public: the toggle is per
-Worker; the preview editor gets its own):
+dev`, saving into the local bucket, which `make dev BUCKET=local` shows (built and gzipped like
+the client, `wasm-dev` unless told otherwise), and `make editor-preview` deploys it as
+`vab-editor-preview`, saving into the preview site's bucket. It must only be reachable by people
+you let in, so once it is deployed, put Cloudflare Access in front of it (the site stays public:
+the toggle is per Worker; the preview editor gets its own):
 
 1. Dashboard → Workers & Pages → `vab-editor` → Settings → Domains & Routes → `workers.dev` →
    Enable Cloudflare Access. Edit the policy it makes to the emails allowed in (or a login

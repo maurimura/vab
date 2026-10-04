@@ -13,10 +13,14 @@ directory = "../web"
 binding = "ASSETS"
 run_worker_first = ["/assets/maps/*"]
 
-# Files over the 25 MiB static asset limit: the FBNeo core now, ROMs later.
+# Files over the 25 MiB static asset limit: the FBNeo cores, ROM sets and start-up states, plus
+# the map saved from the web editor. `remote` makes `wrangler dev` (make dev) read this bucket,
+# the site's own, so games play locally with nothing built or uploaded; `wrangler dev --local`
+# (make dev BUCKET=local) uses the local bucket instead. Deploys ignore it.
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "vab"
+remote = true
 
 [durable_objects]
 bindings = [
