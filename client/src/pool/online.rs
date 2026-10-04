@@ -1,6 +1,8 @@
 //! Two players at a pool table, through the room: the table is a place with two seats, as a
 //! cabinet is ("pool:x,y"), and the players at it send each other what they do as messages
-//! (seats.rs). Whoever sat first is player 1 and starts each game; the
+//! (seats.rs). Someone sitting down gets the game as it is from the player who was already
+//! there, so a reload or a lost connection doesn't end it; whoever sat first is player 1 and
+//! starts each new game; the
 //! player whose turn it is sends where their cue points, where they put the cue ball, their
 //! shot, and where everything ended up once it stopped. Both tables play each shot out the
 //! same way, and the other one snaps to where the shooter's ended, so they never drift apart.
@@ -25,6 +27,12 @@ pub enum Message {
         aim: [f32; 2],
         power: f32,
         settings: [f32; 6],
+    },
+    /// The whole game, from a player who was at the table to one sitting down (after a reload,
+    /// say): every ball (its number, x, y, and 1 if down), and where the game of 8-ball is at.
+    Sync {
+        balls: Vec<[f32; 4]>,
+        rules: billiards::rules::Game,
     },
     /// Where every ball ended up, in the table's order (x, y, and 1 if down), and what the shot
     /// did, for the rules.

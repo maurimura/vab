@@ -21,7 +21,7 @@ bevy = { version = "0.19.1", default-features = false, features = [
 log = { version = "0.4", features = ["max_level_debug", "release_max_level_warn"] }
 tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_warn"] }
 # Pool physics for the pool table's game (src/pool).
-billiards = { path = "../billiards" }
+billiards = { path = "../billiards", features = ["serde"] }
 # Air hockey physics for the air hockey table's game (src/hockey).
 hockey = { path = "../hockey" }
 # Messages between the two players at a pool table (src/pool/online.rs).
