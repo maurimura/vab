@@ -42,6 +42,11 @@ pub struct Placed {
 }
 
 impl Placed {
+    /// The cell it stands on; an object covering several extends along +x and +y from it.
+    pub fn cell(&self) -> IVec2 {
+        IVec2::new(self.x, self.y)
+    }
+
     /// Every cell it covers: its own, and more along +x and +y for an object in
     /// assets/objects.ron.
     pub fn cells(&self) -> impl Iterator<Item = IVec2> + use<> {
