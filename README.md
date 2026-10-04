@@ -26,9 +26,10 @@ speed).
 When someone sits at the air hockey table's other seat, the two play each other with rollback,
 as at the cabinets: each machine runs the whole game a frame at a time from both players'
 inputs (their paddles), guessing the other's until it arrives and replaying the frames since
-when a guess was wrong, so each player's own paddle answers at once. Inputs go a frame late
-(`INPUT_DELAY` in `client/src/hockey/online.rs`), straight between the browsers once WebRTC
-connects. While the other player's input is on its way, their paddle is guessed to carry on as
+when a guess was wrong, so each player's own paddle answers at once. Before a match, player 1
+times a few round trips over the link the match will use, and inputs go 1 frame late on a
+quick connection, up to 3 on a slow one (`input_delay_for` in `client/src/hockey/online.rs`),
+straight between the browsers once WebRTC connects. While the other player's input is on its way, their paddle is guessed to carry on as
 it was going, and what a correction moves is drawn gliding there rather than jumping.
 `/netstats` in the chat shows how a match is doing: how often the browser draws, the ping,
 whether packets go straight or through the room (if they go through the room, see TURN below),
