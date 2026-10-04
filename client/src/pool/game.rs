@@ -26,6 +26,7 @@ use super::online::{self, Message};
 use crate::Mode;
 use crate::chat::{Chat, chat_closed};
 use crate::help::Help;
+use crate::pixels::Pixels;
 use crate::settings::{Knob, NewRack, Settings};
 use crate::touch::{self, Touch, TouchButton};
 
@@ -862,7 +863,7 @@ fn draw(
     settings: Res<Settings>,
     canvas: Single<&ImageNode, With<Canvas>>,
     mut images: ResMut<Assets<Image>>,
-    mut table_art: Local<Option<(f32, Vec<u8>)>>,
+    mut table_art: Local<Option<(f32, Pixels)>>,
 ) {
     let Some(mut image) = images.get_mut(&canvas.image) else {
         return;
@@ -875,7 +876,7 @@ fn draw(
     let Some((_, art)) = table_art.as_ref() else {
         return;
     };
-    let mut pixels = Pixels(art.clone());
+    let mut pixels = art.clone();
     for drop in &game.dropping {
         // Quickly at first, then settling into the middle of the hole.
         let t = drop.age / DROP_TIME;
@@ -908,7 +909,7 @@ fn draw(
         pixels.cue(cue_ball - game.aim * gap, -game.aim);
     }
     draw_panels(&mut pixels, &game.rules);
-    image.data = Some(pixels.0);
+    image.data = Some(pixels.into_bytes());
 }
 
 /// The player at the table, or the winner once the game is over: their panel is lit up.
@@ -1180,105 +1181,7 @@ fn hide_table(
     }
 }
 
-/// The canvas's RGBA bytes.
-struct Pixels(Vec<u8>);
-
 impl Pixels {
-    fn set(&mut self, x: i32, y: i32, color: [u8; 4]) {
-        if (0..CANVAS.x as i32).contains(&x) && (0..CANVAS.y as i32).contains(&y) {
-            let i = (y as usize * CANVAS.x as usize + x as usize) * 4;
-            self.0[i..i + 4].copy_from_slice(&color);
-        }
-    }
-
-    fn rect(&mut self, from: IVec2, to: IVec2, color: [u8; 4]) {
-        for y in from.y..to.y {
-            for x in from.x..to.x {
-                self.set(x, y, color);
-            }
-        }
-    }
-
-    /// A convex polygon, its corners in order either way round.
-    fn polygon(&mut self, corners: &[Vec2], color: [u8; 4]) {
-        let low = corners
-            .iter()
-            .copied()
-            .reduce(Vec2::min)
-            .unwrap_or_default()
-            .floor();
-        let high = corners
-            .iter()
-            .copied()
-            .reduce(Vec2::max)
-            .unwrap_or_default()
-            .ceil();
-        let side = |a: Vec2, b: Vec2, p: Vec2| (b - a).perp_dot(p - a);
-        for y in low.y as i32..=high.y as i32 {
-            for x in low.x as i32..=high.x as i32 {
-                let middle = Vec2::new(x as f32, y as f32) + 0.5;
-                let sides = corners
-                    .iter()
-                    .zip(corners.iter().cycle().skip(1))
-                    .map(|(&a, &b)| side(a, b, middle));
-                let (mut left, mut right) = (false, false);
-                for s in sides {
-                    left |= s < 0.0;
-                    right |= s > 0.0;
-                }
-                if !(left && right) {
-                    self.set(x, y, color);
-                }
-            }
-        }
-    }
-
-    /// Every pixel within `reach` of the line from `from` to `to`.
-    fn thick_line(&mut self, from: Vec2, to: Vec2, reach: f32, color: [u8; 4]) {
-        let (low, high) = (
-            (from.min(to) - reach).floor(),
-            (from.max(to) + reach).ceil(),
-        );
-        let along = to - from;
-        for y in low.y as i32..=high.y as i32 {
-            for x in low.x as i32..=high.x as i32 {
-                let middle = Vec2::new(x as f32, y as f32) + 0.5;
-                let t = ((middle - from).dot(along) / along.length_squared()).clamp(0.0, 1.0);
-                if middle.distance(from + along * t) <= reach {
-                    self.set(x, y, color);
-                }
-            }
-        }
-    }
-
-    /// A circle one pixel thick.
-    fn ring(&mut self, center: Vec2, radius: f32, color: [u8; 4]) {
-        let (low, high) = (
-            (center - radius - 1.0).floor(),
-            (center + radius + 1.0).ceil(),
-        );
-        for y in low.y as i32..=high.y as i32 {
-            for x in low.x as i32..=high.x as i32 {
-                let distance = (Vec2::new(x as f32, y as f32) + 0.5).distance(center);
-                if (radius - 0.5..radius + 0.5).contains(&distance) {
-                    self.set(x, y, color);
-                }
-            }
-        }
-    }
-
-    fn disc(&mut self, center: Vec2, radius: f32, color: [u8; 4]) {
-        let (low, high) = ((center - radius).floor(), (center + radius).ceil());
-        for y in low.y as i32..=high.y as i32 {
-            for x in low.x as i32..=high.x as i32 {
-                let middle = Vec2::new(x as f32, y as f32) + 0.5;
-                if middle.distance(center) <= radius {
-                    self.set(x, y, color);
-                }
-            }
-        }
-    }
-
     /// A ball with its middle at `center`, on whole pixels, in `shape`, its colors scaled by
     /// `light` (1 as it is, less as it sinks into a pocket).
     fn ball(&mut self, number: u8, center: Vec2, shape: &[&str], light: f32) {
@@ -1341,12 +1244,8 @@ impl Pixels {
 
 /// The table without balls: rails, cushions, felt, the pockets cut into them, and the sights
 /// on the rails.
-fn draw_table(pockets: &[Pocket; 6]) -> Vec<u8> {
-    let mut pixels = Pixels(
-        std::iter::repeat_n(CLEAR, (CANVAS.x * CANVAS.y) as usize)
-            .flatten()
-            .collect(),
-    );
+fn draw_table(pockets: &[Pocket; 6]) -> Pixels {
+    let mut pixels = Pixels::new(CANVAS);
     let felt_from = FELT.as_ivec2();
     let felt_to = felt_from + IVec2::new(WIDTH as i32, HEIGHT as i32);
     let rail = RAIL as i32;
@@ -1388,5 +1287,5 @@ fn draw_table(pockets: &[Pocket; 6]) -> Vec<u8> {
         let radius = pocket.hole_radius - HOLE_DRAWN_SMALLER;
         pixels.disc(pocket.hole + FELT, radius, POCKET);
     }
-    pixels.0
+    pixels
 }

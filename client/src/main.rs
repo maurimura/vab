@@ -2,6 +2,8 @@ mod cabinets;
 mod chat;
 mod emulator;
 mod help;
+mod hockey;
+mod pixels;
 mod player;
 mod pool;
 mod room;
@@ -15,6 +17,7 @@ use cabinets::{Cabinets, CabinetsPlugin};
 use chat::ChatPlugin;
 use emulator::EmulatorPlugin;
 use help::HelpPlugin;
+use hockey::{HockeyPlugin, HockeyTables};
 use player::{PlayerPlugin, Walkable, spawn_player};
 use pool::{PoolPlugin, PoolTables};
 use room::RoomPlugin;
@@ -56,6 +59,7 @@ fn main() {
         EmulatorPlugin,
         HelpPlugin,
         PoolPlugin,
+        HockeyPlugin,
         RoomPlugin,
         SettingsPlugin,
         TouchPlugin,
@@ -80,6 +84,7 @@ enum Mode {
     Walking,
     Playing,
     Pool,
+    Hockey,
 }
 
 /// The bar's map, made with the editor, while it loads.
@@ -115,6 +120,7 @@ fn build_bar(
     commands.insert_resource(walkable);
     commands.insert_resource(Cabinets::from_map(map));
     commands.insert_resource(PoolTables::from_map(map));
+    commands.insert_resource(HockeyTables::from_map(map));
     commands.remove_resource::<LoadingMap>();
     mode.set(Mode::Walking);
 }

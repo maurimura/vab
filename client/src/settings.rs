@@ -22,6 +22,11 @@ pub enum Knob {
     PocketMouth,
     FullPull,
     PullBack,
+    PuckSpeed,
+    PuckFriction,
+    RailBounce,
+    PaddleBounce,
+    BotSpeed,
 }
 
 struct Spec {
@@ -35,7 +40,7 @@ struct Spec {
 }
 
 /// Every knob in the order the panel lists them, under the heading of the game they're for.
-const SPECS: [Spec; 8] = [
+const SPECS: [Spec; 13] = [
     Spec {
         knob: Knob::TopSpeed,
         label: "Hardest shot",
@@ -108,6 +113,51 @@ const SPECS: [Spec; 8] = [
         step: 1.0,
         decimals: 0,
     },
+    Spec {
+        knob: Knob::PuckSpeed,
+        label: "Puck top speed",
+        unit: "px/s",
+        min: 100.0,
+        max: 1500.0,
+        step: 10.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::PuckFriction,
+        label: "Puck friction",
+        unit: "px/s²",
+        min: 0.0,
+        max: 300.0,
+        step: 1.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::RailBounce,
+        label: "Rail bounce",
+        unit: "",
+        min: 0.1,
+        max: 1.0,
+        step: 0.01,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::PaddleBounce,
+        label: "Paddle bounce",
+        unit: "",
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::BotSpeed,
+        label: "Bot speed",
+        unit: "px/s",
+        min: 0.0,
+        max: 400.0,
+        step: 5.0,
+        decimals: 0,
+    },
 ];
 
 /// Shows the panel (`/settings` in the chat).
@@ -157,6 +207,17 @@ impl Settings {
         }
     }
 
+    /// How the air hockey table plays.
+    pub fn hockey(&self) -> hockey::Settings {
+        hockey::Settings {
+            max_speed: self.get(Knob::PuckSpeed),
+            friction: self.get(Knob::PuckFriction),
+            rail_restitution: self.get(Knob::RailBounce),
+            paddle_restitution: self.get(Knob::PaddleBounce),
+            bot_speed: self.get(Knob::BotSpeed),
+        }
+    }
+
     /// Moves the value of the picked knob by `steps` of its step, within its range.
     fn nudge(&mut self, row: usize, steps: f32) {
         let spec = &SPECS[row];
@@ -176,6 +237,7 @@ fn index(knob: Knob) -> usize {
 
 fn defaults() -> [f32; SPECS.len()] {
     let pool = billiards::Settings::default();
+    let hockey = hockey::Settings::default();
     SPECS.map(|spec| match spec.knob {
         Knob::TopSpeed => pool.max_speed,
         Knob::SoftestShot => pool.min_speed,
@@ -185,6 +247,11 @@ fn defaults() -> [f32; SPECS.len()] {
         Knob::PocketMouth => pool.pocket_mouth,
         Knob::FullPull => 2.0,
         Knob::PullBack => 32.0,
+        Knob::PuckSpeed => hockey.max_speed,
+        Knob::PuckFriction => hockey.friction,
+        Knob::RailBounce => hockey.rail_restitution,
+        Knob::PaddleBounce => hockey.paddle_restitution,
+        Knob::BotSpeed => hockey.bot_speed,
     })
 }
 
@@ -311,6 +378,15 @@ fn spawn_panel(mut commands: Commands) {
                         ],
                     ));
                     for (row, spec) in SPECS.iter().enumerate() {
+                        if spec.knob == Knob::PuckSpeed {
+                            list.spawn((
+                                text("Air hockey", 13.0, Color::srgb(0.6, 0.85, 0.6)),
+                                Node {
+                                    margin: UiRect::top(Val::Px(6.0)),
+                                    ..default()
+                                },
+                            ));
+                        }
                         list.spawn((
                             Row(row),
                             Node {

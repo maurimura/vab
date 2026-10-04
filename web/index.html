@@ -498,6 +498,30 @@
       };
       window.emulatorInput = (mask) => play?.input(mask);
 
+      // Pointer lock, for the air hockey table (client/src/hockey/game.rs): the paddle moves with
+      // the mouse, and the pointer stays put. Browsers only lock it from a click, so a click on
+      // the canvas does, while Bevy wants it; Esc unlocks it (the browser's doing).
+      const bevyCanvas = document.getElementById("bevy");
+      let lockWanted = false;
+      // No pointer lock here at all (some embedded browsers), or refused again and again: the
+      // game plays without it. A single refusal is usual just after an Esc.
+      let lockRefusals = 0;
+      let lockFailed = !("requestPointerLock" in bevyCanvas);
+      window.pointerLockWanted = (on) => {
+        lockWanted = on;
+        if (!on && document.pointerLockElement) document.exitPointerLock();
+      };
+      window.pointerLocked = () => document.pointerLockElement === bevyCanvas;
+      window.pointerLockFailed = () => lockFailed;
+      window.releasePointer = () => document.exitPointerLock();
+      bevyCanvas.addEventListener("pointerdown", (event) => {
+        if (!lockWanted || event.pointerType !== "mouse" || document.pointerLockElement) return;
+        // Newer browsers return a promise, rejected when they say no (as just after an Esc).
+        bevyCanvas.requestPointerLock()?.catch?.(() => {});
+      });
+      document.addEventListener("pointerlockerror", () => (lockFailed ||= ++lockRefusals >= 3));
+      document.addEventListener("pointerlockchange", () => document.pointerLockElement && (lockRefusals = 0));
+
       // Pool tables (client/src/pool/online.rs): a place with two seats in the room, as a
       // cabinet is ("pool:x,y"). The players at one send each other what they do as messages
       // with `pool` set to the table; Bevy plays the game and says what to send.

@@ -58,6 +58,8 @@ pub enum TouchButton {
     Watch,
     /// Sits at the pool table next to the player.
     Pool,
+    /// Plays at the air hockey table next to the player.
+    Hockey,
     Leave,
     /// One of the game's, by RetroPad id.
     Pad(u16),
@@ -330,11 +332,12 @@ fn show_stick(
     mut parts: Query<(&StickPart, &mut Node, &mut Visibility)>,
 ) {
     for (part, mut node, mut visibility) in &mut parts {
-        // The d-pad shows itself, and at the pool table the finger aims the cue instead.
+        // The d-pad shows itself, and at the pool table the finger aims the cue instead, as at
+        // the air hockey table it moves the paddle.
         let Some(thumb) = touch
             .thumb
             .as_ref()
-            .filter(|thumb| !thumb.on_dpad && *mode.get() != Mode::Pool)
+            .filter(|thumb| !thumb.on_dpad && !matches!(mode.get(), Mode::Pool | Mode::Hockey))
         else {
             visibility.set_if_neq(Visibility::Hidden);
             continue;

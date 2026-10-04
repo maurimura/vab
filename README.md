@@ -15,7 +15,13 @@ E next to the pool table plays 8-ball: the table seen from above, the cue follow
 (or a finger) around the cue ball. Holding the button pulls the cue back, further the longer
 it's held, and letting go shoots. Alone at the table, you take both sides in turn; when someone
 sits at the other seat, you play each other, each shooting on their own turn and watching the
-other's cue on theirs (`client/src/pool/online.rs`). `/settings` in the chat tunes how it plays
+other's cue on theirs (`client/src/pool/online.rs`).
+
+E next to the air hockey table plays air hockey against a bot: the rink seen from above,
+upright, your goal at the bottom. Your paddle goes where the mouse (or a finger) is, kept in your
+half; the bot slides its paddle back and forth across its goal. First to 7 wins. `/settings`
+tunes it too (the puck's top speed and friction, how bouncy the rails and paddles are, the bot's
+speed). `/settings` in the chat tunes how it plays
 (shot speeds, friction, bounce, pocket size, how the cue pulls back) and racks the balls again.
 
 On a phone or tablet (a screen whose main pointer is a finger) the controls are on the screen
@@ -32,6 +38,7 @@ as long as its pixel ratio is left at the computer's own (an emulated one gets t
 | `server/` | Worker + `Room` Durable Object (WebSocket Hibernation) | `workers-rs` template, `wrangler` |
 | `netplay/` | Rollback for two players at a cabinet (GGRS), run by the emulator worker | `cargo` + `wasm-bindgen` → `web/netplay/` |
 | `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
+| `hockey/` | Air hockey physics and the bot, without Bevy, tested natively (`cargo test -p hockey`) | |
 | `billiards/` | Pool physics, without Bevy: deterministic, tested natively (`cargo test -p billiards`) | |
 | `world/` | Map format, isometric grid math, tile drawing (shared by the editor and, later, the client) | |
 | `tools/editor/` | Bar layout editor: on the desktop (`make editor`), or on the web behind Cloudflare Access (`make editor-web`, served by the same Worker as `vab-editor`) | `cargo`, `bevy_egui` (+ `wasm-bindgen` → `tools/editor/web/pkg/`) |
