@@ -70,10 +70,13 @@ async function unpack(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-/** Input delay of a lockstep game whose round trip is unknown, in frames. */
-const LOCKSTEP_DELAY = 4;
-/** Added to half the round trip when picking a lockstep delay: jitter and the worker's polling. */
-const LOCKSTEP_SLACK_MS = 25;
+/** Input delay when the round trip is unknown, in frames. */
+const DEFAULT_DELAY = 5;
+/** Added to half the round trip when picking the input delay: jitter and the worker's polling. */
+const DELAY_SLACK_MS = 30;
+/** A re-simulated frame costing more than this (ms) makes rollbacks too expensive to let happen
+ *  often, so such a core covers the ping with input delay instead (Supermodel). */
+const HEAVY_RERUN_MS = 6;
 
 let audioPort;
 let speakerRate = 48000;
@@ -337,14 +340,17 @@ class Cabinet {
     this.core.unserialize(state);
     this.#captured = undefined;
     if (this.#lockstep) {
-      this.#tuned = { rollback: 0, delay: lockstepDelay(roundTrip, this.fps) }; // GGRS never saves: no slots needed
+      this.#tuned = { rollback: 0, heavy: true }; // GGRS never saves: no slots needed
     } else if (!this.#tuned) {
       this.muted = true;
       this.#tuned = tune(this.core, this.fps);
       this.muted = false;
       this.core.allocSlots(this.#tuned.rollback + 2);
     }
-    const { delay, rollback } = this.#tuned;
+    const rollback = this.#tuned.rollback;
+    // Heavy cores (and lockstep) cover the ping with input delay so re-simulations are rare and
+    // the frame rate stays smooth; cheap cores keep the small delay tune picked and roll back.
+    const delay = this.#tuned.heavy ? onlineDelay(roundTrip, this.fps) : this.#tuned.delay;
     this.#epoch = epoch & 0xffff;
     this.#seats = seats;
     this.#session = new Session(seats.length, seats.indexOf(this.#seat), delay, rollback, Math.round(this.fps));
@@ -451,7 +457,9 @@ function tune(core, fps) {
   core.unserialize(before);
   const fits = Math.floor(((1000 / fps) * 0.75 - shown) / rerun);
   const rollback = Math.min(8, Math.max(2, fits));
-  return { rollback, delay: rollback < 6 ? 3 : 2 };
+  // A heavy core (Supermodel) can't re-simulate cheaply, so it covers the ping with input delay
+  // to keep rollbacks rare, rather than rolling back often.
+  return { rollback, delay: rollback < 6 ? 3 : 2, heavy: rerun > HEAVY_RERUN_MS };
 }
 
 /**
@@ -459,10 +467,10 @@ function tune(core, fps) {
  * the frame this many frames earlier, has to be here by the time the frame is due, so half the
  * round trip and some slack. 2 to 10 frames; past that the game would stall anyway.
  */
-function lockstepDelay(roundTrip, fps) {
-  if (roundTrip === undefined) return LOCKSTEP_DELAY;
-  const frames = Math.ceil((roundTrip / 2 + LOCKSTEP_SLACK_MS) / (1000 / fps));
-  return Math.min(10, Math.max(2, frames));
+function onlineDelay(roundTrip, fps) {
+  if (roundTrip === undefined) return DEFAULT_DELAY;
+  const frames = Math.ceil((roundTrip / 2 + DELAY_SLACK_MS) / (1000 / fps));
+  return Math.min(12, Math.max(2, frames));
 }
 
 /** FNV-1a over the game's RAM. All machines' hashes match while they're in step. */

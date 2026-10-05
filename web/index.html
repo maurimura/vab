@@ -343,9 +343,10 @@
           this.#playing = true;
           const seats = [...this.#players.keys()].sort((a, b) => a - b);
           this.#show(`Player ${this.seat + 1}. Connecting to ${this.#others()}...`);
-          // A lockstep game waits for the others' input every frame, so its input delay comes
-          // from the round trip to them, timed now (worker.js).
-          const roundTrip = this.#game.lockstep ? await this.#roundTrip() : undefined;
+          // The input delay is picked from the round trip to the others, timed now: a lockstep
+          // game and a heavy rollback core (Supermodel) both cover the ping to stay smooth
+          // (worker.js). Cheap cores ignore it.
+          const roundTrip = await this.#roundTrip();
           if (this.#epoch !== epoch) return; // the players changed again meanwhile
           this.#worker.postMessage({ type: "online", epoch, seats, state, roundTrip }, state ? [state.buffer] : []);
           this.#stream();
