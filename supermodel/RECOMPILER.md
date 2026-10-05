@@ -82,11 +82,27 @@ vs298 this is ~1,460 installs over the first ~500 frames (peak ~7/frame) instead
 thousands at once, and the browser renders normally with the recompiler on. A global INSTALL_CAP is
 a last-resort guardrail. This changes only *when* a block compiles, never its result.
 
-Why: blocks average only 2.2 instructions, because a branch (or any still-uncovered op: FP,
-mfspr/mtspr, update-form loads) ends the block, and each block returns to the dispatch loop. The
-per-block cost then dominates. A direct-mapped block cache and advancing the code pointer directly
-(instead of ppc_change_pc) got it from 0.70x to 0.79x, but the structural fix is **block linking**:
-compile branches and let a run of blocks execute without returning to the loop, so effective block
-length is tens of instructions. That, plus covering branches / FP / update-forms to cut the 45%
-still interpreted, is what turns this net-faster. Enable with supermodel_set("Jit","true"); off by
-default. ppc_jit_stat() reports coverage and block length.
+Why: blocks average only ~2 instructions, because a branch ends the block and each block returns
+to the dispatch loop. The per-block cost then dominates. A direct-mapped block cache and advancing
+the code pointer directly (instead of ppc_change_pc) got it from 0.70x to 0.79x.
+
+Update-form loads/stores (lwzu/stwu/...) and mfspr/mtspr for LR/CTR/XER are now covered too (they
+bracket every call, so they used to chop blocks). That lifted coverage to ~56% and steady-state
+(warm cache) to ~0.87x -- still below 1.0x, and the reason is now measured, not guessed. A
+per-hot-block terminator histogram (supermodel_jit_term) shows what ends hot blocks on vs298:
+
+  bc / b / bclr-bcctr   ~7,300   (branches -- unavoidable without linking)
+  lfs / lfd / stfs / fp ~1,700   (floating point, not yet covered)
+  lwzx and other op31    ~900    (indexed loads)
+
+So branches are ~two thirds of block ends. No amount of extra opcode coverage lifts the ~2-instr
+average while every branch returns to the loop. **The one structural fix is block linking**: let a
+run of blocks execute without returning to the C dispatch loop (and ideally keep registers in
+locals across them), so effective block length becomes tens of instructions and the per-block
+overhead is amortized. In WASM this means either the tail-call extension (return_call_indirect) or
+an in-WASM dispatch trampoline that replicates the exact icount/decrementer timing -- the latter is
+determinism-sensitive and must stay byte-identical (verify with the boot RAM-hash check before any
+real-machine use). Covering FP would further cut the interpreted fraction but is secondary to
+linking. Enable with supermodel_set("Jit","true") or ?jit=1; off by default. ppc_jit_stat() reports
+coverage and block length; supermodel_jit_installs() / supermodel_jit_term() report compile counts
+and block terminators.

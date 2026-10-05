@@ -76,6 +76,8 @@ extern "C" int supermodel_jit_selftest(void)
 extern "C" uint32_t *ppc_jit_gpr(void);
 extern "C" uint8_t *ppc_jit_cr(void);
 extern "C" uint32_t *ppc_jit_xer(void);
+extern "C" uint32_t *ppc_jit_lr(void);
+extern "C" uint32_t *ppc_jit_ctr(void);
 extern "C" void ppc_jit_interp_one(uint32_t opcode);
 extern "C" uint32_t ppc_jit_read32(uint32_t), ppc_jit_read16(uint32_t), ppc_jit_read8(uint32_t);
 extern "C" void ppc_jit_write32(uint32_t, uint32_t), ppc_jit_write16(uint32_t, uint32_t), ppc_jit_write8(uint32_t, uint32_t);
@@ -86,6 +88,8 @@ static jit::Regs make_regs(void) {
   r.gpr = (uint32_t)(uintptr_t)ppc_jit_gpr();
   r.cr = (uint32_t)(uintptr_t)ppc_jit_cr();
   r.xer = (uint32_t)(uintptr_t)ppc_jit_xer();
+  r.lr = (uint32_t)(uintptr_t)ppc_jit_lr();
+  r.ctr = (uint32_t)(uintptr_t)ppc_jit_ctr();
   r.read32 = (uint32_t)(uintptr_t)&ppc_jit_read32;
   r.read16 = (uint32_t)(uintptr_t)&ppc_jit_read16;
   r.read8 = (uint32_t)(uintptr_t)&ppc_jit_read8;
@@ -308,6 +312,25 @@ static const int INSTALL_CAP = 50000;
 static int g_jit_installs = 0;
 extern "C" int supermodel_jit_installs(void) { return g_jit_installs; }
 
+// Histogram of the instruction that ends each hot block (the first uncovered one), so we can see
+// what to cover next: kind 0 is indexed by major opcode (instr>>26), kind 1 by the op31 extended
+// opcode ((instr>>1)&0x3ff). Recorded once per block, when it is promoted.
+static uint32_t g_term_major[64];
+static uint32_t g_term_op31[1024];
+static void record_terminator(uint32_t instr) {
+  uint32_t op = instr >> 26;
+  if (op == 31) g_term_op31[(instr >> 1) & 0x3ff]++; else g_term_major[op]++;
+}
+extern "C" int supermodel_jit_term(int kind, int idx) {
+  if (idx < 0) return 0;
+  if (kind == 0) return idx < 64 ? (int)g_term_major[idx] : 0;
+  return idx < 1024 ? (int)g_term_op31[idx] : 0;
+}
+extern "C" void supermodel_jit_term_reset(void) {
+  for (int i = 0; i < 64; i++) g_term_major[i] = 0;
+  for (int i = 0; i < 1024; i++) g_term_op31[i] = 0;
+}
+
 // A direct-mapped cache in front of the map, so the common case (a decided PC) is one array
 // access instead of a hash lookup -- this is on the path of every instruction, JIT or
 // interpreted. Only decided blocks (compiled, or interpret-forever) live here; a block still
@@ -344,6 +367,7 @@ extern "C" uint32_t jit_block_for(uint32_t pc, const uint32_t *code, int maxLen,
     if (++b.hits >= HOT_THRESHOLD) {                                                   // warmed up: compile now
       int count = 0;
       uint32_t fn = g_jit_installs < INSTALL_CAP ? jit_install_block(code, maxLen, &count) : 0;
+      if (count < maxLen) record_terminator(code[count]);                              // what stopped this hot block
       if (fn) { g_jit_installs++; b.fn = fn; b.count = count; fe = { pc, fn, count }; *outCount = count; return fn; }
       b.hits = -1; b.count = 0; fe = { pc, 0, 0 };                                     // couldn't install: interpret forever
     }

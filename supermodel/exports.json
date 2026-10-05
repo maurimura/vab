@@ -36,5 +36,7 @@
   "_supermodel_jit_flush",
   "_ppc_jit_stat",
   "_ppc_jit_stats_reset",
-  "_supermodel_jit_installs"
+  "_supermodel_jit_installs",
+  "_supermodel_jit_term",
+  "_supermodel_jit_term_reset"
 ]

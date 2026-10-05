@@ -12,7 +12,7 @@
 namespace jit {
 
 struct Regs {
-  uint32_t gpr, cr, xer;                                   // addresses of ppc.r[0], ppc.cr[0], ppc.xer
+  uint32_t gpr, cr, xer, lr, ctr;                          // addresses of ppc.r[0], ppc.cr[0], ppc.xer, ppc.lr, ppc.ctr
   uint32_t read32, read16, read8, write32, write16, write8; // table indices of the Bus handlers
 };
 
@@ -103,12 +103,40 @@ inline bool compile_one(Code &c, const Regs &r, RegMap &rm, uint32_t instr) {
     case 38: if (a) { rd(a); c.i32_const(simm); c.op(OP_I32_ADD); } else c.i32_const(simm); rd(d); c.i32_const((int32_t)r.write8);  c.call_indirect(TYPE_WRITE); return true; // stb
     case 44: if (a) { rd(a); c.i32_const(simm); c.op(OP_I32_ADD); } else c.i32_const(simm); rd(d); c.i32_const((int32_t)r.write16); c.call_indirect(TYPE_WRITE); return true; // sth
 
+    // Update-form loads: EA = rA + simm; rD = mem[EA]; rA = EA. Invalid when rA == 0 or rA == rD,
+    // so defer those to the interpreter. (lwzu/lbzu/lhzu/lhau)
+    case 33: case 35: case 41: case 43: {
+      if (a == 0 || a == d) return false;
+      auto ea = [&] { rd(a); c.i32_const(simm); c.op(OP_I32_ADD); };
+      uint32_t h = (op == 35) ? r.read8 : r.read16; if (op == 33) h = r.read32;
+      ea(); c.i32_const((int32_t)h); c.call_indirect(TYPE_READ);
+      if (op == 43) { c.i32_const(16); c.op(OP_I32_SHL); c.i32_const(16); c.op(OP_I32_SHR_S); } // lhau sign-extends
+      wr(d); ea(); wr(a); return true;
+    }
+    // Update-form stores: EA = rA + simm; mem[EA] = rS; rA = EA. Invalid when rA == 0. (stwu/stbu/sthu)
+    case 37: case 39: case 45: {
+      if (a == 0) return false;
+      auto ea = [&] { rd(a); c.i32_const(simm); c.op(OP_I32_ADD); };
+      uint32_t h = (op == 39) ? r.write8 : r.write16; if (op == 37) h = r.write32;
+      ea(); rd(d); c.i32_const((int32_t)h); c.call_indirect(TYPE_WRITE);
+      ea(); wr(a); return true;
+    }
+
     case 31: {
       const uint32_t xo = (instr >> 1) & 0x3FF;
       uint32_t dest;
       switch (xo) {
         case 0:   emit_cmp(c, r, rm, ((instr >> 23) & 7), true,  a, false, (int32_t)b); return true; // cmp
         case 32:  emit_cmp(c, r, rm, ((instr >> 23) & 7), false, a, false, (int32_t)b); return true; // cmpl
+
+        // mfspr / mtspr for the plain registers only (LR=8, CTR=9, XER=1); SPRs with side effects
+        // (timebase, decrementer, ...) are left to the interpreter. These bracket every call.
+        case 339: { uint32_t spr = ((instr >> 16) & 0x1f) | ((instr >> 6) & 0x3e0); // mfspr
+          uint32_t addr = spr == 8 ? r.lr : spr == 9 ? r.ctr : spr == 1 ? r.xer : 0; if (!addr) return false;
+          c.i32_const((int32_t)addr); c.i32_load(0); wr(d); return true; }
+        case 467: { uint32_t spr = ((instr >> 16) & 0x1f) | ((instr >> 6) & 0x3e0); // mtspr
+          uint32_t addr = spr == 8 ? r.lr : spr == 9 ? r.ctr : spr == 1 ? r.xer : 0; if (!addr) return false;
+          c.i32_const((int32_t)addr); rd(d); c.i32_store(0); return true; }
         case 266: dest = d; rd(a); rd(b); c.op(OP_I32_ADD); wr(d); break; // add
         case 40:  dest = d; rd(b); rd(a); c.op(OP_I32_SUB); wr(d); break; // subf = rB-rA
         case 235: dest = d; rd(a); rd(b); c.op(OP_I32_MUL); wr(d); break; // mullw
