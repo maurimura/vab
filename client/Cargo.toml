@@ -24,6 +24,8 @@ tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_w
 billiards = { path = "../billiards", features = ["serde"] }
 # Air hockey physics for the air hockey table's game (src/hockey).
 hockey = { path = "../hockey", features = ["serde"] }
+# Darts scoring and the hand's sway for the dartboard (src/darts).
+darts = { path = "../darts", features = ["serde"] }
 # Table shuffleboard physics and scoring for the shuffleboard table (src/shuffleboard).
 shuffleboard = { path = "../shuffleboard", features = ["serde"] }
 # Rollback for two players at the air hockey table (src/hockey/online.rs), as the cabinets'

@@ -707,8 +707,8 @@
       };
       window.emulatorInput = (mask) => play?.input(mask);
 
-      // Pointer lock, for the air hockey table (client/src/hockey/game.rs): the paddle moves with
-      // the mouse, and the pointer stays put. Browsers only lock it from a click, so a click on
+      // Pointer lock, for the air hockey table and the dartboard (client/src/pointer_lock.rs): the
+      // paddle or the dart moves with the mouse, and the pointer stays put. Browsers only lock it from a click, so a click on
       // the canvas does, while Bevy wants it; Esc unlocks it (the browser's doing).
       const bevyCanvas = document.getElementById("bevy");
       let lockWanted = false;
@@ -800,6 +800,7 @@
           goTo: (name) => client.vab_go_to(name),
           standAt: (x, y, towardX, towardY) => client.vab_stand_at(x, y, towardX, towardY),
           throw: (vx, vy) => client.vab_throw(vx, vy),
+          throwDart: (x, y) => client.vab_throw_dart(x, y),
           id: () => room?.id,
         };
       }

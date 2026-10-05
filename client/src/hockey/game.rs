@@ -18,13 +18,12 @@ use hockey::{
     Bot, Event, FRAME, GOAL_WIDTH, HEIGHT, PADDLE_RADIUS, PUCK_RADIUS, Rink, WIDTH, WINNING_SCORE,
 };
 
-use wasm_bindgen::prelude::*;
-
 use super::online::{self, Message};
 use crate::Mode;
 use crate::chat::{Chat, ShowNetStats, chat_closed};
 use crate::help::Help;
 use crate::pixels::Pixels;
+use crate::pointer_lock;
 use crate::seats;
 use crate::settings::Settings;
 use crate::touch::{self, Touch, TouchButton};
@@ -68,22 +67,6 @@ const SMOOTH_UP_TO: f32 = 40.0;
 #[derive(Resource)]
 pub struct AtTable(pub String);
 
-// Defined in index.html.
-#[wasm_bindgen]
-extern "C" {
-    /// Whether a click on the canvas should lock the pointer (and, turned off, lets it go).
-    #[wasm_bindgen(js_name = pointerLockWanted)]
-    fn pointer_lock_wanted(on: bool);
-    #[wasm_bindgen(js_name = pointerLocked)]
-    fn pointer_locked() -> bool;
-    /// This browser won't lock the pointer.
-    #[wasm_bindgen(js_name = pointerLockFailed)]
-    fn pointer_lock_failed() -> bool;
-    /// Lets the locked pointer go.
-    #[wasm_bindgen(js_name = releasePointer)]
-    fn release_pointer();
-}
-
 /// How the player moves their paddle.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Control {
@@ -101,9 +84,9 @@ impl Control {
     fn now(touch: &Touch) -> Self {
         if touch.is_on() {
             Control::Finger
-        } else if pointer_locked() {
+        } else if pointer_lock::locked() {
             Control::Locked
-        } else if pointer_lock_failed() {
+        } else if pointer_lock::failed() {
             Control::Unlocked
         } else {
             Control::Paused
@@ -319,7 +302,7 @@ fn show_rink(
         None => commands.init_resource::<Game>(),
     }
     if !touch.is_on() {
-        pointer_lock_wanted(true);
+        pointer_lock::wanted(true);
     }
     let image = Image::new_fill(
         Extent3d {
@@ -954,9 +937,9 @@ fn leave(
     mut mode: ResMut<NextState<Mode>>,
 ) {
     let esc = keys.just_pressed(KeyCode::Escape);
-    let locked = pointer_locked();
+    let locked = pointer_lock::locked();
     if esc && locked {
-        release_pointer();
+        pointer_lock::release();
         return;
     }
     let just_let_go = game
@@ -973,7 +956,7 @@ fn hide_rink(
     overlays: Query<Entity, With<Overlay>>,
     mut cursor: Query<&mut CursorOptions>,
 ) {
-    pointer_lock_wanted(false);
+    pointer_lock::wanted(false);
     for mut options in &mut cursor {
         options.visible = true;
     }

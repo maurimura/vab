@@ -10,6 +10,7 @@ node tools/e2e/shuffleboard.mjs   # or just one
 ```
 
 - `tables.mjs`: one player visits the pool, air hockey and shuffleboard tables.
+- `darts.mjs`: one player at the dartboard: scoring, turns, a bust and a win.
 - `nearest.mjs`: next to both a cabinet and a table, E uses the one the player stands nearer.
 - `shuffleboard.mjs`: two players at the shuffleboard table: seats, throws alike on both
   tables, the held puck, a reload mid-game, a whole round, someone leaving.
@@ -28,6 +29,8 @@ which the site never has:
 - `vab.standAt(x, y, towardX, towardY)`: puts the player in a cell, leaning toward another;
   `vab.state().nearby` says which thing E would use.
 - `vab.throw(vx, vy)`: throws the waiting shuffleboard puck at exactly that speed.
+- `vab.throwDart(x, y)`: throws a dart that lands exactly there (millimetres from the board's
+  middle, y up).
 
 `lib.mjs` has the helpers: `player(name, room)`, `use(player, object, mode)`,
 `waitFor(player, test)`, `check(ok, message)`.

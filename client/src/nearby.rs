@@ -1,7 +1,7 @@
-//! Which thing in the bar the player can use: of the cabinets and tables in the 8 cells around
-//! their feet, the nearest. Each kind has its own hint and E (cabinets.rs, pool, hockey,
-//! shuffleboard), but only the nearest thing offers itself, so where a cabinet and a table are
-//! both next to the player, E uses the one they stand closest to.
+//! Which thing in the bar the player can use: of the cabinets, tables and dartboards in the 8
+//! cells around their feet, the nearest. Each kind has its own hint and E (cabinets.rs, pool,
+//! hockey, shuffleboard, darts), but only the nearest thing offers itself, so where a cabinet
+//! and a table are both next to the player, E uses the one they stand closest to.
 
 use bevy::prelude::*;
 use world::{Placed, cell_to_world, world_to_cell};
@@ -16,6 +16,7 @@ pub enum Kind {
     Pool,
     Hockey,
     Shuffleboard,
+    Darts,
 }
 
 /// Everything in the bar the player can use: what it is, the cell it's placed on, and every

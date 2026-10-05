@@ -1,11 +1,13 @@
 mod cabinets;
 mod chat;
+mod darts;
 mod emulator;
 mod help;
 mod hockey;
 mod nearby;
 mod pixels;
 mod player;
+mod pointer_lock;
 mod pool;
 mod room;
 mod seats;
@@ -21,6 +23,7 @@ use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
 use cabinets::{Cabinets, CabinetsPlugin};
 use chat::ChatPlugin;
+use darts::{Dartboards, DartsPlugin};
 use emulator::EmulatorPlugin;
 use help::HelpPlugin;
 use hockey::{HockeyPlugin, HockeyTables};
@@ -67,10 +70,14 @@ fn main() {
         ChatPlugin,
         EmulatorPlugin,
         HelpPlugin,
-        PoolPlugin,
-        HockeyPlugin,
-        NearbyPlugin,
-        ShuffleboardPlugin,
+        // The games played in the bar, besides the cabinets' (a tuple takes 15 at most).
+        (
+            PoolPlugin,
+            HockeyPlugin,
+            NearbyPlugin,
+            ShuffleboardPlugin,
+            DartsPlugin,
+        ),
         RoomPlugin,
         SettingsPlugin,
         TouchPlugin,
@@ -91,7 +98,7 @@ fn main() {
 }
 
 /// Waiting for the bar's map, walking around the bar, playing a cabinet's game, or at one of
-/// the tables: pool, air hockey or shuffleboard.
+/// the tables: pool, air hockey or shuffleboard, or at the dartboard.
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Mode {
     #[default]
@@ -101,6 +108,7 @@ enum Mode {
     Pool,
     Hockey,
     Shuffleboard,
+    Darts,
 }
 
 /// The bar's map, made with the editor, while it loads.
@@ -138,6 +146,7 @@ fn build_bar(
     let pool_tables = PoolTables::from_map(map);
     let hockey_tables = HockeyTables::from_map(map);
     let shuffleboard_tables = ShuffleboardTables::from_map(map);
+    let dartboards = Dartboards::from_map(map);
     // Everything that can be used, for which is nearest the player (nearby.rs).
     let mut usables = Usables::default();
     for cell in cabinets.cells() {
@@ -147,6 +156,7 @@ fn build_bar(
         (Kind::Pool, pool_tables.placed()),
         (Kind::Hockey, hockey_tables.placed()),
         (Kind::Shuffleboard, shuffleboard_tables.placed()),
+        (Kind::Darts, dartboards.placed()),
     ] {
         for table in tables {
             usables.add(kind, table);
@@ -157,6 +167,7 @@ fn build_bar(
     commands.insert_resource(pool_tables);
     commands.insert_resource(hockey_tables);
     commands.insert_resource(shuffleboard_tables);
+    commands.insert_resource(dartboards);
     #[cfg(feature = "test-hooks")]
     commands.insert_resource(testing::Objects(map.objects.clone()));
     commands.remove_resource::<LoadingMap>();
