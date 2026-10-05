@@ -289,14 +289,45 @@ extern "C" int supermodel_jit_test_memory(int seed, int blocks, int blockLen)
 // current fetch pointer, pre-byteswapped opcodes), compiles them into one block, installs it in
 // the shared table, and caches the table index + instruction count. Returns 0 when the first
 // instruction isn't covered (the interpreter handles it).
-struct CachedBlock { uint32_t fn; int count; };
+// hits < 0  -> decided to interpret forever (uncoverable, install failed, or over the cap)
+// hits >= 0, fn == 0 -> coverable candidate still warming up (count is the provisional length)
+// fn != 0 -> compiled (count is the block length)
+struct CachedBlock { uint32_t fn; int count; int hits; };
 static std::unordered_map<uint32_t, CachedBlock> *g_blocks;
 
-// A direct-mapped cache in front of the map, so the common case (a hot PC) is one array access
-// instead of a hash lookup -- this is on the path of every instruction, JIT or interpreted.
+// Installing a block means `new WebAssembly.Module` + growing the shared table -- cheap in Node
+// but seconds of synchronous work in a browser worker if thousands of blocks do it at once (the
+// game has tens of thousands of distinct basic blocks, most run only during boot). So we compile
+// a block only once it has executed HOT_THRESHOLD times: boot/one-shot code stays on the
+// interpreter, and the hot inner loops that dominate cross the threshold within a frame or two,
+// spreading their compiles out instead of storming the worker. A global cap is a last-resort
+// guardrail. This changes only *when* a block compiles, never its result (the recompiler is
+// byte-identical to the interpreter), so game state is unaffected.
+static const int HOT_THRESHOLD = 128;
+static const int INSTALL_CAP = 50000;
+static int g_jit_installs = 0;
+extern "C" int supermodel_jit_installs(void) { return g_jit_installs; }
+
+// A direct-mapped cache in front of the map, so the common case (a decided PC) is one array
+// access instead of a hash lookup -- this is on the path of every instruction, JIT or
+// interpreted. Only decided blocks (compiled, or interpret-forever) live here; a block still
+// warming up stays on the map path so each visit increments its counter.
 struct FastEntry { uint32_t pc; uint32_t fn; int count; };
 static const uint32_t FAST_BITS = 17, FAST_SIZE = 1u << FAST_BITS, FAST_MASK = FAST_SIZE - 1;
 static FastEntry *g_fast;
+
+// Compiles `code` and installs it in the shared table, returning the table index (0 on failure).
+static uint32_t jit_install_block(const uint32_t *code, int maxLen, int *countOut)
+{
+  jit::Regs regs = make_regs();
+  int count = 0;
+  jit::Code c = jit::compile_block(code, maxLen, regs, count);
+  *countOut = count;
+  if (count <= 0) return 0;
+  std::vector<uint8_t> mod = jit::module_block(c);
+  int idx = sm_jit_install(mod.data(), (int)mod.size());
+  return idx > 0 ? (uint32_t)idx : 0;
+}
 
 extern "C" uint32_t jit_block_for(uint32_t pc, const uint32_t *code, int maxLen, int *outCount)
 {
@@ -306,22 +337,27 @@ extern "C" uint32_t jit_block_for(uint32_t pc, const uint32_t *code, int maxLen,
 
   if (!g_blocks) g_blocks = new std::unordered_map<uint32_t, CachedBlock>();
   auto it = g_blocks->find(pc);
-  if (it != g_blocks->end()) { fe = { pc, it->second.fn, it->second.count }; *outCount = it->second.count; return it->second.fn; }
-
-  jit::Regs regs = make_regs();
-  int count = 0;
-  jit::Code c = jit::compile_block(code, maxLen, regs, count);
-  CachedBlock blk = { 0, count };
-  if (count > 0) {
-    std::vector<uint8_t> mod = jit::module_block(c);
-    int idx = sm_jit_install(mod.data(), (int)mod.size());
-    if (idx > 0) blk.fn = (uint32_t)idx; else blk.count = 0; // install failed -> fall back to interp
+  if (it != g_blocks->end()) {
+    CachedBlock &b = it->second;
+    if (b.fn != 0)   { fe = { pc, b.fn, b.count }; *outCount = b.count; return b.fn; } // compiled, re-promote to fast
+    if (b.hits < 0)  { fe = { pc, 0, 0 };          *outCount = 0;       return 0; }    // interpret forever, re-promote
+    if (++b.hits >= HOT_THRESHOLD) {                                                   // warmed up: compile now
+      int count = 0;
+      uint32_t fn = g_jit_installs < INSTALL_CAP ? jit_install_block(code, maxLen, &count) : 0;
+      if (fn) { g_jit_installs++; b.fn = fn; b.count = count; fe = { pc, fn, count }; *outCount = count; return fn; }
+      b.hits = -1; b.count = 0; fe = { pc, 0, 0 };                                     // couldn't install: interpret forever
+    }
+    *outCount = 0; return 0;                                                           // still warming up, interpret this time
   }
-  (*g_blocks)[pc] = blk;
-  g_fast[(pc >> 2) & FAST_MASK] = { pc, blk.fn, blk.count };
-  *outCount = blk.count;
-  return blk.fn;
+
+  // First sight: find out whether this block is coverable at all (and its length) without
+  // installing yet. Uncoverable blocks are decided immediately; coverable ones start counting.
+  int count = 0;
+  { jit::Regs regs = make_regs(); jit::compile_block(code, maxLen, regs, count); }
+  if (count <= 0) { (*g_blocks)[pc] = { 0, 0, -1 }; fe = { pc, 0, 0 }; *outCount = 0; return 0; }
+  (*g_blocks)[pc] = { 0, count, 1 }; // coverable candidate, not in fast yet so it keeps counting
+  *outCount = 0; return 0;
 }
 
 // Drop all cached blocks (e.g. when a new game loads and the code changes).
-extern "C" void supermodel_jit_flush(void) { if (g_blocks) g_blocks->clear(); if (g_fast) for (uint32_t i = 0; i < FAST_SIZE; i++) g_fast[i].pc = 0xFFFFFFFFu; }
+extern "C" void supermodel_jit_flush(void) { g_jit_installs = 0; if (g_blocks) g_blocks->clear(); if (g_fast) for (uint32_t i = 0; i < FAST_SIZE; i++) g_fast[i].pc = 0xFFFFFFFFu; }

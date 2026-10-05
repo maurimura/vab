@@ -69,6 +69,18 @@ loop and runs the real game BYTE-IDENTICAL to the interpreter over 600 frames (n
 Coverage now includes integer, flags, load/store, compares, rlwinm, shifts and the logical ops;
 registers are kept in WASM locals per block. Measured on the real game: the JIT runs 55% of all
 instructions and stays byte-identical to the interpreter, but it is still 0.79x (slightly slower).
+Byte-identical has since been confirmed from boot as well (not just a mid-game state): RAM matches
+the interpreter at every checkpoint through 2000 frames.
+
+**Hot-block threshold.** Installing a block means `new WebAssembly.Module` + growing the shared
+table. That is cheap in Node but the game has tens of thousands of distinct basic blocks (most run
+only during boot), and compiling them all up front froze the browser worker -- the page rendered a
+near-black screen because the worker never caught up. So a block is compiled only after it has
+executed HOT_THRESHOLD (128) times: boot/one-shot code stays on the interpreter, hot inner loops
+cross the threshold within a frame or two, and their compiles spread out instead of storming. On
+vs298 this is ~1,460 installs over the first ~500 frames (peak ~7/frame) instead of tens of
+thousands at once, and the browser renders normally with the recompiler on. A global INSTALL_CAP is
+a last-resort guardrail. This changes only *when* a block compiles, never its result.
 
 Why: blocks average only 2.2 instructions, because a branch (or any still-uncovered op: FP,
 mfspr/mtspr, update-form loads) ends the block, and each block returns to the dispatch loop. The
