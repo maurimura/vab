@@ -79,6 +79,11 @@ extern "C" {
     /// frames re-run after a rollback, which aren't shown or heard.
     #[wasm_bindgen(method)]
     fn run(this: &Machine, inputs: Vec<u16>, present: bool);
+
+    /// Sends packets to the other players, as `outgoing` returns them. Called from `advance`
+    /// just before a frame runs, so the input GGRS registered for it doesn't wait out the frame.
+    #[wasm_bindgen(method)]
+    fn send(this: &Machine, packets: Array);
 }
 
 #[wasm_bindgen]
@@ -149,6 +154,21 @@ impl Session {
         })
     }
 
+    /// Changes this machine's input delay, in frames, while playing: the frames in between get
+    /// the last input (raising it) or the next few inputs are skipped (lowering it). The others
+    /// need no notice. A lockstep game picks its delay from how late their inputs arrive.
+    #[wasm_bindgen(js_name = setDelay)]
+    pub fn set_delay(&mut self, delay: usize) -> Result<(), JsError> {
+        self.ggrs.set_frame_delay(self.local, delay)?;
+        Ok(())
+    }
+
+    /// The others' input in hand beyond the frame about to run, in frames: 0 when that frame
+    /// can run but the next can't yet, less while waiting for it. Lockstep pacing watches it.
+    pub fn lookahead(&self) -> i32 {
+        self.ggrs.confirmed_frame() - self.ggrs.current_frame()
+    }
+
     /// The frame this machine runs next; frames count from 0 at the start of the session.
     #[wasm_bindgen(js_name = currentFrame)]
     pub fn current_frame(&self) -> i32 {
@@ -193,7 +213,11 @@ impl Session {
 
     /// Packets for the other players since the last call, as `[player, bytes]` pairs.
     pub fn outgoing(&self) -> Array {
-        std::mem::take(&mut self.wire.borrow_mut().outgoing)
+        Self::drain(&self.wire)
+    }
+
+    fn drain(wire: &RefCell<Wire>) -> Array {
+        std::mem::take(&mut wire.borrow_mut().outgoing)
             .into_iter()
             .map(|(to, bytes)| Array::of2(&(to as u32).into(), &Uint8Array::from(bytes.as_slice())))
             .map(JsValue::from)
@@ -261,6 +285,12 @@ impl Session {
                     kept[..inputs.len()].copy_from_slice(&inputs);
                     self.ran[at as usize % KEPT_FRAMES] = (at, kept);
                     at += 1;
+                    // Our input for a frame ahead is already queued: out with it before the
+                    // frame takes its time, so the others don't wait out this frame for it.
+                    let packets = Self::drain(&self.wire);
+                    if packets.length() > 0 {
+                        machine.send(packets);
+                    }
                     machine.run(inputs, Some(i) == shown);
                 }
             }
