@@ -26,8 +26,10 @@ enum : uint8_t {
   OP_I32_LT_S = 0x48,
   OP_I32_LT_U = 0x49,
   OP_I32_GT_S = 0x4A,
+  OP_I32_GT_U = 0x4B,
   OP_I32_ADD = 0x6A,
   OP_I32_SUB = 0x6B,
+  OP_I32_MUL_ = 0x6C,
   OP_I32_MUL = 0x6C,
   OP_I32_AND = 0x71,
   OP_I32_OR = 0x72,
@@ -35,6 +37,7 @@ enum : uint8_t {
   OP_I32_SHL = 0x74,
   OP_I32_SHR_S = 0x75,
   OP_I32_SHR_U = 0x76,
+  OP_I32_ROTL = 0x77,
   OP_CALL = 0x10,
   OP_CALL_INDIRECT = 0x11,
 };
