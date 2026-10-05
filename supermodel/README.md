@@ -13,7 +13,9 @@ draws and plays, but a frame costs more than the 16.7 ms a 60 Hz game allows (nu
   `RetroInputSystem.cpp` (RetroPad buttons as Supermodel inputs), `osd/` (audio, single-threaded
   threads, file paths) and `Network/` (socket stubs).
 - `bench.mjs` times frames in Node; `harness/` runs the WebGL2 build in a headless Chrome of our
-  own (`node harness/serve.mjs`, then `node harness/run.mjs "?rom=vs298&warmup=1800&frames=300"`).
+  own (`node harness/serve.mjs`, then `node harness/run.mjs "?rom=vs298&warmup=1800&frames=300"`),
+  and `harness/online-lab.mjs` plays the cabinet online in two headless Chromes through the site
+  (`make dev`) and measures the netcode second by second, at a ping of your choice.
 - To play: `node supermodel/harness/serve.mjs` and open
   http://localhost:8790/supermodel/harness/play.html?rom=vs298 in Chrome (keyboard and sound;
   `&ppc=0` for the real clock, 50 MHz otherwise).
@@ -47,10 +49,13 @@ no exceptions) made no measurable difference.
 In the bar: a game with `core: "supermodel"` in assets/games.ron runs on this module (the page
 gives the worker's core an OffscreenCanvas), served from R2 at /supermodel/ (`make supermodel`,
 `make supermodel-remote`). Online such games are `lockstep: true`: GGRS runs frames only once
-everyone's input is in, with 4 frames of input delay and no per-frame saves, since a save state
-is 32 MB and 20 ms. patches/0002 pins the Model 3's clock chip so the players' machines stay
-identical. Joining a game in progress and spectating still hand over a whole 32 MB state.
+everyone's input is in and never saves per frame, since a save state is 32 MB. The worker
+(web/emulator/worker.js) runs one frame per 60 Hz slot on a precise clock, sends each input the
+moment GGRS makes it, and picks the input delay from the measured round trip, then follows the
+other machines' lateness: a frame more when their input keeps arriving late, a frame less after a
+quiet stretch (the status line shows the delay and any waits). patches/0002 pins the Model 3's
+clock chip so the players' machines stay identical. Joining a game in progress and spectating
+hand over a 32 MB state, deflated to about 5 MB.
 
-Not done yet: `retro_get_memory_data` for desync checks, a memory-based save state, an input
-delay that follows the measured ping, and the Model 3's 57.5 Hz (the core reports 60 Hz so its
-735 samples a frame stay in step).
+Not done yet: the Model 3's 57.5 Hz (the core reports 60 Hz so its 735 samples a frame stay in
+step), and presenting frames from the worker itself instead of the one-frame-late read-back.

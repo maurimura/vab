@@ -87,16 +87,26 @@ if (!isMainThread) {
   };
   const check = { core: await boot(), scratch: await boot(), stream: -1, frame: 0, matched: 0, mismatched: 0, states: 0 };
   const sameRam = (a, b) => Buffer.from(a.systemRam()).equals(Buffer.from(b.systemRam()));
-  function streamed(message) {
+  // States leave the worker deflated ("vabz", worker.js pack); the watcher's worker inflates
+  // its own copy, this check inflates the one it loads.
+  const PACKED = Uint8Array.of(0x76, 0x61, 0x62, 0x7a);
+  async function unpack(bytes) {
+    if (bytes.length < PACKED.length || PACKED.some((b, i) => bytes[i] !== b)) return bytes;
+    const stream = new Blob([bytes.subarray(PACKED.length)]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  // Messages are handled one after another (a state inflates asynchronously).
+  let streaming = Promise.resolve();
+  async function streamed(message) {
     if (message.type === "watch-state") {
-      const frame = new DataView(message.bytes.buffer).getUint32(0, true);
+      const frame = new DataView(message.bytes.buffer, message.bytes.byteOffset).getUint32(0, true);
       check.states++;
       if (message.stream !== check.stream) {
         // A new stream (a new session): start over from it.
-        check.core.unserialize(message.bytes.subarray(4));
+        check.core.unserialize(await unpack(message.bytes.subarray(4)));
         Object.assign(check, { stream: message.stream, frame });
       } else if (frame === check.frame) {
-        check.scratch.unserialize(message.bytes.subarray(4));
+        check.scratch.unserialize(await unpack(message.bytes.subarray(4)));
         if (sameRam(check.core, check.scratch)) check.matched++;
         else check.mismatched++;
       } else {
@@ -131,7 +141,7 @@ if (!isMainThread) {
       if (message.type === "captured") player.captures.set(message.epoch, message.state);
       if (message.type === "netplay" && message.event === "stats") player.stats = message;
       else if (message.type === "netplay") player.events[message.event] = (player.events[message.event] ?? 0) + 1;
-      if (message.type === "watch-state" || message.type === "watch-inputs") streamed(message);
+      if (message.type === "watch-state" || message.type === "watch-inputs") streaming = streaming.then(() => streamed(message));
     });
     worker.on("error", (error) => player.errors.push(error.message));
     // The network: each packet arrives LATENCY ± JITTER ms later, or not at all.

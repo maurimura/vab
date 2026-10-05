@@ -6,8 +6,16 @@
 // the others' input and re-runs frames once the real input arrives. Its packets go out and come
 // in on `port` as [seat, bytes], and the page carries them between the players. A `lockstep`
 // game (Supermodel: a 32 MB state, too slow to save every frame) runs in step without guessing:
-// a few frames of input delay, and a wait whenever the others' input is late. Each starts
+// some frames of input delay, and a wait whenever the others' input is late. Each starts
 // with its session's epoch, so packets still in flight from an earlier session are dropped.
+//
+// Frames run on a precise clock (Alarm): one frame at its slot, the picture posted, then the
+// next. A heavy core (a Model 3 frame is ~12 ms) never runs two frames back to back to catch
+// up, since that holds its inputs and its picture for the whole burst; it catches up one frame
+// per wake-up. GGRS's packets leave the moment it makes them, so online the two machines each
+// run their frame in the same slot and swap one input per frame. A lockstep game's input delay
+// follows the other machines' lateness: a frame more when their input keeps arriving late, a
+// frame less after a quiet stretch.
 //
 // When players join or leave, one machine (the page picks it) captures the game as it is and
 // every player starts a new session from that capture.
@@ -26,7 +34,8 @@
 //        is two thirds zeros and packs to 5 MB; they come back the same way (online, watch-state).
 //      { type: "online", epoch, seats, state, roundTrip } Plays in step with the players in
 //        `seats` (their seat numbers, ascending) from `state`, or from this machine's capture
-//        for `epoch`; `roundTrip` (ms, to the farthest of them) sets a lockstep game's delay.
+//        for `epoch`; `roundTrip` (ms, to the farthest of them) sets a lockstep game's first
+//        input delay.
 //      { type: "solo" } Everyone else left: play on alone.
 //      { type: "stream", on } Streams this machine's game to the watchers, or stops.
 //      { type: "snapshot", to } A state for a new watcher, to go on from with the stream.
@@ -41,6 +50,10 @@
 //      { type: "watch-inputs", stream, frame, inputs } a Uint16Array with a mask per controller
 //      port (4) for each frame from `frame` on, a few times a second. `stream` counts up each
 //      time the stream starts over (a new session); inputs go on from that stream's states.
+//      The "stats" netplay event, once a second: ping (ms), delay (frames of input delay),
+//      rollback (frames; 0 in lockstep), fps (frames shown), stalls (waits for the others'
+//      input in that second), stallMs (the longest), look (the others' input in hand at a frame:
+//      [least, median, most] frames), prefills (looks that waited for more) and framesAhead.
 import { Core } from "./libretro.js";
 import { Resampler } from "./resample.js";
 
@@ -72,15 +85,55 @@ async function unpack(bytes) {
 
 /** Input delay when the round trip is unknown, in frames. */
 const DEFAULT_DELAY = 5;
-/** Added to half the round trip when picking the input delay: jitter and the worker's polling. */
-const DELAY_SLACK_MS = 30;
-/** A re-simulated frame costing more than this (ms) makes rollbacks too expensive to let happen
- *  often, so such a core covers the ping with input delay instead (Supermodel). */
+/** The most input delay a lockstep game takes, in frames; past that it would stall anyway. */
+const MAX_DELAY = 12;
+/** Jitter allowance when picking a lockstep game's input delay from the round trip, in ms. */
+const DELAY_SLACK_MS = 10;
+/**
+ * A frame costing more than this (ms) to run makes the core heavy: it runs one frame per
+ * wake-up (a burst would hold its picture and its inputs for 25 ms or more) and online it
+ * covers the ping with input delay rather than roll back often (Supermodel).
+ */
 const HEAVY_RERUN_MS = 6;
+/**
+ * While waiting for the others' input, GGRS still gets a look this often (ms), for its
+ * keep-alives and resends; a packet arriving wakes the game at once.
+ */
+const WAIT_POLL_MS = 16;
+/** The least input delay a lockstep game takes, in frames. */
+const MIN_DELAY = 2;
+/** A frame is late when it was waiting for input longer than this (ms): it shows. */
+const LATE_MS = 2;
+/**
+ * Lockstep pacing. After a wait for the others' input, the game goes on once it has their
+ * input for this many frames in hand (within PREFILL_MAX_MS of the wait's start), not the
+ * moment the first arrives: on that edge, the slightest delay in their input would be another
+ * wait. And a frame runs EDGE_PACE_MS later than its slot while their input for the next
+ * frame isn't in hand: only the machine ahead is ever on the edge, so slowing it brings the
+ * two together with input to spare on both sides.
+ */
+const PREFILL = 2;
+const PREFILL_MAX_MS = 150;
+const EDGE_PACE_MS = 1;
+/** A wait longer than this many frames is a hiccup (a lost connection, a hidden tab), not
+ *  lateness a frame more of delay would cover. */
+const HICCUP_FRAMES = 10;
+/** Frames a session has run before its input delay is tuned: the start is never representative. */
+const WARMUP_FRAMES = 120;
+/** A lockstep game doesn't change its input delay more often than this (ms). */
+const RAISE_COOLDOWN_MS = 3000;
+const LOWER_COOLDOWN_MS = 2000;
+/** A lockstep game lowers its input delay after this long without a late frame (ms)... */
+const QUIET_MS = 5000;
+/** ...but not back to a delay that saw late frames this recently (ms). */
+const REMEMBER_LATE_MS = 60000;
 
 let audioPort;
 let speakerRate = 48000;
 let localMask = 0;
+/** Buttons that went down since the game last read the controls: a tap between two frames
+ *  still counts for the next one. */
+let pressed = 0;
 let cabinet;
 const waiting = [];
 
@@ -92,13 +145,22 @@ const netplay = import("../netplay/netplay.js").then(async (module) => {
 });
 
 onmessage = ({ data: msg }) => {
-  if (msg.type === "input") localMask = msg.mask;
-  else if (msg.type === "audio") ({ port: audioPort, sampleRate: speakerRate = speakerRate } = msg);
+  if (msg.type === "input") {
+    pressed |= msg.mask & ~localMask;
+    localMask = msg.mask;
+  } else if (msg.type === "audio") ({ port: audioPort, sampleRate: speakerRate = speakerRate } = msg);
   else if (msg.type === "start") start(msg);
   // Anything else is for the loaded game; it can arrive while the game still downloads.
   else if (cabinet) cabinet.handle(msg);
   else waiting.push(msg);
 };
+
+/** The local controls for the frame about to run. */
+function sampleInput() {
+  const mask = localMask | pressed;
+  pressed = 0;
+  return mask;
+}
 
 // "no-cache" checks with the server every time (a 304 when unchanged), so newly uploaded or
 // replaced ROMs, BIOS sets and states are picked up.
@@ -116,7 +178,9 @@ async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, 
     downloadIfPresent(stateUrl),
     ...files.map(downloadIfPresent),
   ]);
-  // The canvas is for a core that draws with WebGL (Supermodel), which sizes it; FBNeo ignores it.
+  // The canvas is for a core that draws with WebGL (Supermodel), which sizes it; FBNeo ignores
+  // it. Node (emulator/netplay-check.mjs) has none.
+  const canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(1, 1) : undefined;
   const cab = new Cabinet(await Core.create(createCore, {
     onFrame: (rgba, width, height) => cab.muted || (cab.frame = { type: "frame", rgba, width, height }),
     onAudio: (samples) => {
@@ -125,7 +189,7 @@ async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, 
       audioPort?.postMessage(samples, [samples.buffer]);
     },
     onLog: (level, text) => level >= 2 && console.warn(text),
-  }, { canvas: new OffscreenCanvas(1, 1) }), { seat, turns, lockstep, port });
+  }, { canvas }), { seat, turns, lockstep, port });
   const core = cab.core;
   core.netplay = true;
   files.forEach((url, i) => extras[i] && core.addFile(url.split("/").pop(), extras[i]));
@@ -155,6 +219,70 @@ function byPort(inputs, seats) {
   return ports;
 }
 
+/**
+ * Calls back at a chosen moment, precisely. A timer alone can't: a nested setTimeout waits at
+ * least 4 ms and fires a few ms late, which next to a 12 ms frame pushes every frame past its
+ * slot. So a timer covers all but the last few ms, and messages to ourselves (MessageChannel,
+ * not clamped) the rest.
+ */
+class Alarm {
+  #fn;
+  #at = Infinity;
+  #timer;
+  #port;
+  #yielding = false;
+
+  constructor(fn) {
+    this.#fn = fn;
+    const channel = new MessageChannel();
+    this.#port = channel.port2;
+    channel.port1.onmessage = () => {
+      this.#yielding = false;
+      this.#check();
+    };
+  }
+
+  /** Calls back at `at` (performance.now() ms), or earlier if already due to. */
+  at(at) {
+    if (at >= this.#at) return;
+    this.#at = at;
+    this.#arm();
+  }
+
+  /** Calls back as soon as possible. */
+  now() {
+    this.at(0);
+  }
+
+  #arm() {
+    clearTimeout(this.#timer);
+    this.#timer = undefined;
+    const left = this.#at - performance.now();
+    if (left > 6) {
+      this.#timer = setTimeout(() => {
+        this.#timer = undefined;
+        this.#check();
+      }, left - 4);
+    } else this.#yield();
+  }
+
+  #yield() {
+    if (this.#yielding) return;
+    this.#yielding = true;
+    this.#port.postMessage(0);
+  }
+
+  #check() {
+    if (this.#at === Infinity) return;
+    const left = this.#at - performance.now();
+    if (left <= 0) {
+      this.#at = Infinity;
+      this.#fn();
+    } else if (left > 6 && !this.#timer) this.#arm();
+    else this.#yield();
+  }
+}
+
 class Cabinet {
   /** The newest frame to post. */
   frame;
@@ -173,7 +301,12 @@ class Cabinet {
   #session;
   #epoch;
   #seats;
+  /** How this core plays online: rollback limit, input delay, whether it's heavy. */
   #tuned;
+  /** The input delay in use, in frames, and the one the round trip called for at the start:
+   *  the delay goes above it when the others' input keeps arriving late, never below. */
+  #delay;
+  #delayFloor = MIN_DELAY;
   /** This machine at the last change of players, until the next session starts from it. */
   #captured;
   /**
@@ -187,7 +320,26 @@ class Cabinet {
    * waiting to have a few in hand.
    */
   #watch;
+  /** When the next frame is due. */
   #next = performance.now();
+  #alarm = new Alarm(() => this.tick());
+  /** How long a frame takes to run, on average (ms): heavy cores run one per wake-up. */
+  #runMs = 0;
+  /** Online: waiting for the others' input (or, rolling back, for them to catch up). */
+  #waiting = false;
+  /** When the current wait began, and how long each wait in the current second lasted. */
+  #stall;
+  #stalls = [];
+  /** Diagnostics for the stats: the others' input in hand at each frame, and prefill waits. */
+  #looks = [];
+  #prefills = 0;
+  /**
+   * Lockstep input delay tuning: the last late frame, when the delay may change next, and the
+   * last delay that saw late frames (and when), not to go back to for a while.
+   */
+  #quietSince = 0;
+  #retuneAt = 0;
+  #lateAt = { delay: 0, time: -Infinity };
   #nextStats = 0;
   #frames = 0;       // displayed frames since the last stats report, for fps
   #framesSince = performance.now();
@@ -204,7 +356,10 @@ class Cabinet {
       const handle = this.#seats?.indexOf(seat) ?? -1;
       const bytes = new Uint8Array(packet);
       const epoch = bytes[0] | (bytes[1] << 8);
-      if (handle >= 0 && epoch === this.#epoch) this.#session?.receive(handle, bytes.subarray(2));
+      if (handle < 0 || epoch !== this.#epoch || !this.#session) return;
+      this.#session.receive(handle, bytes.subarray(2));
+      // Waiting for exactly this, most likely: run the frame now rather than at the next look.
+      if (this.#waiting) this.#alarm.now();
     };
   }
 
@@ -224,80 +379,180 @@ class Cabinet {
     if (msg.type === "watch-inputs") this.#watchInputs(msg);
   }
 
+  /** Frames to run per wake-up at most: one for a heavy core, a few to catch up otherwise. */
+  #perWake() {
+    return this.#runMs > HEAVY_RERUN_MS ? 1 : 4;
+  }
+
   tick = () => {
     const session = this.#session;
     const frameMs = 1000 / this.fps;
-    let wait = 0;
+    // After a long pause (hidden tab), carry on from now instead of fast-forwarding.
+    if (performance.now() - this.#next > 250) this.#next = performance.now();
     if (session) {
       session.poll();
+      this.#send();
       for (const { type, player, ...fields } of session.events()) {
         postMessage({ type: "netplay", event: type, seat: this.#seats[player], ...fields });
       }
       if (session.running() && !this.paused) {
-        for (let i = 0; i < 4 && performance.now() >= this.#next; i++) {
-          // False: someone is too far behind to keep guessing. Try again shortly.
-          if (!session.advance(localMask, this.#machine)) {
-            wait = 2;
+        let ran = 0;
+        let stalled = false;
+        while (ran < this.#perWake() && performance.now() >= this.#next) {
+          const startedAt = performance.now();
+          const lookahead = session.lookahead();
+          if (this.#stall !== undefined && lookahead < PREFILL && startedAt - this.#stall < PREFILL_MAX_MS) {
+            stalled = true; // waiting on, for a little of the others' input in hand
+            this.#prefills++;
             break;
           }
-          // A little slower while ahead of the others, so all run in step.
-          this.#next += session.framesAhead() > 0 ? frameMs * 1.1 : frameMs;
+          this.#looks.push(lookahead);
+          // GGRS sends our input for a frame ahead before the frame runs (Machine.send).
+          const advanced = session.advance(sampleInput(), this.#machine);
+          this.#send(); // anything else it queued: acknowledgements, reports
+          // False: the others' input isn't here yet, or they're too far behind to keep
+          // guessing. A packet arriving wakes us; failing that, the next look.
+          if (!advanced) {
+            stalled = true;
+            break;
+          }
+          ran++;
+          this.#next += this.#pace(session, lookahead, frameMs);
+          if (this.#stall !== undefined) {
+            // The wait is over. Making up the time waited would only run through the inputs
+            // in hand and wait again a round trip later, the two machines taking turns: carry
+            // on from here instead.
+            this.#stalls.push(startedAt - this.#stall);
+            this.#stall = undefined;
+            this.#next = startedAt + frameMs;
+            break;
+          }
         }
-        if (performance.now() >= this.#nextStats) {
-          const { delay, rollback } = this.#tuned;
-          const fps = Math.round((this.#frames * 1000) / (performance.now() - this.#framesSince));
-          postMessage({ type: "netplay", event: "stats", ping: session.ping(), delay, rollback, fps });
-          this.#frames = 0;
-          this.#framesSince = performance.now();
-          this.#nextStats = performance.now() + 1000;
-        }
+        const now = performance.now();
+        this.#waiting = stalled;
+        if (stalled) this.#stall ??= now;
+        this.#stats(session, now);
+        this.#alarm.at(stalled ? now + WAIT_POLL_MS : this.#next);
       } else {
         this.#next = performance.now();
-        wait = 5;
-      }
-      for (const [handle, packet] of session.outgoing()) {
-        const framed = new Uint8Array(2 + packet.length);
-        framed.set([this.#epoch & 0xff, this.#epoch >> 8]);
-        framed.set(packet, 2);
-        this.#port.postMessage([this.#seats[handle], framed.buffer], [framed.buffer]);
+        this.#waiting = false;
+        this.#alarm.at(this.#next + 5);
       }
     } else if (this.paused) {
       this.#next = performance.now();
-      wait = 5;
+      this.#alarm.at(this.#next + 5);
     } else if (this.#watch) {
       const watch = this.#watch;
       if (watch.waiting && watch.frames.length >= WATCH_BUFFER) watch.waiting = false;
       if (watch.waiting) {
         this.#next = performance.now();
-        wait = 5;
-      }
-      for (let i = 0; i < 4 && !watch.waiting && performance.now() >= this.#next; i++) {
-        // Ran out: wait to have a few in hand again rather than stutter frame by frame.
-        if (!watch.frames.length) {
-          watch.waiting = true;
-          break;
+      } else {
+        for (let i = 0; i < this.#perWake() && performance.now() >= this.#next; i++) {
+          // Ran out: wait to have a few in hand again rather than stutter frame by frame.
+          if (!watch.frames.length) {
+            watch.waiting = true;
+            break;
+          }
+          this.#run(watch.frames.shift(), true);
+          // A little faster while far behind the stream (frames came in after a hiccup).
+          this.#next += watch.frames.length > WATCH_BUFFER * 2.5 ? frameMs * 0.9 : frameMs;
         }
-        this.#run(watch.frames.shift(), true);
-        // A little faster while far behind the stream (frames came in after a hiccup).
-        this.#next += watch.frames.length > WATCH_BUFFER * 2.5 ? frameMs * 0.9 : frameMs;
       }
+      this.#alarm.at(watch.waiting ? performance.now() + WAIT_POLL_MS : this.#next);
     } else {
-      for (let i = 0; i < 4 && performance.now() >= this.#next; i++) {
-        const ports = byPort([localMask], [this.#seat]);
+      for (let i = 0; i < this.#perWake() && performance.now() >= this.#next; i++) {
+        const ports = byPort([sampleInput()], [this.#seat]);
         this.#run(ports, true);
         this.#stream?.inputs.push(...ports);
         this.#next += frameMs;
       }
+      this.#alarm.at(this.#next);
     }
     if (this.#stream) this.#flush();
-    // After a long pause (hidden tab), carry on from now instead of fast-forwarding.
-    if (performance.now() - this.#next > 250) this.#next = performance.now();
     if (this.frame) {
       postMessage(this.frame, [this.frame.rgba.buffer]);
       this.frame = undefined;
     }
-    setTimeout(this.tick, wait || Math.max(0, this.#next - performance.now()));
   };
+
+  /**
+   * How long after this frame the next one is due (ms). Rolling back: a little slower while
+   * ahead of the others, so all run in step. Lockstep: a little slower while the others' input
+   * for the next frame isn't in hand yet (`lookahead`, as of before this frame).
+   */
+  #pace(session, lookahead, frameMs) {
+    if (this.#tuned.rollback > 0) return session.framesAhead() > 0 ? frameMs * 1.1 : frameMs;
+    return lookahead < 1 ? frameMs + EDGE_PACE_MS : frameMs;
+  }
+
+  /** Sends GGRS's packets to the other players, as soon as it has any. */
+  #send() {
+    if (this.#session) this.#post(this.#session.outgoing());
+  }
+
+  /** GGRS packets, `[handle, bytes]` pairs, to the other players, stamped with the epoch. */
+  #post(packets) {
+    for (const [handle, packet] of packets) {
+      const framed = new Uint8Array(2 + packet.length);
+      framed.set([this.#epoch & 0xff, this.#epoch >> 8]);
+      framed.set(packet, 2);
+      this.#port.postMessage([this.#seats[handle], framed.buffer], [framed.buffer]);
+    }
+  }
+
+  /** Once a second: how the session is doing, to the page, and the input delay tuned. */
+  #stats(session, now) {
+    if (now < this.#nextStats) return;
+    const fps = Math.round((this.#frames * 1000) / (now - this.#framesSince));
+    const stalls = this.#stalls;
+    const looks = this.#looks.sort((a, b) => a - b);
+    postMessage({
+      type: "netplay", event: "stats", ping: session.ping(), delay: this.#delay, rollback: this.#tuned.rollback, fps,
+      stalls: stalls.length, stallMs: Math.round(Math.max(0, ...stalls)),
+      look: looks.length ? [looks[0], looks[looks.length >> 1], looks[looks.length - 1]] : [], prefills: this.#prefills, framesAhead: session.framesAhead(),
+    });
+    this.#looks = [];
+    this.#prefills = 0;
+    this.#tune(session, stalls, now);
+    this.#stalls = [];
+    this.#frames = 0;
+    this.#framesSince = now;
+    this.#nextStats = now + 1000;
+  }
+
+  /**
+   * A heavy core covers the ping with input delay (it can't roll back cheaply), so the delay
+   * follows the others' lateness: a frame more when their input was late more than once this
+   * second, or by a whole frame; a frame less after a quiet while, down to what the round trip
+   * called for, but not back to a delay that was late recently. The delay is
+   * this machine's own: the others need no notice (netplay/src/lib.rs).
+   */
+  #tune(session, stalls, now) {
+    if (!this.#tuned.heavy || session.currentFrame() < WARMUP_FRAMES) return;
+    const frameMs = 1000 / this.fps;
+    const late = stalls.filter((ms) => ms > LATE_MS && ms < HICCUP_FRAMES * frameMs);
+    if (late.length) {
+      this.#quietSince = now;
+      this.#lateAt = { delay: this.#delay, time: now };
+      if (late.length < 2 && Math.max(...late) < frameMs) return;
+      if (this.#delay < MAX_DELAY && now >= this.#retuneAt) {
+        this.#setDelay(this.#delay + 1);
+        this.#retuneAt = now + RAISE_COOLDOWN_MS;
+      }
+      return;
+    }
+    if (now - this.#quietSince < QUIET_MS || now < this.#retuneAt) return;
+    const lower = this.#delay - 1;
+    if (lower < this.#delayFloor || (lower <= this.#lateAt.delay && now - this.#lateAt.time < REMEMBER_LATE_MS)) return;
+    this.#setDelay(lower);
+    this.#retuneAt = now + LOWER_COOLDOWN_MS;
+  }
+
+  #setDelay(delay) {
+    this.#session.setDelay(delay);
+    this.#delay = delay;
+    this.#tuned.delay = delay;
+  }
 
   // GGRS's requests, run on the core.
   #machine = {
@@ -307,6 +562,7 @@ class Cabinet {
     },
     load: (slot) => this.core.loadSlot(slot),
     run: (inputs, present) => this.#run(byPort(inputs, this.#seats), present),
+    send: (packets) => this.#post(packets),
   };
 
   /** Runs a frame with a mask per controller port. */
@@ -316,7 +572,10 @@ class Cabinet {
     // Core routes shared upright gameplay and descriptor-defined Start/Coin aliases;
     // the original masks remain intact for rollback and the spectator input stream.
     this.core.present = present;
+    const startedAt = performance.now();
     this.core.run();
+    const ms = performance.now() - startedAt;
+    this.#runMs = this.#runMs ? this.#runMs * 0.9 + ms * 0.1 : ms;
     if (present) this.#frames++;
     // The core names the game's buttons on its first frame.
     if (!this.#buttonsSent && this.core.buttons.size) {
@@ -351,18 +610,29 @@ class Cabinet {
     // Heavy cores (and lockstep) cover the ping with input delay so re-simulations are rare and
     // the frame rate stays smooth; cheap cores keep the small delay tune picked and roll back.
     const delay = this.#tuned.heavy ? onlineDelay(roundTrip, this.fps) : this.#tuned.delay;
+    this.#tuned.delay = delay;
+    this.#delay = delay;
+    this.#delayFloor = delay;
     this.#epoch = epoch & 0xffff;
     this.#seats = seats;
     this.#session = new Session(seats.length, seats.indexOf(this.#seat), delay, rollback, Math.round(this.fps));
     this.paused = false;
+    this.#waiting = false;
+    this.#stall = undefined;
+    this.#stalls = [];
+    this.#quietSince = performance.now();
+    this.#retuneAt = 0;
+    this.#lateAt = { delay: 0, time: -Infinity };
     this.#next = performance.now();
     if (this.#stream) this.#startStream();
+    this.#alarm.now();
   }
 
   #leaveSession() {
     this.#session?.free();
     this.#session = undefined;
     this.#seats = undefined;
+    this.#waiting = false;
     this.paused = false;
   }
 
@@ -418,9 +688,15 @@ class Cabinet {
 
   async #watchFrom(bytes) {
     const frame = new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true);
-    this.core.unserialize(await unpack(bytes.subarray(4)));
-    this.#watch = { frames: [], end: frame, waiting: true };
+    // The stream's inputs from this frame on may arrive while the state inflates: kept from
+    // now, run once the machine is at the state.
+    const watch = (this.#watch = { frames: [], end: frame, waiting: true });
+    this.paused = true;
+    const state = await unpack(bytes.subarray(4));
+    if (this.#watch !== watch) return; // a newer state came meanwhile
+    this.core.unserialize(state);
     this.paused = false;
+    this.#alarm.now();
   }
 
   #watchInputs({ frame, inputs }) {
@@ -463,14 +739,18 @@ function tune(core, fps) {
 }
 
 /**
- * A lockstep game's input delay, in frames: the others' input for a frame, sent when they ran
- * the frame this many frames earlier, has to be here by the time the frame is due, so half the
- * round trip and some slack. 2 to 10 frames; past that the game would stall anyway.
+ * A lockstep game's input delay, in frames, for a round trip: the others' input for a frame,
+ * sent when they ran the frame this many frames earlier, has to be here by the time the frame
+ * is due. Half the round trip and some slack for jitter, plus a frame for the two machines'
+ * slots not lining up and one for landing while this machine is busy with a frame (it polls
+ * between frames). MIN_DELAY to MAX_DELAY frames; the game then adds to that when the others'
+ * input still arrives late (Cabinet.#tune).
  */
 function onlineDelay(roundTrip, fps) {
   if (roundTrip === undefined) return DEFAULT_DELAY;
-  const frames = Math.ceil((roundTrip / 2 + DELAY_SLACK_MS) / (1000 / fps));
-  return Math.min(12, Math.max(2, frames));
+  const frameMs = 1000 / fps;
+  const frames = Math.ceil((roundTrip / 2 + DELAY_SLACK_MS) / frameMs) + 2;
+  return Math.min(MAX_DELAY, Math.max(MIN_DELAY, frames));
 }
 
 /** FNV-1a over the game's RAM. All machines' hashes match while they're in step. */

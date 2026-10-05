@@ -413,14 +413,16 @@
           return seats.length === 1 ? `player ${seats[0]}` : `players ${seats.slice(0, -1).join(", ")} and ${seats.at(-1)}`;
         }
 
-        #netplay({ event, seat, ping, frame, delay, rollback, fps }) {
+        #netplay({ event, seat, ping, frame, delay, rollback, fps, stalls }) {
           const me = `Player ${this.seat + 1}`;
           if (event === "synchronized" || event === "resumed") this.#show(`${me}, online with ${this.#others()}`);
           if (event === "interrupted") this.#show(`${me}. Waiting for player ${seat + 1}'s connection...`);
           if (event === "desync") this.#show(`${me}. Out of step with the others since frame ${frame}.`);
           if (event === "stats" && !this.#status.includes("Out of step") && !this.#status.includes("Waiting")) {
             const direct = [...this.#links.values()].every((link) => link.direct);
-            const mode = rollback === 0 ? `, ${delay} frames of input delay` : `, ${fps ?? "?"} fps`;
+            // A lockstep game waits for the others' input when it's late (worker.js adds a frame
+            // of delay when that keeps happening); such waits in the last second are shown.
+            const mode = rollback === 0 ? `, ${fps ?? "?"} fps, ${delay} frames of input delay${stalls ? `, ${stalls} wait${stalls === 1 ? "" : "s"}` : ""}` : `, ${fps ?? "?"} fps`;
             this.#show(`${me}, online with ${this.#others()}, ${ping ?? "?"} ms${mode}, ${direct ? "direct" : "through the server"}`);
           }
         }

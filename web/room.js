@@ -337,18 +337,20 @@ class Link {
   }
 
   /**
-   * Times a round trip to the other player, in ms: the best of a few pings. Waits a moment for
-   * the direct channel to open first, so what's timed is the path the game will take; undefined
-   * if nothing came back.
+   * Times a round trip to the other player, in ms: the second-worst of a few pings, about what
+   * the game's packets will see (the best of them would set an input delay that stalls on every
+   * slower one). Waits a moment for the direct channel to open first, so what's timed is the
+   * path the game will take; undefined if nothing came back.
    */
-  async roundTrip(pings = 3) {
+  async roundTrip(pings = 5) {
     for (let i = 0; i < 20 && !this.direct && !this.#closed; i++) await new Promise((r) => setTimeout(r, 100));
-    let best;
+    const times = [];
     for (let i = 0; i < pings; i++) {
       const ms = await this.#ping();
-      if (ms !== undefined && !(best <= ms)) best = ms;
+      if (ms !== undefined) times.push(ms);
     }
-    return best;
+    times.sort((a, b) => a - b);
+    return times.length ? times[Math.max(0, times.length - 2)] : undefined;
   }
 
   // "vabp", the ping's number, then 0 asking or 1 answering. Game packets never start so: the
