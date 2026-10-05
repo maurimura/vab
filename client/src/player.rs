@@ -59,7 +59,11 @@ impl Walkable {
     }
 
     fn allows(&self, feet: Vec2) -> bool {
-        self.0.contains(&world_to_cell(feet))
+        self.contains(world_to_cell(feet))
+    }
+
+    pub fn contains(&self, cell: IVec2) -> bool {
+        self.0.contains(&cell)
     }
 
     /// The free cell nearest the middle of the bar.

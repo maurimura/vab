@@ -150,6 +150,11 @@ impl Plugin for GamePlugin {
             )
             .add_systems(Update, new_game)
             .add_systems(OnExit(Mode::Shuffleboard), hide_table);
+        #[cfg(feature = "test-hooks")]
+        app.add_systems(
+            Update,
+            test_hooks.after(play).run_if(in_state(Mode::Shuffleboard)),
+        );
     }
 }
 
@@ -701,6 +706,11 @@ fn throw(
         // Put down: it waits where it is.
         return;
     }
+    launch(game, velocity);
+}
+
+/// Throws the waiting puck from where it is at `velocity`, telling the other player.
+fn launch(game: &mut Game, velocity: Vec2) {
     if let Some(opponent) = &game.opponent {
         let throw = Message::Throw {
             from: game.ready,
@@ -1228,4 +1238,61 @@ fn hide_table(
     for overlay in &overlays {
         commands.entity(overlay).despawn();
     }
+}
+
+/// For browser tests (testing.rs): a throw asked for, on this player's throw, and what the game
+/// is doing.
+#[cfg(feature = "test-hooks")]
+fn test_hooks(mut game: ResMut<Game>) {
+    use serde_json::json;
+
+    use crate::testing;
+
+    let game = &mut *game;
+    let throwing = game.phase == Phase::Throwing && game.rules.win.is_none();
+    if throwing
+        && game.my_turn()
+        && game.grab.is_none()
+        && let Some(velocity) = testing::take_throw()
+    {
+        launch(game, velocity);
+    }
+    let phase = match game.phase {
+        Phase::Throwing => "throwing",
+        Phase::Sliding => "sliding",
+        Phase::Waiting => "waiting",
+        Phase::Stopped { .. } => "stopped",
+        Phase::Scored { .. } => "scored",
+    };
+    let pucks: Vec<_> = game
+        .table
+        .pucks
+        .iter()
+        .map(|puck| {
+            json!({
+                "player": puck.player,
+                "at": [puck.position.x, puck.position.y],
+                "points": puck.points(),
+            })
+        })
+        .collect();
+    testing::report(
+        "shuffleboard",
+        json!({
+            "phase": phase,
+            "turn": game.rules.turn(),
+            "my_turn": game.my_turn(),
+            "scores": game.rules.scores,
+            "thrown": game.rules.thrown,
+            "first": game.rules.first,
+            "win": game.rules.win,
+            "pucks": pucks,
+            "fallen": game.fallen.len(),
+            "ready": [game.ready.x, game.ready.y],
+            "seat": game.match_seat.as_ref().map(|(me, _)| *me),
+            "names": game.names(),
+            "opponent": game.opponent.is_some(),
+            "waiting_for_start": game.waiting_for_start,
+        }),
+    );
 }

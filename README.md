@@ -55,6 +55,7 @@ as long as its pixel ratio is left at the computer's own (an emulated one gets t
 | `shuffleboard/` | Table shuffleboard physics and scoring, without Bevy, tested natively (`cargo test -p shuffleboard`) | |
 | `billiards/` | Pool physics, without Bevy: deterministic, tested natively (`cargo test -p billiards`) | |
 | `world/` | Map format, isometric grid math, tile drawing (shared by the editor and, later, the client) | |
+| `tools/e2e/` | Browser tests: players in headless Chrome against `make dev` (`make e2e`), reading the game through hooks only local builds have | `puppeteer-core` |
 | `tools/editor/` | Bar layout editor: on the desktop (`make editor`), or on the web behind Cloudflare Access (`make editor-web`, served by the same Worker as `vab-editor`) | `cargo`, `bevy_egui` (+ `wasm-bindgen` → `tools/editor/web/pkg/`) |
 | `assets/` | Tile art (`tiles/`) and maps (`maps/`) | |
 | `web/` | Static assets: `index.html`, the room connection (`room.js`), Bevy's `pkg/`, the emulator worker + libretro frontend in `emulator/` | |

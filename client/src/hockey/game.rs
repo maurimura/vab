@@ -152,6 +152,11 @@ impl Plugin for GamePlugin {
                     .run_if(in_state(Mode::Hockey)),
             )
             .add_systems(OnExit(Mode::Hockey), hide_rink);
+        #[cfg(feature = "test-hooks")]
+        app.add_systems(
+            Update,
+            test_hooks.after(play).run_if(in_state(Mode::Hockey)),
+        );
     }
 }
 
@@ -982,4 +987,29 @@ fn hide_rink(
     for overlay in &overlays {
         commands.entity(overlay).despawn();
     }
+}
+
+/// For browser tests (testing.rs): what the game is doing.
+#[cfg(feature = "test-hooks")]
+fn test_hooks(game: Res<Game>) {
+    use serde_json::json;
+
+    let rink = &game.rink;
+    let net = match online::state() {
+        online::State::None => "none",
+        online::State::Connecting => "connecting",
+        online::State::Running => "running",
+        online::State::Interrupted => "interrupted",
+    };
+    crate::testing::report(
+        "hockey",
+        json!({
+            "score": rink.score,
+            "winner": rink.winner(),
+            "puck": [rink.puck.x, rink.puck.y],
+            "paddles": rink.paddles.map(|paddle| [paddle.x, paddle.y]),
+            "seat": game.opponent.as_ref().map(|opponent| opponent.me),
+            "net": net,
+        }),
+    );
 }
