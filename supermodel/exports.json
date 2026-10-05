@@ -30,5 +30,8 @@
   "_supermodel_timings",
   "_supermodel_jit_selftest",
   "_supermodel_jit_test_integer",
-  "_supermodel_jit_benchmark"
+  "_supermodel_jit_benchmark",
+  "_supermodel_jit_test_memory",
+  "_ppc_jit_set_enabled",
+  "_supermodel_jit_flush"
 ]

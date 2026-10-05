@@ -1,8 +1,21 @@
 diff --git a/Src/CPU/PowerPC/ppc.cpp b/Src/CPU/PowerPC/ppc.cpp
-index 1343e69..54a4b45 100644
+index 1343e69..df0ffad 100644
 --- a/Src/CPU/PowerPC/ppc.cpp
 +++ b/Src/CPU/PowerPC/ppc.cpp
-@@ -1161,3 +1161,24 @@ UINT32 ppc_read_msr()
+@@ -653,6 +653,12 @@ static void (* optable59[1024])(UINT32);
+ static void (* optable63[1024])(UINT32);
+ static void (* optable[64])(UINT32);
+ 
++// JIT dispatch hook (recompiler, supermodel/RECOMPILER.md): when enabled, the execute loop in
++// ppc603.c runs a compiled block at the current PC if one exists. jit_block_for (shim) returns
++// the block's table index (a function pointer) and its instruction count, or 0 for none.
++static bool ppc_jit_enabled = false;
++extern "C" uint32_t jit_block_for(UINT32 pc, const UINT32 *code, int maxLen, int *count);
++
+ #include "ppc603.c"
+ 
+ /********************************************************************/
+@@ -1161,3 +1167,34 @@ UINT32 ppc_read_msr()
  {
  	return ppc_get_msr();
  }
@@ -12,10 +25,20 @@ index 1343e69..54a4b45 100644
 +// GPR array's address and run one instruction through the interpreter, the byte-exact reference
 +// the JIT is validated against. Placed after ppc603.c/ppc_ops.c are included, so the op tables
 +// are in scope.
++extern "C" void ppc_jit_set_enabled(int on) { ppc_jit_enabled = (on != 0); }
 +extern "C" UINT32 *ppc_jit_gpr(void) { return ppc.r; }
 +extern "C" UINT32 ppc_jit_pc(void) { return ppc.pc; }
 +extern "C" UINT8 *ppc_jit_cr(void) { return ppc.cr; }        // condition register, 8 bytes
 +extern "C" UINT32 *ppc_jit_xer(void) { return &ppc.xer; }    // XER (carry/overflow/SO)
++
++// Memory access for the JIT goes through the same Bus handlers the interpreter uses, so RAM
++// vs MMIO and endianness match exactly. (A faster inline RAM path can come later.)
++extern "C" UINT32 ppc_jit_read32(UINT32 a) { return READ32(a); }
++extern "C" UINT32 ppc_jit_read16(UINT32 a) { return READ16(a); }
++extern "C" UINT32 ppc_jit_read8(UINT32 a)  { return READ8(a); }
++extern "C" void ppc_jit_write32(UINT32 a, UINT32 v) { WRITE32(a, v); }
++extern "C" void ppc_jit_write16(UINT32 a, UINT32 v) { WRITE16(a, (UINT16)v); }
++extern "C" void ppc_jit_write8(UINT32 a, UINT32 v)  { WRITE8(a, (UINT8)v); }
 +extern "C" void ppc_jit_interp_one(UINT32 opcode)
 +{
 +	switch (opcode >> 26)

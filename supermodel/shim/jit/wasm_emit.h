@@ -33,8 +33,10 @@ enum : uint8_t {
   OP_I32_OR = 0x72,
   OP_I32_XOR = 0x73,
   OP_I32_SHL = 0x74,
+  OP_I32_SHR_S = 0x75,
   OP_I32_SHR_U = 0x76,
   OP_CALL = 0x10,
+  OP_CALL_INDIRECT = 0x11,
 };
 
 // Builds the body of one function (the instruction stream between locals and OP_END).
@@ -62,6 +64,9 @@ struct Code {
   void i32_load(uint32_t offset, uint32_t align = 2) { u8(OP_I32_LOAD); uleb(align); uleb(offset); }
   void i32_store(uint32_t offset, uint32_t align = 2) { u8(OP_I32_STORE); uleb(align); uleb(offset); }
   void i32_store8(uint32_t offset) { u8(OP_I32_STORE8); uleb(0); uleb(offset); } // byte store (CR field)
+  // call_indirect: args and the function's table index are already on the stack; typeidx selects
+  // the signature, table 0 is the shared (imported) table.
+  void call_indirect(uint32_t typeidx) { u8(OP_CALL_INDIRECT); uleb(typeidx); uleb(0); }
   void end() { u8(OP_END); }
 };
 
@@ -161,6 +166,59 @@ inline std::vector<uint8_t> module_void(const Code &code) {
   put_uleb(bodies, 1);
   std::vector<uint8_t> body;
   put_uleb(body, 0); // no locals
+  body.insert(body.end(), code.bytes.begin(), code.bytes.end());
+  body.push_back(OP_END);
+  put_uleb(bodies, (uint32_t)body.size());
+  bodies.insert(bodies.end(), body.begin(), body.end());
+  put_section(m, 10, bodies);
+  return m;
+}
+
+// Module for a compiled block that can call the emulator's memory handlers: imports env.memory and
+// env.table (the shared function table), declares the block type () -> () plus the read (i32)->i32
+// and write (i32,i32)->() signatures, and exports the block as "run".
+enum { TYPE_BLOCK = 0, TYPE_READ = 1, TYPE_WRITE = 2 };
+
+inline std::vector<uint8_t> module_block(const Code &code) {
+  std::vector<uint8_t> m = { 0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00 };
+
+  // Type section: 3 types
+  std::vector<uint8_t> types;
+  put_uleb(types, 3);
+  types.push_back(0x60); put_uleb(types, 0); put_uleb(types, 0);                        // () -> ()
+  types.push_back(0x60); put_uleb(types, 1); types.push_back(WASM_I32); put_uleb(types, 1); types.push_back(WASM_I32); // (i32)->(i32)
+  types.push_back(0x60); put_uleb(types, 2); types.push_back(WASM_I32); types.push_back(WASM_I32); put_uleb(types, 0); // (i32,i32)->()
+  put_section(m, 1, types);
+
+  // Import section: memory and table
+  std::vector<uint8_t> imports;
+  put_uleb(imports, 2);
+  const char *env = "env";
+  const char *memnm = "memory", *tabnm = "table";
+  put_uleb(imports, 3); imports.insert(imports.end(), env, env + 3);
+  put_uleb(imports, 6); imports.insert(imports.end(), memnm, memnm + 6);
+  imports.push_back(0x02); imports.push_back(0x00); put_uleb(imports, 1);               // memory, min 1
+  put_uleb(imports, 3); imports.insert(imports.end(), env, env + 3);
+  put_uleb(imports, 5); imports.insert(imports.end(), tabnm, tabnm + 5);
+  imports.push_back(0x01);                                                              // table import
+  imports.push_back(0x70);                                                              // funcref
+  imports.push_back(0x00); put_uleb(imports, 0);                                        // limits: min 0
+  put_section(m, 2, imports);
+
+  std::vector<uint8_t> funcs; put_uleb(funcs, 1); put_uleb(funcs, TYPE_BLOCK);
+  put_section(m, 3, funcs);
+
+  std::vector<uint8_t> exports;
+  put_uleb(exports, 1);
+  const char *rn = "run";
+  put_uleb(exports, 3); exports.insert(exports.end(), rn, rn + 3);
+  exports.push_back(0x00); put_uleb(exports, 0);
+  put_section(m, 7, exports);
+
+  std::vector<uint8_t> bodies;
+  put_uleb(bodies, 1);
+  std::vector<uint8_t> body;
+  put_uleb(body, 0);
   body.insert(body.end(), code.bytes.begin(), code.bytes.end());
   body.push_back(OP_END);
   put_uleb(bodies, (uint32_t)body.size());

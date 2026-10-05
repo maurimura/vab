@@ -3,6 +3,7 @@
 // Everything else in the recompiler is built on this mechanism.
 #include "wasm_emit.h"
 #include "compiler.h"
+#include <unordered_map>
 #include <cstdint>
 #include <cstdio>
 
@@ -15,7 +16,7 @@
 EM_JS(int, sm_jit_run_module, (const uint8_t *bytes, int len), {
   try {
     const mod = new WebAssembly.Module(HEAPU8.subarray(bytes, bytes + len));
-    const inst = new WebAssembly.Instance(mod, { env: { memory: wasmMemory } });
+    const inst = new WebAssembly.Instance(mod, { env: { memory: wasmMemory, table: wasmTable } });
     return inst.exports.run() | 0;
   } catch (e) {
     console.error("[jit] module compile/run failed:", (e && (e.stack || e.message)) || e);
@@ -31,7 +32,7 @@ EM_JS(int, sm_jit_install, (const uint8_t *bytes, int len), {
   try {
     if (!Module._jitInstances) Module._jitInstances = [];
     const mod = new WebAssembly.Module(HEAPU8.slice(bytes, bytes + len));
-    const inst = new WebAssembly.Instance(mod, { env: { memory: wasmMemory } });
+    const inst = new WebAssembly.Instance(mod, { env: { memory: wasmMemory, table: wasmTable } });
     const idx = wasmTable.grow(1);
     wasmTable.set(idx, inst.exports.run);
     Module._jitInstances.push(inst);
@@ -76,6 +77,23 @@ extern "C" uint32_t *ppc_jit_gpr(void);
 extern "C" uint8_t *ppc_jit_cr(void);
 extern "C" uint32_t *ppc_jit_xer(void);
 extern "C" void ppc_jit_interp_one(uint32_t opcode);
+extern "C" uint32_t ppc_jit_read32(uint32_t), ppc_jit_read16(uint32_t), ppc_jit_read8(uint32_t);
+extern "C" void ppc_jit_write32(uint32_t, uint32_t), ppc_jit_write16(uint32_t, uint32_t), ppc_jit_write8(uint32_t, uint32_t);
+
+// The register addresses and memory-handler table indices the compiler needs.
+static jit::Regs make_regs(void) {
+  jit::Regs r;
+  r.gpr = (uint32_t)(uintptr_t)ppc_jit_gpr();
+  r.cr = (uint32_t)(uintptr_t)ppc_jit_cr();
+  r.xer = (uint32_t)(uintptr_t)ppc_jit_xer();
+  r.read32 = (uint32_t)(uintptr_t)&ppc_jit_read32;
+  r.read16 = (uint32_t)(uintptr_t)&ppc_jit_read16;
+  r.read8 = (uint32_t)(uintptr_t)&ppc_jit_read8;
+  r.write32 = (uint32_t)(uintptr_t)&ppc_jit_write32;
+  r.write16 = (uint32_t)(uintptr_t)&ppc_jit_write16;
+  r.write8 = (uint32_t)(uintptr_t)&ppc_jit_write8;
+  return r;
+}
 
 static uint32_t rng_state = 1;
 static uint32_t rng(void) { rng_state = rng_state * 1664525u + 1013904223u; return rng_state; }
@@ -109,7 +127,7 @@ extern "C" int supermodel_jit_test_integer(int seed, int blocks, int blockLen)
   uint32_t *gpr = ppc_jit_gpr();
   uint8_t *cr = ppc_jit_cr();
   uint32_t *xer = ppc_jit_xer();
-  jit::Regs regs = { (uint32_t)(uintptr_t)gpr, (uint32_t)(uintptr_t)cr, (uint32_t)(uintptr_t)xer };
+  jit::Regs regs = make_regs();
   rng_state = seed ? (uint32_t)seed : 1;
   int fails = 0;
 
@@ -125,7 +143,7 @@ extern "C" int supermodel_jit_test_integer(int seed, int blocks, int blockLen)
     bool covered = true;
     for (uint32_t instr : instrs) if (!jit::compile_instr(c, regs, instr)) { covered = false; break; }
     if (!covered) continue;
-    std::vector<uint8_t> mod = jit::module_void(c);
+    std::vector<uint8_t> mod = jit::module_block(c);
     sm_jit_run_module(mod.data(), (int)mod.size());
 
     uint32_t jitR[32], jitXer = *xer; uint8_t jitCr[8];
@@ -163,8 +181,7 @@ extern "C" int supermodel_jit_test_integer(int seed, int blocks, int blockLen)
 // interpreter. Returns the speedup (interp time / jit time).
 extern "C" double supermodel_jit_benchmark(int blockLen, int iterations)
 {
-  jit::Regs regs = { (uint32_t)(uintptr_t)ppc_jit_gpr(), (uint32_t)(uintptr_t)ppc_jit_cr(),
-                     (uint32_t)(uintptr_t)ppc_jit_xer() };
+  jit::Regs regs = make_regs();
   rng_state = 20260105;
   std::vector<uint32_t> instrs;
   jit::Code c;
@@ -173,7 +190,7 @@ extern "C" double supermodel_jit_benchmark(int blockLen, int iterations)
     if (!jit::compile_instr(c, regs, instr)) { i--; continue; } // only covered ops
     instrs.push_back(instr);
   }
-  std::vector<uint8_t> mod = jit::module_void(c);
+  std::vector<uint8_t> mod = jit::module_block(c);
   int idx = sm_jit_install(mod.data(), (int)mod.size());
   if (idx < 0) { printf("[jit] benchmark: install failed\n"); return -1; }
   BlockFn block = (BlockFn)(intptr_t)idx;
@@ -197,3 +214,112 @@ extern "C" double supermodel_jit_benchmark(int blockLen, int iterations)
          "recompiled %.1f ms, %.2fx faster\n", (int)instrs.size(), iterations, interpMs, jitMs, speedup);
   return speedup;
 }
+
+
+// --- Milestone: validate load/store against the interpreter ---
+// Blocks of loads and stores (and some integer ops) over a RAM test region, with the base in r31.
+// JIT and interpreter use the same Bus handlers, so this checks the EA computation and register
+// targeting. Compares the GPRs and the RAM region after each block.
+extern "C" int supermodel_jit_test_memory(int seed, int blocks, int blockLen)
+{
+  const uint32_t REGION = 0x400000;      // 4 MB into the 8 MB RAM
+  const uint32_t WORDS = 256;            // 1 KB region
+  uint32_t *gpr = ppc_jit_gpr();
+  uint8_t *cr = ppc_jit_cr();
+  uint32_t *xer = ppc_jit_xer();
+  jit::Regs regs = make_regs();
+  rng_state = seed ? (uint32_t)seed : 7;
+  int fails = 0;
+
+  for (int blk = 0; blk < blocks; blk++) {
+    // Build a block of load/store/integer with memory ops based at r31.
+    std::vector<uint32_t> instrs;
+    for (int i = 0; i < blockLen; i++) {
+      uint32_t rd = rng() & 31, disp = (rng() % WORDS) * 4;
+      switch (rng() % 7) {
+        case 0: instrs.push_back((32u << 26) | (rd << 21) | (31u << 16) | disp); break; // lwz rd,disp(r31)
+        case 1: instrs.push_back((36u << 26) | (rd << 21) | (31u << 16) | disp); break; // stw
+        case 2: instrs.push_back((34u << 26) | (rd << 21) | (31u << 16) | disp); break; // lbz
+        case 3: instrs.push_back((38u << 26) | (rd << 21) | (31u << 16) | disp); break; // stb
+        case 4: instrs.push_back((40u << 26) | (rd << 21) | (31u << 16) | disp); break; // lhz
+        case 5: instrs.push_back((44u << 26) | (rd << 21) | (31u << 16) | disp); break; // sth
+        default: instrs.push_back(random_instr()); break;                                // mix in integer
+      }
+    }
+    // Initial state: random GPRs (r31 = region base), random CR/XER, random RAM region.
+    uint32_t initR[32], initXer; uint8_t initCr[8];
+    std::vector<uint32_t> initMem(WORDS);
+    for (int i = 0; i < 32; i++) { initR[i] = rng(); gpr[i] = initR[i]; }
+    gpr[31] = REGION; initR[31] = REGION;
+    for (int i = 0; i < 8; i++) { initCr[i] = rng() & 0xF; cr[i] = initCr[i]; }
+    initXer = rng(); *xer = initXer;
+    for (uint32_t i = 0; i < WORDS; i++) { initMem[i] = rng(); ppc_jit_write32(REGION + i * 4, initMem[i]); }
+
+    jit::Code c;
+    bool covered = true;
+    for (uint32_t instr : instrs) if (!jit::compile_instr(c, regs, instr)) { covered = false; break; }
+    if (!covered) continue;
+    std::vector<uint8_t> mod = jit::module_block(c);
+    sm_jit_run_module(mod.data(), (int)mod.size());
+
+    uint32_t jitR[32], jitXer = *xer; uint8_t jitCr[8]; std::vector<uint32_t> jitMem(WORDS);
+    for (int i = 0; i < 32; i++) jitR[i] = gpr[i];
+    for (int i = 0; i < 8; i++) jitCr[i] = cr[i];
+    for (uint32_t i = 0; i < WORDS; i++) jitMem[i] = ppc_jit_read32(REGION + i * 4);
+
+    // Restore and run the interpreter from the same start.
+    for (int i = 0; i < 32; i++) gpr[i] = initR[i];
+    for (int i = 0; i < 8; i++) cr[i] = initCr[i];
+    *xer = initXer;
+    for (uint32_t i = 0; i < WORDS; i++) ppc_jit_write32(REGION + i * 4, initMem[i]);
+    for (uint32_t instr : instrs) ppc_jit_interp_one(instr);
+
+    bool bad = (*xer != jitXer);
+    for (int i = 0; i < 32 && !bad; i++) bad = gpr[i] != jitR[i];
+    for (int i = 0; i < 8 && !bad; i++) bad = cr[i] != jitCr[i];
+    for (uint32_t i = 0; i < WORDS && !bad; i++) bad = ppc_jit_read32(REGION + i * 4) != jitMem[i];
+    if (bad) {
+      if (fails < 5) printf("[jit] memory MISMATCH in block %d\n", blk);
+      fails++;
+    }
+  }
+  printf("[jit] load/store block test: %d blocks x %d ops -> %s\n", blocks, blockLen,
+         fails == 0 ? "byte-exact with the interpreter PASS" : "FAIL");
+  return fails == 0 ? 1 : 0;
+}
+
+
+// --- Block cache + dispatch (recompiler integration) ---
+// Keyed by guest PC. Decodes straight-line covered instructions from `code` (the interpreter's
+// current fetch pointer, pre-byteswapped opcodes), compiles them into one block, installs it in
+// the shared table, and caches the table index + instruction count. Returns 0 when the first
+// instruction isn't covered (the interpreter handles it).
+struct CachedBlock { uint32_t fn; int count; };
+static std::unordered_map<uint32_t, CachedBlock> *g_blocks;
+
+extern "C" uint32_t jit_block_for(uint32_t pc, const uint32_t *code, int maxLen, int *outCount)
+{
+  if (!g_blocks) g_blocks = new std::unordered_map<uint32_t, CachedBlock>();
+  auto it = g_blocks->find(pc);
+  if (it != g_blocks->end()) { *outCount = it->second.count; return it->second.fn; }
+
+  jit::Regs regs = make_regs();
+  jit::Code c;
+  int count = 0;
+  for (int i = 0; i < maxLen; i++) {
+    if (!jit::compile_instr(c, regs, code[i])) break; // stops at a branch or uncovered op (no partial emit)
+    count++;
+  }
+  CachedBlock blk = { 0, count };
+  if (count > 0) {
+    std::vector<uint8_t> mod = jit::module_block(c);
+    int idx = sm_jit_install(mod.data(), (int)mod.size());
+    if (idx > 0) blk.fn = (uint32_t)idx; else blk.count = 0; // install failed -> fall back to interp
+  }
+  (*g_blocks)[pc] = blk;
+  *outCount = blk.count;
+  return blk.fn;
+}
+
+// Drop all cached blocks (e.g. when a new game loads and the code changes).
+extern "C" void supermodel_jit_flush(void) { if (g_blocks) g_blocks->clear(); }

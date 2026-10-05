@@ -1,0 +1,28 @@
+diff --git a/Src/CPU/PowerPC/ppc603.c b/Src/CPU/PowerPC/ppc603.c
+index 9cbc87e..f63e012 100644
+--- a/Src/CPU/PowerPC/ppc603.c
++++ b/Src/CPU/PowerPC/ppc603.c
+@@ -285,6 +285,23 @@ int ppc_execute(int cycles)
+ 	while( ppc.icount > 0 && !ppc.fatalError)
+ 	{
+ 		ppc.pc = ppc.npc;
++
++		// Recompiler: run a compiled block for this PC if one is available and it won't cross the
++		// cycle budget or the decrementer trigger (so timing stays exact).
++		if (ppc_jit_enabled)
++		{
++			int jitCount = 0;
++			UINT32 jitFn = jit_block_for(ppc.pc, ppc.op, 32, &jitCount);
++			if (jitFn && jitCount > 0 && ppc.icount >= jitCount &&
++			    (ppc.icount <= ppc.dec_trigger_cycle || (ppc.icount - jitCount) > ppc.dec_trigger_cycle))
++			{
++				((void (*)(void))(uintptr_t)jitFn)();
++				ppc.npc = ppc.pc + 4 * jitCount;
++				ppc.icount -= jitCount;
++				ppc_change_pc(ppc.npc);
++				continue;
++			}
++		}
+ 		
+ 		// Debug breakpoints
+ 		/*

@@ -14,6 +14,8 @@ struct Regs {
   uint32_t gpr;   // &ppc.r[0]
   uint32_t cr;    // &ppc.cr[0]
   uint32_t xer;   // &ppc.xer
+  // Table indices of the Bus memory handlers (function pointers), for load/store call_indirect.
+  uint32_t read32, read16, read8, write32, write16, write8;
 };
 
 // Emit CR0 for a record-form result in GPR `dest`, matching SET_CR0 exactly:
@@ -63,6 +65,29 @@ inline bool compile_instr(Code &c, const Regs &r, uint32_t instr) {
     case 27: addr(a); loadr(d); c.i32_const((int32_t)(uimm << 16)); c.op(OP_I32_XOR); c.i32_store(0); return true;// xoris
     case 28: addr(a); loadr(d); c.i32_const((int32_t)uimm); c.op(OP_I32_AND); c.i32_store(0); emit_cr0(c, r, a); return true;         // andi.  (always records)
     case 29: addr(a); loadr(d); c.i32_const((int32_t)(uimm << 16)); c.op(OP_I32_AND); c.i32_store(0); emit_cr0(c, r, a); return true; // andis.
+    // Load/store (D-form). EA = SIMM + (rA==0 ? 0 : r[rA]); memory goes through the Bus helpers.
+    case 32: // lwz rD,D(rA)
+      addr(d); if (a) { loadr(a); c.i32_const(simm); c.op(OP_I32_ADD); } else c.i32_const(simm);
+      c.i32_const((int32_t)r.read32); c.call_indirect(TYPE_READ); c.i32_store(0); return true;
+    case 34: // lbz
+      addr(d); if (a) { loadr(a); c.i32_const(simm); c.op(OP_I32_ADD); } else c.i32_const(simm);
+      c.i32_const((int32_t)r.read8); c.call_indirect(TYPE_READ); c.i32_store(0); return true;
+    case 40: // lhz
+      addr(d); if (a) { loadr(a); c.i32_const(simm); c.op(OP_I32_ADD); } else c.i32_const(simm);
+      c.i32_const((int32_t)r.read16); c.call_indirect(TYPE_READ); c.i32_store(0); return true;
+    case 42: // lha (sign-extend halfword)
+      addr(d); if (a) { loadr(a); c.i32_const(simm); c.op(OP_I32_ADD); } else c.i32_const(simm);
+      c.i32_const((int32_t)r.read16); c.call_indirect(TYPE_READ);
+      c.i32_const(16); c.op(OP_I32_SHL); c.i32_const(16); c.op(OP_I32_SHR_S); c.i32_store(0); return true;
+    case 36: // stw rS,D(rA)
+      if (a) { loadr(a); c.i32_const(simm); c.op(OP_I32_ADD); } else c.i32_const(simm);
+      loadr(d); c.i32_const((int32_t)r.write32); c.call_indirect(TYPE_WRITE); return true;
+    case 38: // stb
+      if (a) { loadr(a); c.i32_const(simm); c.op(OP_I32_ADD); } else c.i32_const(simm);
+      loadr(d); c.i32_const((int32_t)r.write8); c.call_indirect(TYPE_WRITE); return true;
+    case 44: // sth
+      if (a) { loadr(a); c.i32_const(simm); c.op(OP_I32_ADD); } else c.i32_const(simm);
+      loadr(d); c.i32_const((int32_t)r.write16); c.call_indirect(TYPE_WRITE); return true;
     case 31: {
       const uint32_t xo = (instr >> 1) & 0x3FF;
       uint32_t dest;

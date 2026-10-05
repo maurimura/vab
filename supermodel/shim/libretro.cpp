@@ -34,6 +34,7 @@
 #endif
 
 extern "C" void sm_set_data_dir(const char *dir);
+extern "C" void ppc_jit_set_enabled(int on); // recompiler toggle (ppc.cpp)
 // patches/0002: the Model 3's clock chip reads this moment instead of the host's clock, so
 // players online keep identical machines. Wednesday 1998-04-01 12:00:00 UTC.
 extern time_t supermodel_fixed_time;
@@ -200,6 +201,7 @@ static void ApplyOverrides(Util::Config::Node &config)
     if (k == "GameXMLFile") s_gamesXml = v;
     else if (k == "DataDir") { s_dataDir = v; sm_set_data_dir(v.c_str()); }
     else if (k == "PowerPCFrequency") config.Set(k, (unsigned)strtoul(v.c_str(), nullptr, 10));
+    else if (k == "Jit") ppc_jit_set_enabled(v == "true");
     else if (k == "SoundVolume" || k == "MusicVolume") config.Set(k, (int)strtol(v.c_str(), nullptr, 10));
     else if (v == "true" || v == "false") config.Set(k, v == "true");
     else config.Set(k, v);

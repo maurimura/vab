@@ -62,5 +62,12 @@ proves).
 
 ## Status
 
-Milestones 1-2 complete and validated; milestone 4 (flags) underway (CR0 done). This is a
-multi-week effort; each remaining milestone is gated on byte-exact agreement with the interpreter.
+Done and validated: runtime codegen (M1), integer blocks (M2), CR0 flags (M3 part), load/store
+(call into the Bus handlers), and the dispatch integration -- the JIT is wired into the execute
+loop and runs the real game BYTE-IDENTICAL to the interpreter over 600 frames (no desync).
+
+It is not yet faster: with only integer + load/store covered, blocks end at the first branch,
+compare, shift or rotate, so the dispatch overhead isn't amortised, and every register access is
+a memory round-trip (0.70x -- slower -- right now). The speedup needs: register allocation into
+WASM locals (avoid the memory round-trips), and more coverage so blocks are long (rlwinm/shifts,
+compares, branches). Those are the next steps. Enable with supermodel_set("Jit","true").
