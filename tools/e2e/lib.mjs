@@ -32,7 +32,14 @@ export async function player(name, room) {
   const browser = await puppeteer.launch({
     executablePath: CHROME,
     headless: "new",
-    args: [...RENDER_ARGS, "--autoplay-policy=no-user-gesture-required"],
+    // A fake microphone that beeps, allowed without asking: players at a cabinet talk
+    // (voice.mjs).
+    args: [
+      ...RENDER_ARGS,
+      "--autoplay-policy=no-user-gesture-required",
+      "--use-fake-device-for-media-stream",
+      "--use-fake-ui-for-media-stream",
+    ],
     defaultViewport: { width: 1280, height: 720 },
   });
   browsers.push(browser);

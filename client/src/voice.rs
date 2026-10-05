@@ -133,6 +133,8 @@ fn show_people(mut commands: Commands, panel: Single<(Entity, &mut Visibility), 
     let Some(people) = PEOPLE.take() else {
         return;
     };
+    #[cfg(feature = "test-hooks")]
+    report(&people);
     let (panel, mut visibility) = panel.into_inner();
     *visibility = if people.is_empty() {
         Visibility::Hidden
@@ -148,6 +150,23 @@ fn show_people(mut commands: Commands, panel: Single<(Entity, &mut Visibility), 
             }
             panel.spawn(text("Click or Shift+1-4 mutes, M your mic", 11.0, DIM));
         });
+}
+
+/// For browser tests (testing.rs): who's in the panel, with their flags.
+#[cfg(feature = "test-hooks")]
+fn report(people: &[Person]) {
+    let people: Vec<_> = people
+        .iter()
+        .map(|person| {
+            serde_json::json!({
+                "id": person.id,
+                "seat": person.seat,
+                "name": person.name,
+                "flags": person.flags,
+            })
+        })
+        .collect();
+    crate::testing::report("voice", serde_json::Value::Array(people));
 }
 
 fn spawn_row(panel: &mut ChildSpawnerCommands, person: &Person) {
