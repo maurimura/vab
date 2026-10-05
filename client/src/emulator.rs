@@ -303,10 +303,13 @@ fn send_input(
     mut sent: Local<u16>,
 ) {
     // While typing in the chat or tuning settings, the player's hands are off the controls.
+    // Shift with a number mutes a player (voice.rs), so it isn't Start or a coin.
     let busy = chat.is_open() || settings.is_open();
+    let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let mask = KEYS
         .iter()
         .filter(|(key, _)| !busy && keys.pressed(*key))
+        .filter(|(key, _)| !(shift && matches!(key, KeyCode::Digit1 | KeyCode::Digit5)))
         .fold(touch.pad(), |mask, (_, id)| mask | 1 << id);
     if mask != *sent {
         emulator_input(mask);
