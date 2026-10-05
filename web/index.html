@@ -377,7 +377,7 @@
           }
           for (const [seat, id] of others) {
             if (this.#links.has(id)) continue;
-            const link = room.link(id, this.seat < seat, `${this.cabinet}/${Math.min(id, room.id)}/${Math.max(id, room.id)}`);
+            const link = room.link(id, this.seat < seat, `${this.cabinet}/${Math.min(id, room.id)}/${Math.max(id, room.id)}`, this.#game.lockstep);
             link.onpacket = (packet) => {
               const from = [...this.#players].find(([, player]) => player === id)?.[0];
               if (from !== undefined) this.#packets.port1.postMessage([from, packet], [packet]);

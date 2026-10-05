@@ -118,9 +118,9 @@ export class Room {
    * `match` names the link (both sides pass the same), so WebRTC messages left over from an
    * earlier link are ignored.
    */
-  link(partner, offers, match) {
+  link(partner, offers, match, reliable = false) {
     this.#links.get(partner)?.close();
-    const link = new Link(this, partner, offers, match);
+    const link = new Link(this, partner, offers, match, reliable);
     this.#links.set(partner, link);
     for (const data of this.#waitingSignals.get(partner) ?? []) link.signal(data);
     this.#waitingSignals.delete(partner);
@@ -294,11 +294,15 @@ class Link {
   #closed = false;
   #channel;
   #candidates = [];
+  // Reliable+ordered for lockstep games, where a dropped input packet stalls the game; the
+  // default unreliable channel is for rollback, which predicts past a missing packet.
+  #reliable = false;
 
-  constructor(room, partner, offers, match) {
+  constructor(room, partner, offers, match, reliable = false) {
     this.#room = room;
     this.#match = match;
     this.partner = partner;
+    this.#reliable = reliable;
     this.#ready = getIceServers().then((iceServers) => this.#connect(iceServers, offers));
   }
 
@@ -400,7 +404,7 @@ class Link {
     pc.onicecandidate = ({ candidate }) => candidate && this.#signal({ candidate });
     if (offers) {
       // Unordered and never resent: GGRS resends what matters itself.
-      this.#use(pc.createDataChannel("ggrs", { ordered: false, maxRetransmits: 0 }));
+      this.#use(pc.createDataChannel("ggrs", this.#reliable ? { ordered: true } : { ordered: false, maxRetransmits: 0 }));
       pc.createOffer()
         .then((offer) => pc.setLocalDescription(offer))
         .then(() => this.#signal({ description: pc.localDescription }))
