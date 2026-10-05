@@ -14,6 +14,11 @@
 //!
 //! Both rinks start alike, from player 1's settings (`Message::Begin`), which hold for the
 //! match.
+//!
+//! Whoever watches the table (seats.rs) gets the rink itself from the lowest seat playing, a
+//! few times a second (`Message::State`): the game is too quick for them to play it out from
+//! the players' inputs a little behind, as cabinets' watchers do, without rollback of their
+//! own. Their rink plays on between states, and smooths over what each one puts right (game.rs).
 
 use std::cell::RefCell;
 use std::time::Duration;
@@ -58,7 +63,7 @@ const MOST_FRAMES_AT_ONCE: u32 = 8;
 /// slowing down is spread thin.
 const SKIP_SPREAD: u32 = 20;
 
-/// What one player at the table tells the other, besides inputs.
+/// What one player at the table tells the other, besides inputs, and the watchers.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Message {
@@ -69,11 +74,48 @@ pub enum Message {
         settings: [f32; 5],
         input_delay: usize,
     },
+    /// The rink as it is, for the watchers: the puck and where it's going, both paddles (seat
+    /// 0's first), the score, and the settings it plays by.
+    State {
+        puck: [f32; 2],
+        velocity: [f32; 2],
+        paddles: [[f32; 2]; 2],
+        score: [u32; 2],
+        settings: [f32; 5],
+    },
 }
 
 /// How the room names an air hockey table: "hockey:x,y", its first cell.
 pub fn table_id(cell: IVec2) -> String {
     format!("hockey:{},{}", cell.x, cell.y)
+}
+
+/// The rink as it goes to the watchers.
+pub fn state_of(rink: &Rink) -> Message {
+    Message::State {
+        puck: rink.puck.into(),
+        velocity: rink.velocity.into(),
+        paddles: rink.paddles.map(Into::into),
+        score: rink.score,
+        settings: settings_to_message(&rink.settings),
+    }
+}
+
+/// A rink as a watcher gets it.
+pub fn rink_from_state(
+    puck: [f32; 2],
+    velocity: [f32; 2],
+    paddles: [[f32; 2]; 2],
+    score: [u32; 2],
+    settings: [f32; 5],
+) -> Rink {
+    Rink {
+        puck: puck.into(),
+        velocity: velocity.into(),
+        paddles: paddles.map(Into::into),
+        score,
+        settings: settings_from_message(settings),
+    }
 }
 
 /// A rink's settings as they go in `Begin`, and back.
@@ -516,6 +558,31 @@ mod tests {
             panic!("{json}");
         };
         assert_eq!(settings_from_message(back), settings);
+    }
+
+    #[test]
+    fn the_rink_goes_to_the_watchers_unchanged() {
+        let mut rink = Rink::new();
+        rink.puck = Vec2::new(47.123_456, 101.987_65);
+        rink.velocity = Vec2::new(-123.456_79, 310.5);
+        rink.paddles[1] = Vec2::new(12.25, 30.75);
+        rink.score = [3, 5];
+        rink.settings.friction = 18.5;
+        let json = serde_json::to_string(&state_of(&rink)).unwrap();
+        let Ok(Message::State {
+            puck,
+            velocity,
+            paddles,
+            score,
+            settings,
+        }) = serde_json::from_str(&json)
+        else {
+            panic!("{json}");
+        };
+        assert_eq!(
+            rink_from_state(puck, velocity, paddles, score, settings),
+            rink
+        );
     }
 
     #[test]

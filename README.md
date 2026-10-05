@@ -4,9 +4,11 @@ The page shows the bar from `assets/maps/bar.ron` (made with the editor, see [De
 tools](#dev-tools)) and a placeholder player: arrows or WASD walk, and floor tiles without an
 object are walkable. Everyone on the page is in the same bar room and sees the others walk around
 (`?room=<name>` opens a separate one). E next to a cabinet sits you at it: you start its game, or
-join the one being played there (see [Online play](#online-play)). F watches the game being
-played there, as does E once every seat is taken (see [Watching](#watching)). Players at a
-cabinet can talk (see [Voice](#voice)). Esc stands up. Y opens the chat for everyone in the room; `/name <name>` there sets the name shown above your
+join the one being played there (see [Online play](#online-play)); next to a table (pool, air
+hockey, shuffleboard, darts, below) it sits you at that. F watches the game being played there,
+at a cabinet, a table or the dartboard, as does E once every seat is taken (see
+[Watching](#watching)). Players at a cabinet can talk (see [Voice](#voice)). Esc stands up. Y
+opens the chat for everyone in the room; `/name <name>` there sets the name shown above your
 head, and a cookie keeps it. The controls show on a first visit and with `/help`; when a game
 starts, a card lists its buttons as the game names them (the core reports them, e.g. "Z  Low
 Punch").
@@ -241,6 +243,20 @@ once GGRS has confirmed it, so no rollback can change it. Inputs go out about te
 to everyone watching through one message to the room (address 0), and each watcher keeps a few
 frames in hand so they play evenly. When the players change, the new session starts a new stream
 with a fresh state. Watchers cost the players nothing: their game never pauses for one.
+
+The tables and the dartboard can be watched the same way (F, or E once both seats are taken),
+through the room, which passes a message sent to address 0 on to everyone watching the sender's
+table (`client/src/seats.rs`). At the pool and shuffleboard tables and the dartboard the
+watcher's game is the players' own protocol: the lowest seat gives each new watcher the whole
+game between shots, as it does a player who sits down, and from then on whatever the player
+whose turn it is sends the other (where the cue, the puck or the hand is, the shot, where
+everything ended) goes to the watchers too, so their table plays each shot out as the players'
+do and ends where the shooter's did. Air hockey
+is too quick for that without rollback of its own, so the lowest seat playing sends the watchers
+the rink itself, about 20 times a second; in between, a watcher's rink plays on as it was going,
+and what each state puts right is drawn gliding there, as online play's corrections are. A
+watcher's hands are off the cue, the puck, the paddles and the darts, and they see who plays
+over the table. `tools/e2e/watch.mjs` tries all four with two players in headless Chrome.
 
 `emulator/netplay-check.mjs` plays a game between workers in Node over a simulated network:
 player 1 alone, the others dropping in one by one, then player 2 leaving. Player 1 streams to a

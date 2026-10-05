@@ -19,6 +19,9 @@ node tools/e2e/shuffleboard.mjs   # or just one
 - `voice.mjs`: two players at a cabinet hear each other (Chrome's fake microphone beeps), mute
   each other with Shift and a number, unmute with `/unmute`, and turn their microphones off with
   M and with a click. `GAME` picks the cabinet (Snow Bros. unless said).
+- `watch.mjs`: a second player watches each table (F): the pool rack and where a shot ends, the
+  air hockey rink as the player has it, where a shuffleboard throw stops, a dart scored on the
+  board.
 
 Local builds of the client have hooks for these (`client/src/testing.rs`, on `window.vab`),
 which the site never has:

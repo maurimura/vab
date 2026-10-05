@@ -1,6 +1,7 @@
 //! Pool tables (objects/pool_table, two cells long): next to one, a hint says so and how many
-//! play at it, and E (or the Pool button on a touch screen) sits the player at it to play
-//! (game.rs), against whoever sits at the other seat (online.rs).
+//! play and watch at it, and E (or the Play button on a touch screen) sits the player at it to
+//! play (game.rs), against whoever sits at the other seat (online.rs). F (or Watch) watches the
+//! game being played there, as does E once both seats are taken.
 
 mod game;
 mod online;
@@ -9,15 +10,16 @@ use bevy::prelude::*;
 use world::{Map, Placed};
 
 use crate::Mode;
-use crate::cabinets::{hint_label, place_hint};
 use crate::chat::chat_closed;
 use crate::help::help_closed;
-use crate::nearby::{Kind, Nearby};
+use crate::nearby::{self, Kind, Nearby, Use, hint_label, place_hint};
 use crate::seats;
 use crate::settings::settings_closed;
-use crate::touch::{self, Touch, TouchButton};
+use crate::touch::{Touch, TouchButton};
 
 const TILE: &str = "objects/pool_table";
+/// Two play at a table.
+const SEATS: u32 = 2;
 /// Where the hint sits: a little above the table's top, in world pixels from its middle.
 const HINT_HEIGHT: f32 = 30.0;
 
@@ -64,22 +66,7 @@ impl PoolTables {
 #[derive(Component)]
 struct Hint;
 
-fn spawn_hint(mut commands: Commands, touch: Res<Touch>) {
-    if touch.is_on() {
-        // Where the cabinets' Play button goes; the two are never offered at once.
-        commands.spawn((
-            Node {
-                position_type: PositionType::Absolute,
-                right: Val::Px(16.0),
-                bottom: Val::Px(24.0),
-                ..default()
-            },
-            children![(
-                touch::button(TouchButton::Pool, "Play", 96.0, 48.0),
-                Visibility::Hidden,
-            )],
-        ));
-    }
+fn spawn_hint(mut commands: Commands) {
     commands.spawn((Hint, hint_label()));
 }
 
@@ -92,33 +79,14 @@ fn show_hint(
     mut buttons: Query<(&TouchButton, &mut Visibility), Without<Hint>>,
 ) {
     let (mut text, mut node, mut visibility, computed) = hint.into_inner();
-    let near = nearby.of(Kind::Pool, &tables.0);
-    // A table with both seats taken has no seat to offer.
-    let near = near.filter(|table| {
-        seats::seated(&online::table_id(IVec2::new(table.x, table.y))) < 2 || !touch.is_on()
-    });
-    for (button, mut shown) in &mut buttons {
-        if *button == TouchButton::Pool {
-            shown.set_if_neq(if near.is_some() {
-                Visibility::Inherited
-            } else {
-                Visibility::Hidden
-            });
-        }
-    }
-    let Some(table) = near else {
+    let Some(table) = nearby.of(Kind::Pool, &tables.0) else {
         *visibility = Visibility::Hidden;
         return;
     };
-    let seated = seats::seated(&online::table_id(IVec2::new(table.x, table.y)));
-    // The button says what to press.
-    let label = match (seated, touch.is_on()) {
-        (0, true) => "Pool".to_string(),
-        (0, false) => "E  Pool".to_string(),
-        (1, true) => "Pool - 1 of 2 playing".to_string(),
-        (1, false) => "E  Pool - 1 of 2 playing, join in".to_string(),
-        _ => "Pool - 2 playing".to_string(),
-    };
+    let id = online::table_id(table.cell());
+    let (seated, watching) = (seats::seated(&id) as u32, seats::watching(&id) as u32);
+    nearby::offer(&mut buttons, seated < SEATS, seated > 0);
+    let label = nearby::hint_text("Pool", seated, SEATS, watching, touch.is_on());
     place_hint(
         &label,
         table.center() + Vec2::Y * HINT_HEIGHT,
@@ -135,27 +103,22 @@ fn sit(
     nearby: Res<Nearby>,
     mut mode: ResMut<NextState<Mode>>,
 ) {
-    let sit = keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Pool);
-    let Some(table) = nearby.of(Kind::Pool, &tables.0).filter(|_| sit) else {
+    let sit = keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Play);
+    let watch = keys.just_pressed(KeyCode::KeyF) || touch.tapped(TouchButton::Watch);
+    let Some(table) = nearby.of(Kind::Pool, &tables.0) else {
         return;
     };
-    let id = online::table_id(IVec2::new(table.x, table.y));
-    // Both seats taken: nowhere to sit (watching comes later).
-    if seats::seated(&id) >= 2 {
+    let id = online::table_id(table.cell());
+    let Some(what) = nearby::chosen(sit, watch, seats::seated(&id) as u32, SEATS) else {
         return;
-    }
-    commands.insert_resource(game::AtTable(id));
+    };
+    commands.insert_resource(game::AtTable {
+        id,
+        watching: what == Use::Watch,
+    });
     mode.set(Mode::Pool);
 }
 
-fn hide_hint(
-    mut hint: Single<&mut Visibility, With<Hint>>,
-    mut buttons: Query<(&TouchButton, &mut Visibility), Without<Hint>>,
-) {
+fn hide_hint(mut hint: Single<&mut Visibility, With<Hint>>) {
     **hint = Visibility::Hidden;
-    for (button, mut shown) in &mut buttons {
-        if *button == TouchButton::Pool {
-            *shown = Visibility::Hidden;
-        }
-    }
 }
