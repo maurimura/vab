@@ -11,6 +11,8 @@ node tools/e2e/shuffleboard.mjs   # or just one
 
 - `tables.mjs`: one player visits the pool, air hockey and shuffleboard tables.
 - `darts.mjs`: one player at the dartboard: scoring, turns, a bust and a win.
+- `darts-online.mjs`: two players at the dartboard: seats, the thrower's hand, darts alike on
+  both boards, a reload mid-turn, someone leaving.
 - `nearest.mjs`: next to both a cabinet and a table, E uses the one the player stands nearer.
 - `shuffleboard.mjs`: two players at the shuffleboard table: seats, throws alike on both
   tables, the held puck, a reload mid-game, a whole round, someone leaving.
