@@ -154,6 +154,8 @@
       let myName = "";
       const list = (items) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 
+      // Experimental: ?jit=1 runs the Model 3 games on the recompiler (supermodel/RECOMPILER.md).
+      const jitExperiment = new URLSearchParams(location.search).has("jit");
       /** Where a game's core is: an FBNeo core, or Supermodel for the Sega Model 3 games. */
       const coreUrl = (core) => (core === "supermodel" ? "/supermodel/supermodel.mjs" : `/fbneo/${core}/fbneo.mjs`);
 
@@ -278,6 +280,7 @@
             seat,
             turns,
             lockstep,
+            jit: jitExperiment,
             port: packets.port2,
             hold: !alone,
           };
@@ -455,6 +458,7 @@
             rom: `/roms/${rom}.zip`,
             files: bios ? [`/roms/${bios}.zip`] : [],
             turns,
+            jit: jitExperiment,
             hold: true,
           });
         }

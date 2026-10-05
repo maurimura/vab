@@ -129,6 +129,20 @@ export class Core {
     return result;
   }
 
+  /**
+   * Sets a core-specific option (Supermodel's supermodel_set), e.g. ("Jit", "true") to run on the
+   * recompiler. Ignored by cores that don't have it (the FBNeo cores).
+   */
+  setCoreOption(key, value) {
+    const m = this.#m;
+    if (!m._supermodel_set) return;
+    const alloc = (text) => { const n = m.lengthBytesUTF8(text) + 1; const p = m._malloc(n); m.stringToUTF8(text, p, n); return p; };
+    const k = alloc(key), v = alloc(value);
+    m._supermodel_set(k, v);
+    m._free(k);
+    m._free(v);
+  }
+
   /** Runs one emulated frame. */
   run() {
     this.#m._retro_run();

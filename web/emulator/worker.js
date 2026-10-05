@@ -17,7 +17,7 @@
 // only frames no rollback can change anymore. The watchers' machines play those frames as they
 // come in, keeping a few in hand so they play evenly.
 //
-// In:  { type: "start", core, rom, files, state, seat, turns, lockstep, port, hold }
+// In:  { type: "start", core, rom, files, state, seat, turns, lockstep, jit, port, hold }
 //        Loads the game. `files` (a BIOS) and `state` are optional: skipped if missing. Plays
 //        alone right away, or with `hold` waits for "online" (joining a game in progress) or
 //        "watch-state" (watching; no `seat` or `port` then).
@@ -109,7 +109,7 @@ const download = async (url) => {
 };
 const downloadIfPresent = (url) => url && download(url).catch(() => undefined);
 
-async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, seat = 0, turns = false, lockstep = false, port, hold }) {
+async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, seat = 0, turns = false, lockstep = false, jit = false, port, hold }) {
   const { default: createCore } = await import(coreUrl);
   const [rom, state, ...extras] = await Promise.all([
     download(romUrl),
@@ -127,6 +127,7 @@ async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, 
     onLog: (level, text) => level >= 2 && console.warn(text),
   }, { canvas: new OffscreenCanvas(1, 1) }), { seat, turns, lockstep, port });
   const core = cab.core;
+  if (jit) core.setCoreOption("Jit", "true"); // experimental: run Model 3 on the recompiler
   core.netplay = true;
   files.forEach((url, i) => extras[i] && core.addFile(url.split("/").pop(), extras[i]));
   const { fps, sampleRate } = core.loadGame(romUrl.split("/").pop(), rom);
