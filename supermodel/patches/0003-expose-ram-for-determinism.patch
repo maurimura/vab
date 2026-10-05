@@ -1,0 +1,14 @@
+diff --git a/Src/Model3/Model3.h b/Src/Model3/Model3.h
+index 405a0d9..7a0b194 100644
+--- a/Src/Model3/Model3.h
++++ b/Src/Model3/Model3.h
+@@ -134,6 +134,9 @@ public:
+    * Returns:
+    *    Pointer to CSoundBoard object.
+    */
++  // The 8 MB PowerPC RAM, the gameplay-relevant memory, for determinism checks and rollback
++  // desync detection (the shim exposes it via retro_get_memory_data).
++  UINT8 *GetRAMPtr(void) { return ram; }
+   CSoundBoard *GetSoundBoard(void);
+ 
+   /*

@@ -55,7 +55,6 @@ static retro_log_printf_t log_cb;
 static Util::Config::Node s_config("Global");
 static std::string s_gamesXml = "/Games.xml";
 static std::string s_dataDir = "/supermodel";
-static std::string s_statePath;
 static std::unique_ptr<CModel3> s_model3;
 static Game s_game;
 static CInputs *s_inputs;
@@ -331,10 +330,12 @@ static bool CreateGL()
  Save states, through Supermodel's block files on the data directory
 ******************************************************************************/
 
-static bool WriteState(const std::string &path)
+// Save/load through a FILE*, so an in-memory stream (rollback, handovers; no MEMFS) works like a
+// real file. Rollback saves every frame, so this stays off disk (patch 0004).
+static bool WriteStateTo(FILE *fp)
 {
   CBlockFile file;
-  if (Result::OKAY != file.Create(path, STATE_BLOCK, "Supermodel Version " SUPERMODEL_VERSION)) return false;
+  if (Result::OKAY != file.CreateFromFile(fp, STATE_BLOCK, "Supermodel Version " SUPERMODEL_VERSION)) return false;
   int32_t version = STATE_FILE_VERSION;
   file.Write(&version, sizeof(version));
   file.Write(s_game.name);
@@ -343,10 +344,10 @@ static bool WriteState(const std::string &path)
   return true;
 }
 
-static bool ReadState(const std::string &path)
+static bool ReadStateFrom(FILE *fp)
 {
   CBlockFile file;
-  if (Result::OKAY != file.Load(path)) return false;
+  if (Result::OKAY != file.LoadFromFile(fp)) return false;
   if (Result::OKAY != file.FindBlock(STATE_BLOCK)) { file.Close(); return false; }
   int32_t version = 0;
   file.Read(&version, sizeof(version));
@@ -354,12 +355,6 @@ static bool ReadState(const std::string &path)
   s_model3->LoadState(&file);
   file.Close();
   return true;
-}
-
-static long FileSize(const std::string &path)
-{
-  struct stat info;
-  return stat(path.c_str(), &info) == 0 ? (long)info.st_size : -1;
 }
 
 /******************************************************************************
@@ -477,14 +472,15 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info)
     environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, descriptors.data());
   }
 
-  // A save state's size is fixed by the game; measure it once and keep headroom.
-  FileSystemPath::MakeDir(s_dataDir);
-  s_statePath = s_dataDir + "/state.bin";
+  // A save state's size is fixed by the game; measure it once (to a sizing memory stream).
   s_stateSize = 0;
-  if (WriteState(s_statePath))
   {
-    long size = FileSize(s_statePath);
-    if (size > 0) s_stateSize = ((size_t)size + 0x100000) & ~(size_t)0xFFFF;
+    char *buffer = nullptr;
+    size_t length = 0;
+    FILE *fp = open_memstream(&buffer, &length);
+    if (fp && WriteStateTo(fp)) { fclose(fp); s_stateSize = (length + 0x100000) & ~(size_t)0xFFFF; }
+    else if (fp) fclose(fp);
+    free(buffer);
   }
   InfoLog("%s (%s, Step %s) loaded; save states take %zu bytes; drawing with %s.", s_game.title.c_str(), s_game.name.c_str(),
           s_game.stepping.c_str(), s_stateSize, &sm_gl_is_null ? "the no-op GL" : s_glReady ? "WebGL2" : "nothing (no context)");
@@ -531,29 +527,37 @@ RETRO_API size_t retro_serialize_size(void) { return s_stateSize; }
 
 RETRO_API bool retro_serialize(void *data, size_t size)
 {
-  if (!s_model3 || size < s_stateSize || !WriteState(s_statePath)) return false;
-  FILE *fp = fopen(s_statePath.c_str(), "rb");
+  if (!s_model3 || size < s_stateSize) return false;
+  FILE *fp = fmemopen(data, size, "wb"); // straight into the caller's buffer
   if (!fp) return false;
-  size_t read = fread(data, 1, size, fp);
-  bool whole = feof(fp) != 0;
-  fclose(fp);
-  if (!whole) { ErrorLog("The save state outgrew its %zu bytes.", size); return false; }
-  memset((uint8_t *)data + read, 0, size - read);
+  bool ok = WriteStateTo(fp);
+  long written = ftell(fp);
+  if (fclose(fp) != 0 || written < 0) ok = false;
+  if (!ok) { ErrorLog("The save state did not fit %zu bytes.", size); return false; }
+  memset((uint8_t *)data + written, 0, size - (size_t)written);
   return true;
 }
 
 RETRO_API bool retro_unserialize(const void *data, size_t size)
 {
   if (!s_model3) return false;
-  FILE *fp = fopen(s_statePath.c_str(), "wb");
+  FILE *fp = fmemopen(const_cast<void *>(data), size, "rb");
   if (!fp) return false;
-  bool written = fwrite(data, 1, size, fp) == size;
+  bool ok = ReadStateFrom(fp);
   fclose(fp);
-  return written && ReadState(s_statePath);
+  return ok;
 }
 
 RETRO_API void retro_cheat_reset(void) {}
 RETRO_API void retro_cheat_set(unsigned index, bool enabled, const char *code) { (void)index; (void)enabled; (void)code; }
 RETRO_API unsigned retro_get_region(void) { return RETRO_REGION_NTSC; }
-RETRO_API void *retro_get_memory_data(unsigned id) { (void)id; return nullptr; }
-RETRO_API size_t retro_get_memory_size(unsigned id) { (void)id; return 0; }
+// The 8 MB PowerPC RAM (patch 0003): the gameplay-relevant memory. Rollback desync checks hash
+// this, not the whole save state, which also holds sound and render caches that drift harmlessly.
+RETRO_API void *retro_get_memory_data(unsigned id)
+{
+  return (id == RETRO_MEMORY_SYSTEM_RAM && s_model3) ? s_model3->GetRAMPtr() : nullptr;
+}
+RETRO_API size_t retro_get_memory_size(unsigned id)
+{
+  return (id == RETRO_MEMORY_SYSTEM_RAM && s_model3) ? 0x800000 : 0;
+}

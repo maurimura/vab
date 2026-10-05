@@ -412,15 +412,15 @@
           return seats.length === 1 ? `player ${seats[0]}` : `players ${seats.slice(0, -1).join(", ")} and ${seats.at(-1)}`;
         }
 
-        #netplay({ event, seat, ping, frame, delay, rollback }) {
+        #netplay({ event, seat, ping, frame, delay, rollback, fps }) {
           const me = `Player ${this.seat + 1}`;
           if (event === "synchronized" || event === "resumed") this.#show(`${me}, online with ${this.#others()}`);
           if (event === "interrupted") this.#show(`${me}. Waiting for player ${seat + 1}'s connection...`);
           if (event === "desync") this.#show(`${me}. Out of step with the others since frame ${frame}.`);
           if (event === "stats" && !this.#status.includes("Out of step") && !this.#status.includes("Waiting")) {
             const direct = [...this.#links.values()].every((link) => link.direct);
-            const lockstep = rollback === 0 ? `, ${delay} frames of input delay` : "";
-            this.#show(`${me}, online with ${this.#others()}, ${ping ?? "?"} ms${lockstep}, ${direct ? "direct" : "through the server"}`);
+            const mode = rollback === 0 ? `, ${delay} frames of input delay` : `, ${fps ?? "?"} fps`;
+            this.#show(`${me}, online with ${this.#others()}, ${ping ?? "?"} ms${mode}, ${direct ? "direct" : "through the server"}`);
           }
         }
 

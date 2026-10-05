@@ -1,0 +1,61 @@
+diff --git a/Src/BlockFile.cpp b/Src/BlockFile.cpp
+index 7528a9b..5a7046d 100644
+--- a/Src/BlockFile.cpp
++++ b/Src/BlockFile.cpp
+@@ -235,6 +235,24 @@ Result CBlockFile::FindBlock(const std::string &name)
+   return Result::FAIL;
+ }
+ 
++Result CBlockFile::CreateFromFile(FILE *file, const std::string &headerName, const std::string &comment)
++{
++  fp = file; ownFp = false;
++  if (NULL == fp) return Result::FAIL;
++  mode = 'w';
++  WriteBlockHeader(headerName, comment);
++  return Result::OKAY;
++}
++
++Result CBlockFile::LoadFromFile(FILE *file)
++{
++  fp = file; ownFp = false;
++  if (NULL == fp) return Result::FAIL;
++  mode = 'r';
++  fseek(fp, 0, SEEK_END); fileSize = ftell(fp); fseek(fp, 0, SEEK_SET);
++  return Result::OKAY;
++}
++
+ Result CBlockFile::Create(const std::string &file, const std::string &headerName, const std::string &comment)
+ {
+   fp = fopen(file.c_str(), "wb");
+@@ -265,7 +283,7 @@ Result CBlockFile::Load(const std::string &file)
+ void CBlockFile::Close(void)
+ {
+   if (fp != nullptr)
+-    fclose(fp);
++    if (ownFp) fclose(fp);
+   fp = nullptr;
+   mode = 0;
+ }
+diff --git a/Src/BlockFile.h b/Src/BlockFile.h
+index 6eff5cf..b4df220 100644
+--- a/Src/BlockFile.h
++++ b/Src/BlockFile.h
+@@ -197,6 +197,10 @@ public:
+      *    OKAY if successfully opened, otherwise FAIL.
+    */
+   Result Create(const std::string &file, const std::string &headerName, const std::string &comment);
++  // Create/Load backed by an already-open FILE* (open_memstream/fmemopen); not closed here,
++  // so state can be saved/loaded in memory with no file. (shim rollback saves)
++  Result CreateFromFile(FILE *file, const std::string &headerName, const std::string &comment);
++  Result LoadFromFile(FILE *file);
+ 
+   /*
+    * Load(file):
+@@ -243,6 +247,7 @@ private:
+ 
+   // File state data
+   FILE      *fp;
++  bool      ownFp = true;
+   int       mode;           // 'r' for read, 'w' for write
+   long int  fileSize;       // size of file in bytes
+   long int  blockStartPos;  // points to beginning of current block (or file) header

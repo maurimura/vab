@@ -186,6 +186,8 @@ class Cabinet {
   #watch;
   #next = performance.now();
   #nextStats = 0;
+  #frames = 0;       // displayed frames since the last stats report, for fps
+  #framesSince = performance.now();
   #buttonsSent = false;
 
   constructor(core, { seat, turns, lockstep, port }) {
@@ -240,7 +242,10 @@ class Cabinet {
         }
         if (performance.now() >= this.#nextStats) {
           const { delay, rollback } = this.#tuned;
-          postMessage({ type: "netplay", event: "stats", ping: session.ping(), delay, rollback });
+          const fps = Math.round((this.#frames * 1000) / (performance.now() - this.#framesSince));
+          postMessage({ type: "netplay", event: "stats", ping: session.ping(), delay, rollback, fps });
+          this.#frames = 0;
+          this.#framesSince = performance.now();
           this.#nextStats = performance.now() + 1000;
         }
       } else {
@@ -309,6 +314,7 @@ class Cabinet {
     // the original masks remain intact for rollback and the spectator input stream.
     this.core.present = present;
     this.core.run();
+    if (present) this.#frames++;
     // The core names the game's buttons on its first frame.
     if (!this.#buttonsSent && this.core.buttons.size) {
       this.#buttonsSent = true;
