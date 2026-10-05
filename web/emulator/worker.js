@@ -303,8 +303,8 @@ class Cabinet {
   #seats;
   /** How this core plays online: rollback limit, input delay, whether it's heavy. */
   #tuned;
-  /** The input delay in use, in frames, and the one the round trip called for at the start:
-   *  the delay goes above it when the others' input keeps arriving late, never below. */
+  /** The input delay in use, in frames, and the one the round trip called for at the start
+   *  (the floor until GGRS has measured the ping itself). */
   #delay;
   #delayFloor = MIN_DELAY;
   /** This machine at the last change of players, until the next session starts from it. */
@@ -524,7 +524,8 @@ class Cabinet {
    * A heavy core covers the ping with input delay (it can't roll back cheaply), so the delay
    * follows the others' lateness: a frame more when their input was late more than once this
    * second, or by a whole frame; a frame less after a quiet while, down to what the round trip
-   * called for, but not back to a delay that was late recently. The delay is
+   * calls for (GGRS's ping, which the start's measurement may have overstated, through the
+   * relay before the direct link opened), but not back to a delay that was late recently. The delay is
    * this machine's own: the others need no notice (netplay/src/lib.rs).
    */
   #tune(session, stalls, now) {
@@ -542,8 +543,11 @@ class Cabinet {
       return;
     }
     if (now - this.#quietSince < QUIET_MS || now < this.#retuneAt) return;
+    // GGRS's ping includes up to a frame of polling at each end, so a frame less of it.
+    const ping = session.ping();
+    const floor = ping === undefined ? this.#delayFloor : onlineDelay(Math.max(0, ping - frameMs), this.fps);
     const lower = this.#delay - 1;
-    if (lower < this.#delayFloor || (lower <= this.#lateAt.delay && now - this.#lateAt.time < REMEMBER_LATE_MS)) return;
+    if (lower < floor || (lower <= this.#lateAt.delay && now - this.#lateAt.time < REMEMBER_LATE_MS)) return;
     this.#setDelay(lower);
     this.#retuneAt = now + LOWER_COOLDOWN_MS;
   }
