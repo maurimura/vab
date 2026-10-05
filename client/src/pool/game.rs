@@ -201,6 +201,8 @@ impl Plugin for GamePlugin {
             )
             .add_systems(OnExit(Mode::Pool), hide_table)
             .add_systems(Update, rack_again);
+        #[cfg(feature = "test-hooks")]
+        app.add_systems(Update, test_hooks.after(play).run_if(in_state(Mode::Pool)));
     }
 }
 
@@ -1393,4 +1395,46 @@ fn draw_table(pockets: &[Pocket; 6]) -> Pixels {
         pixels.disc(pocket.hole + FELT, radius, POCKET);
     }
     pixels
+}
+
+/// For browser tests (testing.rs): what the game is doing.
+#[cfg(feature = "test-hooks")]
+fn test_hooks(game: Res<Game>) {
+    use serde_json::json;
+
+    let cue = match game.cue {
+        Cue::Aiming => "aiming",
+        Cue::Pulling(_) => "pulling",
+        Cue::Striking { .. } => "striking",
+        Cue::Rolling => "rolling",
+        Cue::Over => "over",
+        Cue::Placing { .. } => "placing",
+        Cue::Waiting => "waiting",
+    };
+    let balls: Vec<_> = game
+        .table
+        .balls
+        .iter()
+        .map(|ball| {
+            json!({
+                "number": ball.number,
+                "at": [ball.position.x, ball.position.y],
+                "down": ball.pocketed,
+            })
+        })
+        .collect();
+    crate::testing::report(
+        "pool",
+        json!({
+            "cue": cue,
+            "turn": game.rules.turn,
+            "my_turn": game.my_turn(),
+            "win": game.rules.win,
+            "balls": balls,
+            "seat": game.match_seat.as_ref().map(|(me, _)| *me),
+            "names": game.names(),
+            "opponent": game.opponent.is_some(),
+            "waiting_for_start": game.waiting_for_start,
+        }),
+    );
 }

@@ -85,6 +85,8 @@
         table_seats,
         push_frame,
       } from "./pkg/client.js";
+      // All of it, for the hooks browser tests use, in local builds only (client/src/testing.rs).
+      import * as client from "./pkg/client.js";
       // Whether the client was built gzipped (any build but wasm-release: see the Makefile).
       import { gzipped } from "./pkg/build.js";
       import { Room } from "./room.js";
@@ -583,6 +585,17 @@
           throw error;
         }
       });
+
+      // Browser tests' hooks (tools/e2e), in local builds only: what the game is doing, and
+      // shortcuts past walking and pushing a puck by hand.
+      if (client.vab_state) {
+        window.vab = {
+          state: () => JSON.parse(client.vab_state()),
+          goTo: (name) => client.vab_go_to(name),
+          throw: (vx, vy) => client.vab_throw(vx, vy),
+          id: () => room?.id,
+        };
+      }
 
       const bar = new URLSearchParams(location.search).get("room") ?? "main";
       const scheme = location.protocol === "https:" ? "wss" : "ws";

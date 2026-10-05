@@ -1,0 +1,12 @@
+{
+  "name": "vab-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser tests of the bar, against `make dev`",
+  "scripts": {
+    "shuffleboard": "node shuffleboard.mjs"
+  },
+  "dependencies": {
+    "puppeteer-core": "^24.0.0"
+  }
+}

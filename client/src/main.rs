@@ -10,6 +10,8 @@ mod room;
 mod seats;
 mod settings;
 mod shuffleboard;
+#[cfg(feature = "test-hooks")]
+mod testing;
 mod touch;
 
 use bevy::asset::AssetId;
@@ -77,6 +79,8 @@ fn main() {
         .resource_mut::<Assets<Font>>()
         .insert(AssetId::default(), Font::from_bytes(FONT.to_vec()))
         .expect("the default font handle takes a font");
+    #[cfg(feature = "test-hooks")]
+    app.add_plugins(testing::TestingPlugin);
     app.run();
 }
 
@@ -128,6 +132,8 @@ fn build_bar(
     commands.insert_resource(PoolTables::from_map(map));
     commands.insert_resource(HockeyTables::from_map(map));
     commands.insert_resource(ShuffleboardTables::from_map(map));
+    #[cfg(feature = "test-hooks")]
+    commands.insert_resource(testing::Objects(map.objects.clone()));
     commands.remove_resource::<LoadingMap>();
     mode.set(Mode::Walking);
 }
