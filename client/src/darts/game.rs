@@ -10,8 +10,9 @@
 //!
 //! A game of 301: three darts a turn, each taking what it scores off the player's 301, and the
 //! first to exactly zero wins; going below zero is a bust, and the turn's darts don't count.
-//! Alone at the board, the player throws for both sides. Esc goes back to the bar, and New game
-//! in `/settings` starts over.
+//! Alone at the board, the player throws for both sides; when someone is at the other seat, they
+//! play each other (online.rs), the first seat throwing red. Esc goes back to the bar, and New
+//! game in `/settings` starts over.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
@@ -22,11 +23,13 @@ use bevy::window::CursorOptions;
 use darts::{DARTS_PER_TURN, DOUBLE_OUTER, Flick, Hit, NUMBERS, START};
 use wasm_bindgen::prelude::*;
 
+use super::online::Message;
 use crate::Mode;
 use crate::chat::{Chat, chat_closed};
 use crate::help::Help;
 use crate::pixels::Pixels;
 use crate::pointer_lock;
+use crate::seats;
 use crate::settings::{NewDartsGame, Settings};
 use crate::touch::{self, Touch, TouchButton};
 
@@ -54,6 +57,11 @@ const HAND: Vec2 = Vec2::new(250.0, 190.0);
 const AIM_REACH: f32 = 230.0;
 /// How long "flick up to throw" shows after a let-go that didn't throw (seconds).
 const NO_FLICK_SHOWN_FOR: f32 = 2.5;
+/// Arrived with someone already at the board, how long to wait for their game before player 1
+/// starts a new one (neither had one), in seconds.
+const NO_GAME_COMING: f32 = 1.5;
+/// How often the thrower's hand goes to the other player while they aim, in seconds.
+const AIM_SEND_EVERY: f32 = 1.0 / 15.0;
 /// An Esc this soon after the pointer was let go is the one that let it go (the browser takes
 /// it, and may pass it on too): it doesn't also leave.
 const ESC_AFTER_UNLOCK: f32 = 0.3;
@@ -105,6 +113,11 @@ extern "C" {
     fn random() -> f64;
 }
 
+/// The dartboard the player is at, as the room names it (online::table_id, seats.rs). Set before
+/// switching to `Mode::Darts`.
+#[derive(Resource)]
+pub struct AtBoard(pub String);
+
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -114,7 +127,9 @@ impl Plugin for GamePlugin {
                 Update,
                 (
                     fit_canvas,
+                    sync,
                     play,
+                    send_aim,
                     draw,
                     show_text,
                     place_text,
@@ -193,6 +208,34 @@ struct Game {
     /// The pointer was locked last frame, and when it was last let go (in seconds of `Time`).
     was_locked: bool,
     unlocked_at: Option<f32>,
+    /// The board, as the room names it, while the player is at it.
+    board_id: Option<String>,
+    /// The other player at the board, when there is one: the game is between them.
+    opponent: Option<Opponent>,
+    /// Just arrived at a board with someone at it, and waiting for the game from them (or, both
+    /// new to it, for player 1 to start one), for `waiting_since` seconds.
+    waiting_for_start: bool,
+    waiting_since: f32,
+    /// This player's seat in a game against someone, and both players' names: kept while the
+    /// other seat is empty, so the game waits for them.
+    match_seat: Option<(usize, [String; 2])>,
+    /// The room last had this player at the board on their own: whoever arrives next gets the
+    /// game from them.
+    alone_here: bool,
+    /// The game is owed to this player, who just arrived: it goes between darts.
+    owe_game: Option<u32>,
+    /// Where the other player's hand has the dart, and whether they hold the throw, on their
+    /// turn.
+    their_hand: Option<(Vec2, bool)>,
+    /// The hand as last sent to the other player, and how long ago.
+    sent: (Option<(Vec2, bool)>, f32),
+}
+
+/// Who the player is playing against.
+struct Opponent {
+    /// The player's own seat (0 for player 1), and the other player's id in the room.
+    me: usize,
+    id: u32,
 }
 
 impl Default for Game {
@@ -211,6 +254,15 @@ impl Default for Game {
             was_pressed: true,
             was_locked: false,
             unlocked_at: None,
+            board_id: None,
+            opponent: None,
+            waiting_for_start: false,
+            waiting_since: 0.0,
+            match_seat: None,
+            alone_here: false,
+            owe_game: None,
+            their_hand: None,
+            sent: (None, 0.0),
         }
     }
 }
@@ -222,10 +274,82 @@ impl Game {
         self.phase = Phase::Aiming;
         self.stuck.clear();
         self.held = None;
+        self.waiting_for_start = false;
+        self.their_hand = None;
     }
 
-    /// Throws a dart that lands at `at` (millimetres): it flies there, and scores once it's in.
+    /// A new game, `first` throwing first. Against someone, only player 1 starts games, and
+    /// tells player 2. Alone at a game whose other seat is empty, it ends: the player takes both
+    /// sides again.
+    fn start_over(&mut self, first: usize) {
+        match &self.opponent {
+            None => {
+                self.match_seat = None;
+                self.begin(first);
+            }
+            Some(opponent) if opponent.me == 0 => {
+                let id = opponent.id;
+                self.begin(first);
+                self.send(id, &Message::Start { first });
+            }
+            Some(_) => {}
+        }
+    }
+
+    /// Whether this player may start the next game: alone, or as player 1 against someone.
+    fn may_start_over(&self) -> bool {
+        self.opponent
+            .as_ref()
+            .is_none_or(|opponent| opponent.me == 0)
+    }
+
+    fn send(&self, to: u32, message: &Message) {
+        if let Some(board) = &self.board_id {
+            seats::send(board, to, message);
+        }
+    }
+
+    /// Whether this player throws next: always when alone, on their turn in a game against
+    /// someone (who may have left their seat: then it waits for them).
+    fn my_turn(&self) -> bool {
+        !self.waiting_for_start
+            && self
+                .match_seat
+                .as_ref()
+                .is_none_or(|(me, _)| self.rules.turn == *me)
+    }
+
+    /// Both players' names: their names in the room in a game against someone, their darts'
+    /// colours when one player throws for both.
+    fn names(&self) -> [String; 2] {
+        match &self.match_seat {
+            Some((_, names)) => names.clone(),
+            None => NAMES.map(String::from),
+        }
+    }
+
+    /// Finishes whatever this board is still showing (a dart in the air, the end of a turn), for
+    /// the other player's next dart: they've moved on to it.
+    fn catch_up(&mut self) {
+        loop {
+            match self.phase {
+                Phase::Flying { to, hit, .. } => self.landed(to, hit),
+                Phase::TurnOver { .. } if self.rules.win.is_none() => self.next_turn(),
+                Phase::TurnOver { .. } | Phase::Aiming => return,
+            }
+        }
+    }
+
+    /// This player throws a dart that lands at `at`, telling the other player.
     fn throw(&mut self, at: Vec2) {
+        if let Some(opponent) = &self.opponent {
+            self.send(opponent.id, &Message::Throw { at });
+        }
+        self.fly(at);
+    }
+
+    /// A dart that lands at `at` (millimetres): it flies there, and scores once it's in.
+    fn fly(&mut self, at: Vec2) {
         self.held = None;
         self.flick = None;
         self.phase = Phase::Flying {
@@ -471,6 +595,11 @@ fn play(
 
     match game.phase {
         Phase::Aiming if game.rules.win.is_some() => {}
+        Phase::Aiming if !game.my_turn() => {
+            // The other player's throw: their hand moves as they say (sync).
+            game.held = None;
+            game.flick = None;
+        }
         Phase::Aiming => {
             if busy {
                 game.held = None;
@@ -517,16 +646,142 @@ fn play(
             let since = since + seconds;
             game.phase = Phase::TurnOver { since };
             match game.rules.win {
-                // A new game, the other player throwing first.
-                Some(_) if fresh_press => {
+                // A new game, the other player throwing first, if this player may start one.
+                Some(_) if fresh_press && game.may_start_over() => {
                     let first = 1 - game.rules.first;
-                    game.begin(first);
+                    game.start_over(first);
                 }
                 Some(_) => {}
                 None if since >= TURN_SHOWN_FOR || fresh_press => game.next_turn(),
                 None => {}
             }
         }
+    }
+}
+
+/// Sits at the board in the room, starts a game when someone arrives at the other seat (player 1
+/// starts it, or the one already there hands theirs over), goes back to both sides when they
+/// leave, and follows what they do on their turn.
+fn sync(at: Option<Res<AtBoard>>, time: Res<Time>, mut game: ResMut<Game>) {
+    let Some(at) = at else {
+        return;
+    };
+    let game = &mut *game;
+    if game.board_id.as_deref() != Some(at.0.as_str()) {
+        game.board_id = Some(at.0.clone());
+        seats::sit(&at.0);
+    }
+
+    let seats = seats::seats_at(&at.0);
+    let now = seats.as_ref().and_then(|seats| {
+        let me = seats.mine()?;
+        let (_, id) = seats.opponent()?;
+        Some((me, id, seats.names()))
+    });
+    let was_alone = game.alone_here;
+    game.alone_here = seats
+        .as_ref()
+        .is_some_and(|seats| seats.mine().is_some() && seats.opponent().is_none());
+    match (&game.opponent, now) {
+        (Some(opponent), Some((me, id, names))) if opponent.id == id && opponent.me == me => {
+            game.match_seat = Some((me, names));
+        }
+        (_, Some((me, id, names))) => {
+            game.opponent = Some(Opponent { me, id });
+            game.match_seat = Some((me, names));
+            game.held = None;
+            game.flick = None;
+            if was_alone {
+                // They arrived with this player already here: they get the game as it is.
+                game.owe_game = Some(id);
+            } else {
+                // Arrived with them already here: the game comes from them.
+                game.waiting_for_start = true;
+                game.waiting_since = 0.0;
+            }
+        }
+        (Some(_), None) => {
+            // They left: the game waits for them as it is, their seat empty.
+            game.opponent = None;
+            game.waiting_for_start = false;
+            game.owe_game = None;
+            game.their_hand = None;
+        }
+        (None, None) => {}
+    }
+
+    // Both new to the board, nobody had a game to give: player 1 starts one.
+    if game.waiting_for_start {
+        game.waiting_since += time.delta_secs();
+        if let Some(opponent) = game.opponent.as_ref().filter(|opponent| opponent.me == 0)
+            && game.waiting_since > NO_GAME_COMING
+        {
+            let id = opponent.id;
+            game.begin(0);
+            game.send(id, &Message::Start { first: 0 });
+        }
+    }
+    // The game owed to someone who arrived goes between darts.
+    if !matches!(game.phase, Phase::Flying { .. })
+        && let Some(id) = game.owe_game.take()
+    {
+        let whole = Message::Sync {
+            rules: game.rules.clone(),
+            stuck: game.stuck.clone(),
+        };
+        game.send(id, &whole);
+    }
+
+    let messages = seats::take_messages::<Message>(&at.0);
+    let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
+        return;
+    };
+    for (_, message) in messages.into_iter().filter(|(from, _)| *from == id) {
+        match message {
+            Message::Start { first } => game.begin(first),
+            Message::Sync { rules, stuck } => {
+                game.rules = rules;
+                game.stuck = stuck;
+                game.phase = if game.rules.turn_over() {
+                    Phase::TurnOver { since: 0.0 }
+                } else {
+                    Phase::Aiming
+                };
+                game.waiting_for_start = false;
+                game.their_hand = None;
+            }
+            Message::Aim { at, held } => {
+                game.catch_up();
+                if !game.my_turn() {
+                    game.their_hand = Some((at, held));
+                }
+            }
+            Message::Throw { at } => {
+                game.catch_up();
+                if !game.my_turn() && game.rules.win.is_none() {
+                    game.fly(at);
+                    game.their_hand = None;
+                }
+            }
+        }
+    }
+}
+
+/// On this player's turn against someone: where their hand has the dart goes to the other
+/// player as it moves, a few times a second.
+fn send_aim(time: Res<Time>, mut game: ResMut<Game>) {
+    let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
+        return;
+    };
+    if !game.my_turn() || game.phase != Phase::Aiming || game.rules.win.is_some() {
+        return;
+    }
+    game.sent.1 += time.delta_secs();
+    let now = (game.hand, game.held.is_some());
+    if game.sent.0 != Some(now) && game.sent.1 >= AIM_SEND_EVERY {
+        game.sent = (Some(now), 0.0);
+        let (at, held) = now;
+        game.send(id, &Message::Aim { at, held });
     }
 }
 
@@ -551,6 +806,12 @@ fn draw(
             let done = (since / FLIGHT).clamp(0.0, 1.0);
             let at = HAND.lerp(to_canvas(to), 1.0 - (1.0 - done) * (1.0 - done));
             draw_dart(&mut pixels, at, turn, 3.0 - 2.0 * done);
+        }
+        Phase::Aiming if game.rules.win.is_none() && !game.my_turn() => {
+            if let Some((at, held)) = game.their_hand {
+                let color = if held { STEADY } else { LOOSE };
+                draw_crosshair(&mut pixels, to_canvas(at), color);
+            }
         }
         Phase::Aiming if game.rules.win.is_none() => {
             let sway = settings.darts();
@@ -689,6 +950,13 @@ fn show_text(
 ) {
     let rules = &game.rules;
     let turn = rules.turn;
+    let names = game.names();
+    let me = game.match_seat.as_ref().map(|(me, _)| *me);
+    // The game waits on a player who left their seat, on their turn.
+    let waiting_on = match (me, &game.opponent) {
+        (Some(me), None) if turn != me && rules.win.is_none() => Some(&names[turn]),
+        _ => None,
+    };
     for (says, mut text, mut color) in &mut texts {
         let line = match *says {
             Says::Player(player) => {
@@ -702,7 +970,7 @@ fn show_text(
                 if color.0 != wanted {
                     color.0 = wanted;
                 }
-                format!("{}\n{}", NAMES[player], rules.remaining[player])
+                format!("{}\n{}", names[player], rules.remaining[player])
             }
             Says::Turn => {
                 // This turn's darts, and what they make.
@@ -719,17 +987,32 @@ fn show_text(
                 }
                 line
             }
+            Says::Status if game.waiting_for_start => "Joining the game...".to_string(),
+            Says::Status if let Some(name) = waiting_on => {
+                format!("Waiting for {name} to come back.\n\nNew game (in /settings) starts over.")
+            }
             Says::Status => match (rules.win, game.phase) {
                 (Some(winner), _) => {
-                    let again = if touch.is_on() { "Tap" } else { "Click" };
-                    format!("{} wins!\n\n{again} to play again.", NAMES[winner])
+                    let again = if !game.may_start_over() {
+                        format!("Waiting for {} to play again.", names[0])
+                    } else if touch.is_on() {
+                        "Tap to play again.".to_string()
+                    } else {
+                        "Click to play again.".to_string()
+                    };
+                    format!("{} wins!\n\n{again}", names[winner])
                 }
                 (None, Phase::TurnOver { .. }) if rules.busted => {
-                    format!("Bust! {} stays on {}.", NAMES[turn], rules.remaining[turn])
+                    format!("Bust! {} stays on {}.", names[turn], rules.remaining[turn])
                 }
                 (None, Phase::TurnOver { .. }) => {
-                    format!("{} scores {}.", NAMES[turn], rules.turn_points())
+                    format!("{} scores {}.", names[turn], rules.turn_points())
                 }
+                (None, _) if !game.my_turn() => format!(
+                    "{}'s throw, dart {} of {DARTS_PER_TURN}.\n\nFrom {START} to exactly 0 wins.",
+                    names[turn],
+                    rules.darts.len() + 1,
+                ),
                 (None, _) if Control::now(&touch) == Control::Paused => {
                     "Click the board to take aim.\n\nEsc leaves.".to_string()
                 }
@@ -743,9 +1026,12 @@ fn show_text(
                         Some(since) if since < NO_FLICK_SHOWN_FOR => "Flick up to throw!\n\n",
                         _ => "",
                     };
+                    let whose = match me {
+                        Some(_) => "Your throw".to_string(),
+                        None => format!("{}'s throw", names[turn]),
+                    };
                     format!(
-                        "{flick_up}{}'s throw, dart {} of {DARTS_PER_TURN}.\n\n{how}\n\nFrom {START} to exactly 0 wins.",
-                        NAMES[turn],
+                        "{flick_up}{whose}, dart {} of {DARTS_PER_TURN}.\n\n{how}\n\nFrom {START} to exactly 0 wins.",
                         rules.darts.len() + 1,
                     )
                 }
@@ -790,7 +1076,7 @@ fn new_game(mut asked: MessageReader<NewDartsGame>, game: Option<ResMut<Game>>) 
         return;
     }
     if let Some(mut game) = game {
-        game.begin(0);
+        game.start_over(0);
     }
 }
 
@@ -832,6 +1118,17 @@ fn hide_board(
     }
     game.held = None;
     game.flick = None;
+    // Away from the board: the game stays as it is for whoever is left there, their seat
+    // waiting. This player carries on from it if they come back alone, throwing for both, and
+    // gets it from the other player if they're still there.
+    seats::stand();
+    game.board_id = None;
+    game.opponent = None;
+    game.match_seat = None;
+    game.alone_here = false;
+    game.owe_game = None;
+    game.waiting_for_start = false;
+    game.their_hand = None;
     for overlay in &overlays {
         commands.entity(overlay).despawn();
     }
@@ -848,6 +1145,7 @@ fn test_hooks(mut game: ResMut<Game>) {
     let game = &mut *game;
     if game.phase == Phase::Aiming
         && game.rules.win.is_none()
+        && game.my_turn()
         && let Some(at) = testing::take_dart()
     {
         game.throw(at);
@@ -873,6 +1171,12 @@ fn test_hooks(mut game: ResMut<Game>) {
             "aim": [game.aim.x, game.aim.y],
             "last_flick": [game.last_flick.x, game.last_flick.y],
             "held": game.held,
+            "my_turn": game.my_turn(),
+            "seat": game.match_seat.as_ref().map(|(me, _)| *me),
+            "names": game.names(),
+            "opponent": game.opponent.is_some(),
+            "waiting_for_start": game.waiting_for_start,
+            "their_hand": game.their_hand.map(|(at, held)| json!({ "at": [at.x, at.y], "held": held })),
             "locked": pointer_lock::locked(),
             "lock_failed": pointer_lock::failed(),
         }),
