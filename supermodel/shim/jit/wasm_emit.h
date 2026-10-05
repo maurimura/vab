@@ -45,6 +45,7 @@ enum : uint8_t {
 // Builds the body of one function (the instruction stream between locals and OP_END).
 struct Code {
   std::vector<uint8_t> bytes;
+  int numLocals = 0; // i32 locals the block declares (register allocation)
 
   void u8(uint8_t b) { bytes.push_back(b); }
   // LEB128, unsigned and signed, as the WebAssembly binary format uses throughout.
@@ -221,7 +222,8 @@ inline std::vector<uint8_t> module_block(const Code &code) {
   std::vector<uint8_t> bodies;
   put_uleb(bodies, 1);
   std::vector<uint8_t> body;
-  put_uleb(body, 0);
+  if (code.numLocals > 0) { put_uleb(body, 1); put_uleb(body, (uint32_t)code.numLocals); body.push_back(WASM_I32); }
+  else put_uleb(body, 0);
   body.insert(body.end(), code.bytes.begin(), code.bytes.end());
   body.push_back(OP_END);
   put_uleb(bodies, (uint32_t)body.size());

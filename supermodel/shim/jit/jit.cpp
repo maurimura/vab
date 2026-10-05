@@ -139,10 +139,9 @@ extern "C" int supermodel_jit_test_integer(int seed, int blocks, int blockLen)
     for (int i = 0; i < 8; i++) { initCr[i] = rng() & 0xF; cr[i] = initCr[i]; }
     initXer = rng(); *xer = initXer; // random SO/OV/CA so the CR0 SO bit is exercised
 
-    jit::Code c;
-    bool covered = true;
-    for (uint32_t instr : instrs) if (!jit::compile_instr(c, regs, instr)) { covered = false; break; }
-    if (!covered) continue;
+    int count = 0;
+    jit::Code c = jit::compile_block(instrs.data(), (int)instrs.size(), regs, count);
+    if (count != (int)instrs.size()) continue; // all covered
     std::vector<uint8_t> mod = jit::module_block(c);
     sm_jit_run_module(mod.data(), (int)mod.size());
 
@@ -184,12 +183,9 @@ extern "C" double supermodel_jit_benchmark(int blockLen, int iterations)
   jit::Regs regs = make_regs();
   rng_state = 20260105;
   std::vector<uint32_t> instrs;
-  jit::Code c;
-  for (int i = 0; i < blockLen; i++) {
-    uint32_t instr = random_instr();
-    if (!jit::compile_instr(c, regs, instr)) { i--; continue; } // only covered ops
-    instrs.push_back(instr);
-  }
+  for (int i = 0; i < blockLen; i++) instrs.push_back(random_instr());
+  int count = 0;
+  jit::Code c = jit::compile_block(instrs.data(), (int)instrs.size(), regs, count);
   std::vector<uint8_t> mod = jit::module_block(c);
   int idx = sm_jit_install(mod.data(), (int)mod.size());
   if (idx < 0) { printf("[jit] benchmark: install failed\n"); return -1; }
@@ -255,10 +251,9 @@ extern "C" int supermodel_jit_test_memory(int seed, int blocks, int blockLen)
     initXer = rng(); *xer = initXer;
     for (uint32_t i = 0; i < WORDS; i++) { initMem[i] = rng(); ppc_jit_write32(REGION + i * 4, initMem[i]); }
 
-    jit::Code c;
-    bool covered = true;
-    for (uint32_t instr : instrs) if (!jit::compile_instr(c, regs, instr)) { covered = false; break; }
-    if (!covered) continue;
+    int count = 0;
+    jit::Code c = jit::compile_block(instrs.data(), (int)instrs.size(), regs, count);
+    if (count != (int)instrs.size()) continue; // all covered
     std::vector<uint8_t> mod = jit::module_block(c);
     sm_jit_run_module(mod.data(), (int)mod.size());
 
@@ -297,19 +292,25 @@ extern "C" int supermodel_jit_test_memory(int seed, int blocks, int blockLen)
 struct CachedBlock { uint32_t fn; int count; };
 static std::unordered_map<uint32_t, CachedBlock> *g_blocks;
 
+// A direct-mapped cache in front of the map, so the common case (a hot PC) is one array access
+// instead of a hash lookup -- this is on the path of every instruction, JIT or interpreted.
+struct FastEntry { uint32_t pc; uint32_t fn; int count; };
+static const uint32_t FAST_BITS = 17, FAST_SIZE = 1u << FAST_BITS, FAST_MASK = FAST_SIZE - 1;
+static FastEntry *g_fast;
+
 extern "C" uint32_t jit_block_for(uint32_t pc, const uint32_t *code, int maxLen, int *outCount)
 {
+  if (!g_fast) { g_fast = new FastEntry[FAST_SIZE]; for (uint32_t i = 0; i < FAST_SIZE; i++) g_fast[i].pc = 0xFFFFFFFFu; }
+  FastEntry &fe = g_fast[(pc >> 2) & FAST_MASK];
+  if (fe.pc == pc) { *outCount = fe.count; return fe.fn; }
+
   if (!g_blocks) g_blocks = new std::unordered_map<uint32_t, CachedBlock>();
   auto it = g_blocks->find(pc);
-  if (it != g_blocks->end()) { *outCount = it->second.count; return it->second.fn; }
+  if (it != g_blocks->end()) { fe = { pc, it->second.fn, it->second.count }; *outCount = it->second.count; return it->second.fn; }
 
   jit::Regs regs = make_regs();
-  jit::Code c;
   int count = 0;
-  for (int i = 0; i < maxLen; i++) {
-    if (!jit::compile_instr(c, regs, code[i])) break; // stops at a branch or uncovered op (no partial emit)
-    count++;
-  }
+  jit::Code c = jit::compile_block(code, maxLen, regs, count);
   CachedBlock blk = { 0, count };
   if (count > 0) {
     std::vector<uint8_t> mod = jit::module_block(c);
@@ -317,9 +318,10 @@ extern "C" uint32_t jit_block_for(uint32_t pc, const uint32_t *code, int maxLen,
     if (idx > 0) blk.fn = (uint32_t)idx; else blk.count = 0; // install failed -> fall back to interp
   }
   (*g_blocks)[pc] = blk;
+  g_fast[(pc >> 2) & FAST_MASK] = { pc, blk.fn, blk.count };
   *outCount = blk.count;
   return blk.fn;
 }
 
 // Drop all cached blocks (e.g. when a new game loads and the code changes).
-extern "C" void supermodel_jit_flush(void) { if (g_blocks) g_blocks->clear(); }
+extern "C" void supermodel_jit_flush(void) { if (g_blocks) g_blocks->clear(); if (g_fast) for (uint32_t i = 0; i < FAST_SIZE; i++) g_fast[i].pc = 0xFFFFFFFFu; }

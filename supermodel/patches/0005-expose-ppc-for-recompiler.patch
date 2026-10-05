@@ -1,8 +1,8 @@
 diff --git a/Src/CPU/PowerPC/ppc.cpp b/Src/CPU/PowerPC/ppc.cpp
-index 1343e69..df0ffad 100644
+index 1343e69..d177da6 100644
 --- a/Src/CPU/PowerPC/ppc.cpp
 +++ b/Src/CPU/PowerPC/ppc.cpp
-@@ -653,6 +653,12 @@ static void (* optable59[1024])(UINT32);
+@@ -653,6 +653,13 @@ static void (* optable59[1024])(UINT32);
  static void (* optable63[1024])(UINT32);
  static void (* optable[64])(UINT32);
  
@@ -10,12 +10,13 @@ index 1343e69..df0ffad 100644
 +// ppc603.c runs a compiled block at the current PC if one exists. jit_block_for (shim) returns
 +// the block's table index (a function pointer) and its instruction count, or 0 for none.
 +static bool ppc_jit_enabled = false;
++static unsigned long long g_jit_exec_instrs = 0, g_jit_exec_blocks = 0, g_interp_instrs = 0;
 +extern "C" uint32_t jit_block_for(UINT32 pc, const UINT32 *code, int maxLen, int *count);
 +
  #include "ppc603.c"
  
  /********************************************************************/
-@@ -1161,3 +1167,34 @@ UINT32 ppc_read_msr()
+@@ -1161,3 +1168,36 @@ UINT32 ppc_read_msr()
  {
  	return ppc_get_msr();
  }
@@ -26,6 +27,8 @@ index 1343e69..df0ffad 100644
 +// the JIT is validated against. Placed after ppc603.c/ppc_ops.c are included, so the op tables
 +// are in scope.
 +extern "C" void ppc_jit_set_enabled(int on) { ppc_jit_enabled = (on != 0); }
++extern "C" double ppc_jit_stat(int w) { return (double)(w == 0 ? g_jit_exec_instrs : w == 1 ? g_jit_exec_blocks : g_interp_instrs); }
++extern "C" void ppc_jit_stats_reset(void) { g_jit_exec_instrs = g_jit_exec_blocks = g_interp_instrs = 0; }
 +extern "C" UINT32 *ppc_jit_gpr(void) { return ppc.r; }
 +extern "C" UINT32 ppc_jit_pc(void) { return ppc.pc; }
 +extern "C" UINT8 *ppc_jit_cr(void) { return ppc.cr; }        // condition register, 8 bytes

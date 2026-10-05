@@ -66,8 +66,15 @@ Done and validated: runtime codegen (M1), integer blocks (M2), CR0 flags (M3 par
 (call into the Bus handlers), and the dispatch integration -- the JIT is wired into the execute
 loop and runs the real game BYTE-IDENTICAL to the interpreter over 600 frames (no desync).
 
-It is not yet faster: with only integer + load/store covered, blocks end at the first branch,
-compare, shift or rotate, so the dispatch overhead isn't amortised, and every register access is
-a memory round-trip (0.70x -- slower -- right now). The speedup needs: register allocation into
-WASM locals (avoid the memory round-trips), and more coverage so blocks are long (rlwinm/shifts,
-compares, branches). Those are the next steps. Enable with supermodel_set("Jit","true").
+Coverage now includes integer, flags, load/store, compares, rlwinm, shifts and the logical ops;
+registers are kept in WASM locals per block. Measured on the real game: the JIT runs 55% of all
+instructions and stays byte-identical to the interpreter, but it is still 0.79x (slightly slower).
+
+Why: blocks average only 2.2 instructions, because a branch (or any still-uncovered op: FP,
+mfspr/mtspr, update-form loads) ends the block, and each block returns to the dispatch loop. The
+per-block cost then dominates. A direct-mapped block cache and advancing the code pointer directly
+(instead of ppc_change_pc) got it from 0.70x to 0.79x, but the structural fix is **block linking**:
+compile branches and let a run of blocks execute without returning to the loop, so effective block
+length is tens of instructions. That, plus covering branches / FP / update-forms to cut the 45%
+still interpreted, is what turns this net-faster. Enable with supermodel_set("Jit","true"); off by
+default. ppc_jit_stat() reports coverage and block length.

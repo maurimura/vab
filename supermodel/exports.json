@@ -33,5 +33,7 @@
   "_supermodel_jit_benchmark",
   "_supermodel_jit_test_memory",
   "_ppc_jit_set_enabled",
-  "_supermodel_jit_flush"
+  "_supermodel_jit_flush",
+  "_ppc_jit_stat",
+  "_ppc_jit_stats_reset"
 ]

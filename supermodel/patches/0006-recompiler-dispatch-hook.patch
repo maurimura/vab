@@ -1,5 +1,5 @@
 diff --git a/Src/CPU/PowerPC/ppc603.c b/Src/CPU/PowerPC/ppc603.c
-index 9cbc87e..f63e012 100644
+index 9cbc87e..f91bcb1 100644
 --- a/Src/CPU/PowerPC/ppc603.c
 +++ b/Src/CPU/PowerPC/ppc603.c
 @@ -285,6 +285,23 @@ int ppc_execute(int cycles)
@@ -18,11 +18,20 @@ index 9cbc87e..f63e012 100644
 +			{
 +				((void (*)(void))(uintptr_t)jitFn)();
 +				ppc.npc = ppc.pc + 4 * jitCount;
-+				ppc.icount -= jitCount;
-+				ppc_change_pc(ppc.npc);
++				ppc.icount -= jitCount; extern unsigned long long g_jit_exec_instrs, g_jit_exec_blocks; g_jit_exec_instrs += jitCount; g_jit_exec_blocks++;
++				ppc.op += jitCount; // straight-line block: the code pointer advances linearly (no range search)
 +				continue;
 +			}
 +		}
  		
  		// Debug breakpoints
  		/*
+@@ -315,7 +332,7 @@ int ppc_execute(int cycles)
+ 			default:	optable[opcode >> 26](opcode); break;
+ 		}
+ 
+-		ppc.icount--;
++		ppc.icount--; if (ppc_jit_enabled) { extern unsigned long long g_interp_instrs; g_interp_instrs++; }
+ 		
+ 		if (ppc.icount == ppc.dec_trigger_cycle)
+ 		{
