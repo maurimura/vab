@@ -1,7 +1,9 @@
-//! Shuffleboard tables (objects/shuffleboard, four cells long): next to one, a hint says so, and
-//! E (or the Play button on a touch screen) steps up to it to play (game.rs).
+//! Shuffleboard tables (objects/shuffleboard, four cells long): next to one, a hint says so and
+//! how many play at it, and E (or the Play button on a touch screen) steps up to it to play
+//! (game.rs), against whoever is at the other seat (online.rs).
 
 mod game;
+mod online;
 
 use bevy::prelude::*;
 use world::{Map, Placed};
@@ -12,6 +14,7 @@ use crate::chat::chat_closed;
 use crate::help::help_closed;
 use crate::player::Player;
 use crate::pool::next_to;
+use crate::seats;
 use crate::settings::settings_closed;
 use crate::touch::{self, Touch, TouchButton};
 
@@ -103,11 +106,14 @@ fn show_hint(
         *visibility = Visibility::Hidden;
         return;
     };
+    let seated = seats::seated(&online::table_id(IVec2::new(table.x, table.y)));
     // The button says what to press.
-    let label = if touch.is_on() {
-        "Shuffleboard"
-    } else {
-        "E  Shuffleboard"
+    let label = match (seated, touch.is_on()) {
+        (0, true) => "Shuffleboard",
+        (0, false) => "E  Shuffleboard",
+        (1, true) => "Shuffleboard - 1 of 2 playing",
+        (1, false) => "E  Shuffleboard - 1 of 2 playing, join in",
+        _ => "Shuffleboard - 2 playing",
     };
     place_hint(
         label,
@@ -118,6 +124,7 @@ fn show_hint(
 }
 
 fn step_up(
+    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     touch: Res<Touch>,
     tables: Option<Res<ShuffleboardTables>>,
@@ -125,12 +132,20 @@ fn step_up(
     mut mode: ResMut<NextState<Mode>>,
 ) {
     let pressed = keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Shuffleboard);
-    let near = tables
+    let Some(table) = tables
         .as_ref()
-        .and_then(|tables| next_to(&tables.0, player.feet));
-    if pressed && near.is_some() {
-        mode.set(Mode::Shuffleboard);
+        .and_then(|tables| next_to(&tables.0, player.feet))
+        .filter(|_| pressed)
+    else {
+        return;
+    };
+    let id = online::table_id(IVec2::new(table.x, table.y));
+    // Both seats taken: nowhere to play.
+    if seats::seated(&id) >= 2 {
+        return;
     }
+    commands.insert_resource(game::AtTable(id));
+    mode.set(Mode::Shuffleboard);
 }
 
 fn hide_hint(

@@ -1,8 +1,9 @@
-//! Tables the players in the room sit at together, the pool and air hockey tables: each is a
-//! place with seats in the room, as a cabinet is ("pool:x,y", "hockey:x,y"), and the players at
-//! one send each other messages about their game, which web/index.html passes on. Each game
-//! has its own messages (pool/online.rs, hockey/online.rs); here they go out as JSON with the
-//! table's name added, and come back in for the table they're for.
+//! Tables the players in the room sit at together, the pool, air hockey and shuffleboard
+//! tables: each is a place with seats in the room, as a cabinet is ("pool:x,y", "hockey:x,y",
+//! "shuffleboard:x,y"), and the players at one send each other messages about their game, which
+//! web/index.html passes on. Each game has its own messages (pool/online.rs, hockey/online.rs,
+//! shuffleboard/online.rs); here they go out as JSON with the table's name added, and come back
+//! in for the table they're for.
 
 use std::cell::RefCell;
 

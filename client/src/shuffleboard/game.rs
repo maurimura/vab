@@ -11,7 +11,9 @@
 //! has the flick's strength), and crossing the foul line lets it go. Each player throws four
 //! pucks a round, in turn; once all eight have stopped, the player with the puck furthest down
 //! scores each of theirs further than the other's best (the shuffleboard crate). First to 15.
-//! Alone at the table, the player throws for both sides. Esc goes back to the bar.
+//! Alone at the table, the player throws for both sides; when someone is at the other seat,
+//! they play each other (online.rs), the first seat throwing red. Esc goes back to the bar, and
+//! New game in `/settings` starts over.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -22,11 +24,13 @@ use shuffleboard::{
     WINNING_SCORE,
 };
 
+use super::online::Message;
 use crate::Mode;
 use crate::chat::{Chat, chat_closed};
 use crate::help::Help;
 use crate::pixels::Pixels;
-use crate::settings::{Knob, Settings};
+use crate::seats;
+use crate::settings::{Knob, NewShuffleboardGame, Settings};
 use crate::touch::{self, Touch, TouchButton};
 
 /// The image the table is drawn into.
@@ -69,6 +73,12 @@ const SOFTEST_THROW: f32 = 20.0;
 /// shows (seconds; a click moves on).
 const LOOK_FOR: f32 = 1.0;
 const ROUND_SHOWN_FOR: f32 = 3.0;
+/// Arrived with someone already at the table, how long to wait for their game before player 1
+/// starts a new one (neither had one), in seconds.
+const NO_GAME_COMING: f32 = 1.5;
+/// How often the waiting puck goes to the other player while the thrower slides it about, in
+/// seconds.
+const HOLD_SEND_EVERY: f32 = 1.0 / 15.0;
 
 /// Players' names, by their pucks' colour, while one player throws for both.
 const NAMES: [&str; 2] = ["Red", "Blue"];
@@ -112,6 +122,11 @@ const BACKDROPS: [(IVec2, IVec2); 2] = [
     (IVec2::new(232, 52), IVec2::new(318, 120)),
 ];
 
+/// The shuffleboard table the player is at, as the room names it (online::table_id, seats.rs).
+/// Set before switching to `Mode::Shuffleboard`.
+#[derive(Resource)]
+pub struct AtTable(pub String);
+
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -121,7 +136,9 @@ impl Plugin for GamePlugin {
                 Update,
                 (
                     fit_canvas,
+                    sync,
                     play,
+                    send_hold,
                     look,
                     draw,
                     show_text,
@@ -131,6 +148,7 @@ impl Plugin for GamePlugin {
                     .chain()
                     .run_if(in_state(Mode::Shuffleboard)),
             )
+            .add_systems(Update, new_game)
             .add_systems(OnExit(Mode::Shuffleboard), hide_table);
     }
 }
@@ -142,6 +160,8 @@ enum Phase {
     Throwing,
     /// Thrown: everything slides until it stops.
     Sliding,
+    /// The other player's throw has stopped here, and waits for where it stopped on their table.
+    Waiting,
     /// Everything has stopped; the view looks at the far end for a moment.
     Stopped { since: f32 },
     /// The round is over, its score showing.
@@ -173,6 +193,36 @@ struct Game {
     view: f32,
     /// The pointer was down last frame: only a fresh press grabs, or moves the game on.
     was_pressed: bool,
+    /// The table, as the room names it, while the player is at it.
+    table_id: Option<String>,
+    /// The other player at the table, when there is one: the game is between them.
+    opponent: Option<Opponent>,
+    /// Just arrived at a table with someone at it, and waiting for the game from them (or, both
+    /// new to it, for player 1 to start one), for `waiting_since` seconds.
+    waiting_for_start: bool,
+    waiting_since: f32,
+    /// This player's seat in a game against someone, and both players' names: kept while the
+    /// other seat is empty, so the game waits for them.
+    match_seat: Option<(usize, [String; 2])>,
+    /// The room last had this player at the table on their own: whoever arrives next gets the
+    /// game from them.
+    alone_here: bool,
+    /// The game is owed to this player, who just arrived: it goes between throws.
+    owe_game: Option<u32>,
+    /// The settings the other player threw with, while their throw slides here.
+    their_settings: Option<shuffleboard::Settings>,
+    /// Where the other player's throw ended on their table (the pucks on it, and those off it),
+    /// when that came in before it stopped here.
+    their_result: Option<(Vec<Puck>, Vec<Puck>)>,
+    /// The waiting puck as last sent to the other player, and how long ago.
+    sent: (Vec2, f32),
+}
+
+/// Who the player is playing against.
+struct Opponent {
+    /// The player's own seat (0 for player 1), and the other player's id in the room.
+    me: usize,
+    id: u32,
 }
 
 impl Default for Game {
@@ -192,6 +242,155 @@ impl Game {
             fallen: Vec::new(),
             view: VIEW_NEAR,
             was_pressed: true,
+            table_id: None,
+            opponent: None,
+            waiting_for_start: false,
+            waiting_since: 0.0,
+            match_seat: None,
+            alone_here: false,
+            owe_game: None,
+            their_settings: None,
+            their_result: None,
+            sent: (READY, 0.0),
+        }
+    }
+
+    /// A new game, `first` throwing first: the table cleared, and the scores back to nothing.
+    fn begin(&mut self, first: usize) {
+        self.table.pucks.clear();
+        self.rules = shuffleboard::Game::new(first);
+        self.phase = Phase::Throwing;
+        self.ready = READY;
+        self.grab = None;
+        self.fallen.clear();
+        self.waiting_for_start = false;
+        self.their_settings = None;
+        self.their_result = None;
+    }
+
+    /// A new game, `first` throwing first. Against someone, only player 1 starts games, and
+    /// tells player 2. Alone at a game whose other seat is empty, it ends: the player takes both
+    /// sides again.
+    fn start_over(&mut self, first: usize) {
+        match &self.opponent {
+            None => {
+                self.match_seat = None;
+                self.begin(first);
+            }
+            Some(opponent) if opponent.me == 0 => {
+                let id = opponent.id;
+                self.begin(first);
+                self.send(id, &Message::Start { first });
+            }
+            Some(_) => {}
+        }
+    }
+
+    /// Whether this player may start the next game: alone, or as player 1 against someone.
+    fn may_start_over(&self) -> bool {
+        self.opponent
+            .as_ref()
+            .is_none_or(|opponent| opponent.me == 0)
+    }
+
+    fn send(&self, to: u32, message: &Message) {
+        if let Some(table) = &self.table_id {
+            seats::send(table, to, message);
+        }
+    }
+
+    /// Whether this player throws next: always when alone, on their turn in a game against
+    /// someone (who may have left their seat: then it waits for them).
+    fn my_turn(&self) -> bool {
+        !self.waiting_for_start
+            && self
+                .match_seat
+                .as_ref()
+                .is_none_or(|(me, _)| self.rules.turn() == *me)
+    }
+
+    /// Both players' names: their names in the room in a game against someone, their pucks'
+    /// colours when one player throws for both.
+    fn names(&self) -> [String; 2] {
+        match &self.match_seat {
+            Some((_, names)) => names.clone(),
+            None => NAMES.map(String::from),
+        }
+    }
+
+    /// The whole game, for a player arriving: every puck, and where the game is at.
+    fn whole_game(&self) -> Message {
+        Message::Sync {
+            pucks: self.table.pucks.clone(),
+            fallen: self.fallen.clone(),
+            rules: self.rules.clone(),
+        }
+    }
+
+    /// Carries on the game as the other player had it.
+    fn take_whole_game(&mut self, pucks: Vec<Puck>, fallen: Vec<Puck>, rules: shuffleboard::Game) {
+        self.table.pucks = pucks;
+        self.fallen = fallen;
+        self.rules = rules;
+        self.phase = Phase::Throwing;
+        self.ready = READY;
+        self.grab = None;
+        self.waiting_for_start = false;
+        self.their_settings = None;
+        self.their_result = None;
+    }
+
+    /// Where the other player's throw ended on their table: everything goes there.
+    fn take_their_result(&mut self, (pucks, fallen): (Vec<Puck>, Vec<Puck>)) {
+        self.table.pucks = pucks;
+        self.fallen = fallen;
+        self.their_settings = None;
+        self.phase = Phase::Stopped { since: 0.0 };
+    }
+
+    /// Everything slides on until it stops, at once.
+    fn finish_slide(&mut self) {
+        let fell = self.table.settle();
+        self.fell(fell);
+        self.table.clear_short();
+        self.their_settings = None;
+        self.phase = Phase::Stopped { since: 0.0 };
+    }
+
+    /// Once everything has stopped and been looked at: the round's score, or the next throw.
+    fn after_stop(&mut self) {
+        self.phase = if self.rules.round_over() {
+            Phase::Scored {
+                since: 0.0,
+                scored: self.table.round_score(),
+            }
+        } else {
+            Phase::Throwing
+        };
+        self.ready = READY;
+    }
+
+    /// Once the round's score has shown: it counts, and the next round starts.
+    fn after_score(&mut self) {
+        self.rules.score_round(&mut self.table);
+        self.fallen.clear();
+        self.ready = READY;
+        self.phase = Phase::Throwing;
+    }
+
+    /// Finishes whatever this table is still showing (a throw sliding, the look at the far end,
+    /// a round's score), for the other player's next throw: they've moved on to it.
+    fn catch_up(&mut self) {
+        loop {
+            match self.phase {
+                Phase::Throwing => return,
+                Phase::Sliding | Phase::Waiting => match self.their_result.take() {
+                    Some(result) => self.take_their_result(result),
+                    None => self.finish_slide(),
+                },
+                Phase::Stopped { .. } => self.after_stop(),
+                Phase::Scored { .. } => self.after_score(),
+            }
         }
     }
 
@@ -369,7 +568,10 @@ fn play(
 ) {
     let game = &mut *game;
     let seconds = time.delta_secs();
-    game.table.settings = settings.shuffleboard();
+    // The other player's throw slides with their settings.
+    game.table.settings = game
+        .their_settings
+        .unwrap_or_else(|| settings.shuffleboard());
     let pressed = mouse.pressed(MouseButton::Left) || touch.finger().is_some();
     let busy = chat.is_open() || help.is_open() || settings.is_open();
     // As if held all along while a panel is up, so the click that closes it does nothing here.
@@ -392,10 +594,15 @@ fn play(
     match game.phase {
         Phase::Throwing => {
             if let Some(winner) = game.rules.win {
-                if fresh_press {
-                    *game = Game::new(winner);
-                    game.was_pressed = true;
+                // A new game, the winner throwing first, if this player may start one.
+                if fresh_press && game.may_start_over() {
+                    game.start_over(winner);
                 }
+                return;
+            }
+            if !game.my_turn() {
+                // The other player's throw: their puck moves as they say (sync).
+                game.grab = None;
                 return;
             }
             throw(
@@ -410,34 +617,40 @@ fn play(
         Phase::Sliding => {
             let fell = game.table.advance(seconds);
             game.fell(fell);
-            if !game.table.moving() {
+            if game.table.moving() {
+                return;
+            }
+            if game.their_settings.is_some() {
+                // The other player's throw: it ends where it ended on their table.
+                match game.their_result.take() {
+                    Some(result) => game.take_their_result(result),
+                    None => game.phase = Phase::Waiting,
+                }
+            } else {
                 game.table.clear_short();
+                if let Some(opponent) = &game.opponent {
+                    let settled = Message::Settled {
+                        pucks: game.table.pucks.clone(),
+                        fallen: game.fallen.clone(),
+                    };
+                    game.send(opponent.id, &settled);
+                }
                 game.phase = Phase::Stopped { since: 0.0 };
             }
         }
+        Phase::Waiting => {}
         Phase::Stopped { since } => {
             let since = since + seconds;
             game.phase = Phase::Stopped { since };
             if since >= LOOK_FOR || fresh_press {
-                game.phase = if game.rules.round_over() {
-                    Phase::Scored {
-                        since: 0.0,
-                        scored: game.table.round_score(),
-                    }
-                } else {
-                    Phase::Throwing
-                };
-                game.ready = READY;
+                game.after_stop();
             }
         }
         Phase::Scored { since, scored } => {
             let since = since + seconds;
             game.phase = Phase::Scored { since, scored };
             if since >= ROUND_SHOWN_FOR || fresh_press {
-                game.rules.score_round(&mut game.table);
-                game.fallen.clear();
-                game.ready = READY;
-                game.phase = Phase::Throwing;
+                game.after_score();
             }
         }
     }
@@ -488,10 +701,165 @@ fn throw(
         // Put down: it waits where it is.
         return;
     }
+    if let Some(opponent) = &game.opponent {
+        let throw = Message::Throw {
+            from: game.ready,
+            velocity,
+            settings: game.table.settings,
+        };
+        game.send(opponent.id, &throw);
+    }
     let player = game.rules.turn();
     game.table.throw(player, game.ready, velocity);
     game.rules.threw();
     game.phase = Phase::Sliding;
+}
+
+/// Sits at the table in the room, starts a game when someone arrives at the other seat (player
+/// 1 starts it, or the one already there hands theirs over), goes back to both sides when they
+/// leave, and follows what they do on their turn.
+fn sync(at: Option<Res<AtTable>>, time: Res<Time>, mut game: ResMut<Game>) {
+    let Some(at) = at else {
+        return;
+    };
+    let game = &mut *game;
+    if game.table_id.as_deref() != Some(at.0.as_str()) {
+        game.table_id = Some(at.0.clone());
+        seats::sit(&at.0);
+    }
+
+    let seats = seats::seats_at(&at.0);
+    let now = seats.as_ref().and_then(|seats| {
+        let me = seats.mine()?;
+        let (_, id) = seats.opponent()?;
+        Some((me, id, seats.names()))
+    });
+    let was_alone = game.alone_here;
+    game.alone_here = seats
+        .as_ref()
+        .is_some_and(|seats| seats.mine().is_some() && seats.opponent().is_none());
+    match (&game.opponent, now) {
+        (Some(opponent), Some((me, id, names))) if opponent.id == id && opponent.me == me => {
+            game.match_seat = Some((me, names));
+        }
+        (_, Some((me, id, names))) => {
+            game.opponent = Some(Opponent { me, id });
+            game.match_seat = Some((me, names));
+            game.grab = None;
+            if was_alone {
+                // They arrived with this player already here: they get the game as it is.
+                game.owe_game = Some(id);
+            } else {
+                // Arrived with them already here: the game comes from them.
+                game.waiting_for_start = true;
+                game.waiting_since = 0.0;
+            }
+        }
+        (Some(_), None) => {
+            // They left: the game waits for them as it is, their seat empty. Their throw, if
+            // it's still sliding, ends here.
+            game.opponent = None;
+            game.waiting_for_start = false;
+            game.owe_game = None;
+            game.their_settings = None;
+            game.their_result = None;
+            if game.phase == Phase::Waiting {
+                game.table.clear_short();
+                game.phase = Phase::Stopped { since: 0.0 };
+            }
+        }
+        (None, None) => {}
+    }
+
+    // Both new to the table, nobody had a game to give: player 1 starts one.
+    if game.waiting_for_start {
+        game.waiting_since += time.delta_secs();
+        if let Some(opponent) = game.opponent.as_ref().filter(|opponent| opponent.me == 0)
+            && game.waiting_since > NO_GAME_COMING
+        {
+            let id = opponent.id;
+            game.begin(0);
+            game.send(id, &Message::Start { first: 0 });
+        }
+    }
+    // The game owed to someone who arrived goes between throws.
+    if game.phase == Phase::Throwing
+        && let Some(id) = game.owe_game.take()
+    {
+        let whole = game.whole_game();
+        game.send(id, &whole);
+    }
+
+    let messages = seats::take_messages::<Message>(&at.0);
+    let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
+        return;
+    };
+    for (_, message) in messages.into_iter().filter(|(from, _)| *from == id) {
+        match message {
+            Message::Start { first } => game.begin(first),
+            Message::Sync {
+                pucks,
+                fallen,
+                rules,
+            } => game.take_whole_game(pucks, fallen, rules),
+            Message::Hold { at } => {
+                game.catch_up();
+                if !game.my_turn() {
+                    game.ready = at;
+                }
+            }
+            Message::Throw {
+                from,
+                velocity,
+                settings,
+            } => {
+                game.catch_up();
+                if !game.my_turn() && game.rules.win.is_none() {
+                    game.their_settings = Some(settings);
+                    game.table.settings = settings;
+                    let player = game.rules.turn();
+                    game.table.throw(player, from, velocity);
+                    game.rules.threw();
+                    game.ready = from;
+                    game.phase = Phase::Sliding;
+                }
+            }
+            Message::Settled { pucks, fallen } => {
+                if game.phase == Phase::Waiting {
+                    game.take_their_result((pucks, fallen));
+                } else if game.their_settings.is_some() {
+                    game.their_result = Some((pucks, fallen));
+                }
+            }
+        }
+    }
+}
+
+/// On this player's turn against someone: where they have the waiting puck goes to the other
+/// player as it moves, a few times a second.
+fn send_hold(time: Res<Time>, mut game: ResMut<Game>) {
+    let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
+        return;
+    };
+    if !game.my_turn() || game.phase != Phase::Throwing || game.rules.win.is_some() {
+        return;
+    }
+    game.sent.1 += time.delta_secs();
+    if game.ready != game.sent.0 && game.sent.1 >= HOLD_SEND_EVERY {
+        let at = game.ready;
+        game.sent = (at, 0.0);
+        game.send(id, &Message::Hold { at });
+    }
+}
+
+/// The New game button in the settings: a new game, wherever this one is at.
+fn new_game(mut asked: MessageReader<NewShuffleboardGame>, game: Option<ResMut<Game>>) {
+    if asked.read().count() == 0 {
+        return;
+    }
+    if let Some(mut game) = game {
+        game.start_over(0);
+    }
 }
 
 /// Slides the view along the table: to the near end for a throw (or down it, while Up or W is
@@ -509,7 +877,7 @@ fn look(keys: Res<ButtonInput<KeyCode>>, time: Res<Time>, mut game: ResMut<Game>
             .map(|puck| puck.position.y)
             .max_by(f32::total_cmp)
             .map_or(game.view, |lead| lead - FOLLOW_AT),
-        Phase::Stopped { .. } | Phase::Scored { .. } => VIEW_FAR,
+        Phase::Waiting | Phase::Stopped { .. } | Phase::Scored { .. } => VIEW_FAR,
     }
     .clamp(VIEW_NEAR, VIEW_FAR);
     let towards = 1.0 - (-VIEW_SPEED * time.delta_secs()).exp();
@@ -733,6 +1101,13 @@ fn show_text(
 ) {
     let rules = &game.rules;
     let turn = rules.turn();
+    let names = game.names();
+    let me = game.match_seat.as_ref().map(|(me, _)| *me);
+    // The game waits on a player who left their seat, on their throw.
+    let waiting_on = match (me, &game.opponent) {
+        (Some(me), None) if turn != me && rules.win.is_none() => Some(&names[turn]),
+        _ => None,
+    };
     for (says, mut text, mut color) in &mut texts {
         let line = match *says {
             Says::Player(player) => {
@@ -746,30 +1121,44 @@ fn show_text(
                 if color.0 != wanted {
                     color.0 = wanted;
                 }
-                format!("{}\n{}", NAMES[player], rules.scores[player])
+                format!("{}\n{}", names[player], rules.scores[player])
+            }
+            Says::Status if game.waiting_for_start => "Joining the game...".to_string(),
+            Says::Status if let Some(name) = waiting_on => {
+                format!("Waiting for {name} to come back.\n\nNew game (in /settings) starts over.")
             }
             Says::Status => match (rules.win, game.phase) {
                 (Some(winner), _) => {
-                    let again = if touch.is_on() { "Tap" } else { "Click" };
-                    format!("{} wins!\n\n{again} to play again.", NAMES[winner])
+                    let again = if !game.may_start_over() {
+                        format!("Waiting for {} to play again.", names[0])
+                    } else if touch.is_on() {
+                        "Tap to play again.".to_string()
+                    } else {
+                        "Click to play again.".to_string()
+                    };
+                    format!("{} wins!\n\n{again}", names[winner])
                 }
                 (None, Phase::Scored { scored, .. }) => match scored {
                     Some((player, points)) => {
                         let s = if points == 1 { "" } else { "s" };
-                        format!("{} scores {points} point{s}.", NAMES[player])
+                        format!("{} scores {points} point{s}.", names[player])
                     }
                     None => "Nobody scores.".to_string(),
                 },
+                (None, Phase::Throwing) if !game.my_turn() => {
+                    format!("{}'s throw.\nFirst to {WINNING_SCORE}.", names[turn])
+                }
                 (None, Phase::Throwing) => {
+                    let whose = match me {
+                        Some(_) => "Your throw.".to_string(),
+                        None => format!("{}'s throw.", names[turn]),
+                    };
                     let how = if touch.is_on() {
                         "Drag the puck and flick it up the table."
                     } else {
                         "Drag the puck and flick it up the table.\n\nUp looks down the table. Esc leaves."
                     };
-                    format!(
-                        "{}'s throw.\nFirst to {WINNING_SCORE}.\n\n{how}",
-                        NAMES[turn]
-                    )
+                    format!("{whose}\nFirst to {WINNING_SCORE}.\n\n{how}")
                 }
                 (None, _) => String::new(),
             },
@@ -814,7 +1203,28 @@ fn leave(keys: Res<ButtonInput<KeyCode>>, touch: Res<Touch>, mut mode: ResMut<Ne
     }
 }
 
-fn hide_table(mut commands: Commands, overlays: Query<Entity, With<Overlay>>) {
+fn hide_table(
+    mut commands: Commands,
+    mut game: ResMut<Game>,
+    overlays: Query<Entity, With<Overlay>>,
+) {
+    // Away from the table: the game stays as it is for whoever is left there, their seat
+    // waiting. This player carries on from it if they come back alone, throwing for both, and
+    // gets it from the other player if they're still there.
+    seats::stand();
+    game.table_id = None;
+    game.opponent = None;
+    game.match_seat = None;
+    game.alone_here = false;
+    game.owe_game = None;
+    game.waiting_for_start = false;
+    game.grab = None;
+    game.their_result = None;
+    // A throw still sliding finishes where nobody sees.
+    if matches!(game.phase, Phase::Sliding | Phase::Waiting) {
+        game.finish_slide();
+    }
+    game.their_settings = None;
     for overlay in &overlays {
         commands.entity(overlay).despawn();
     }

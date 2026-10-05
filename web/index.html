@@ -523,11 +523,11 @@
       document.addEventListener("pointerlockerror", () => (lockFailed ||= ++lockRefusals >= 3));
       document.addEventListener("pointerlockchange", () => document.pointerLockElement && (lockRefusals = 0));
 
-      // Tables players sit at together, the pool and air hockey tables (client/src/seats.rs): a
-      // place with seats in the room, as a cabinet is ("pool:x,y", "hockey:x,y"). The players at
-      // one send each other what they do as messages with `table` set; Bevy plays the game and
-      // says what to send.
-      const isTable = (place) => place.startsWith("pool:") || place.startsWith("hockey:");
+      // Tables players sit at together, the pool, air hockey and shuffleboard tables
+      // (client/src/seats.rs): a place with seats in the room, as a cabinet is ("pool:x,y",
+      // "hockey:x,y", "shuffleboard:x,y"). The players at one send each other what they do as
+      // messages with `table` set; Bevy plays the game and says what to send.
+      const isTable = (place) => ["pool:", "hockey:", "shuffleboard:"].some((kind) => place.startsWith(kind));
       window.tableSit = (table, seats) => joined.then(() => room.sit(table, seats));
       window.tableStand = () => room?.stand();
       window.tableSend = (to, json) => room?.message(to, JSON.parse(json));
