@@ -19,7 +19,13 @@ enum : uint8_t {
   OP_LOCAL_TEE = 0x22,
   OP_I32_LOAD = 0x28,
   OP_I32_STORE = 0x36,
+  OP_I32_STORE8 = 0x3A,
   OP_I32_CONST = 0x41,
+  OP_SELECT = 0x1B,
+  OP_I32_EQZ = 0x45,
+  OP_I32_LT_S = 0x48,
+  OP_I32_LT_U = 0x49,
+  OP_I32_GT_S = 0x4A,
   OP_I32_ADD = 0x6A,
   OP_I32_SUB = 0x6B,
   OP_I32_MUL = 0x6C,
@@ -55,6 +61,7 @@ struct Code {
   // align is the power-of-two alignment hint; guest words are 4-byte aligned in our layout.
   void i32_load(uint32_t offset, uint32_t align = 2) { u8(OP_I32_LOAD); uleb(align); uleb(offset); }
   void i32_store(uint32_t offset, uint32_t align = 2) { u8(OP_I32_STORE); uleb(align); uleb(offset); }
+  void i32_store8(uint32_t offset) { u8(OP_I32_STORE8); uleb(0); uleb(offset); } // byte store (CR field)
   void end() { u8(OP_END); }
 };
 

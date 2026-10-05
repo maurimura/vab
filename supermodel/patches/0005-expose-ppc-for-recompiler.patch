@@ -1,8 +1,8 @@
 diff --git a/Src/CPU/PowerPC/ppc.cpp b/Src/CPU/PowerPC/ppc.cpp
-index 1343e69..b492557 100644
+index 1343e69..54a4b45 100644
 --- a/Src/CPU/PowerPC/ppc.cpp
 +++ b/Src/CPU/PowerPC/ppc.cpp
-@@ -1161,3 +1161,22 @@ UINT32 ppc_read_msr()
+@@ -1161,3 +1161,24 @@ UINT32 ppc_read_msr()
  {
  	return ppc_get_msr();
  }
@@ -14,6 +14,8 @@ index 1343e69..b492557 100644
 +// are in scope.
 +extern "C" UINT32 *ppc_jit_gpr(void) { return ppc.r; }
 +extern "C" UINT32 ppc_jit_pc(void) { return ppc.pc; }
++extern "C" UINT8 *ppc_jit_cr(void) { return ppc.cr; }        // condition register, 8 bytes
++extern "C" UINT32 *ppc_jit_xer(void) { return &ppc.xer; }    // XER (carry/overflow/SO)
 +extern "C" void ppc_jit_interp_one(UINT32 opcode)
 +{
 +	switch (opcode >> 26)

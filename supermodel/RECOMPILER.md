@@ -48,10 +48,12 @@ proves).
 1. **Runtime codegen works.** ✅ Done. `shim/jit/` generates a WASM module at runtime whose code
    reads/writes the emulator's own linear memory (`supermodel_jit_selftest`, run via
    `node .../jit-selftest.mjs`). This de-risks the whole approach.
-2. Decode + compile a block of the common integer ops (add/addi/or/ori/and/lwz/stw/cmp/b/bc),
-   dispatch to it, fall back to the interpreter for the rest. Validate byte-exact.
+2. Decode + compile a block of the common integer ops. ✅ Done: addi/addis/ori/oris/xori/xoris/
+   add/subf/or/and/xor, validated byte-exact against the interpreter over 1000 random blocks
+   (`supermodel_jit_test_integer`), with an interpreter fallback for uncovered ops.
 3. Broaden integer coverage (rlwinm/rlwimi, shifts, mul/div, load/store variants, update forms).
-4. Condition register and XER (carry/overflow) exact.
+4. Condition register and XER. ⏳ In progress: CR0 for record forms and andi./andis. (signed
+   compare to zero plus the summary-overflow bit) done and validated; XER carry/overflow next.
 5. Floating point (the 603's FP, matching the interpreter's rounding).
 6. Branch family: `b`/`bc`/`bclr`/`bcctr`, LR/CTR, the link bit.
 7. Invalidation for self-modifying code and DMA.
@@ -60,5 +62,5 @@ proves).
 
 ## Status
 
-Milestone 1 complete and validated. This is the start of a multi-week effort; the remaining
-milestones are the grind, each gated on byte-exact agreement with the interpreter.
+Milestones 1-2 complete and validated; milestone 4 (flags) underway (CR0 done). This is a
+multi-week effort; each remaining milestone is gated on byte-exact agreement with the interpreter.

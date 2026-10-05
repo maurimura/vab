@@ -51,26 +51,32 @@ extern "C" int supermodel_jit_selftest(void)
 
 // --- Milestone 2: validate block codegen against the real interpreter ---
 extern "C" uint32_t *ppc_jit_gpr(void);
+extern "C" uint8_t *ppc_jit_cr(void);
+extern "C" uint32_t *ppc_jit_xer(void);
 extern "C" void ppc_jit_interp_one(uint32_t opcode);
 
 static uint32_t rng_state = 1;
 static uint32_t rng(void) { rng_state = rng_state * 1664525u + 1013904223u; return rng_state; }
 
-// A random instruction from the covered integer set, encoded as the PowerPC would.
+// A random instruction from the covered integer set (half the 31-form ones get the record bit,
+// so CR0 is exercised), encoded as the PowerPC would.
 static uint32_t random_instr(void) {
   uint32_t d = rng() & 31, a = rng() & 31, b = rng() & 31, imm = rng() & 0xFFFF;
-  switch (rng() % 11) {
+  uint32_t rc = rng() & 1; // record bit for 31-form ops
+  switch (rng() % 14) {
     case 0:  return (14u << 26) | (d << 21) | (a << 16) | imm;                 // addi
     case 1:  return (15u << 26) | (d << 21) | (a << 16) | imm;                 // addis
     case 2:  return (24u << 26) | (d << 21) | (a << 16) | imm;                 // ori
     case 3:  return (25u << 26) | (d << 21) | (a << 16) | imm;                 // oris
     case 4:  return (26u << 26) | (d << 21) | (a << 16) | imm;                 // xori
     case 5:  return (27u << 26) | (d << 21) | (a << 16) | imm;                 // xoris
-    case 6:  return (31u << 26) | (d << 21) | (a << 16) | (b << 11) | (266u << 1); // add
-    case 7:  return (31u << 26) | (d << 21) | (a << 16) | (b << 11) | (40u << 1);  // subf
-    case 8:  return (31u << 26) | (d << 21) | (a << 16) | (b << 11) | (444u << 1); // or
-    case 9:  return (31u << 26) | (d << 21) | (a << 16) | (b << 11) | (28u << 1);  // and
-    default: return (31u << 26) | (d << 21) | (a << 16) | (b << 11) | (316u << 1); // xor
+    case 6:  return (28u << 26) | (d << 21) | (a << 16) | imm;                 // andi. (records)
+    case 7:  return (29u << 26) | (d << 21) | (a << 16) | imm;                 // andis.
+    case 8:  return (31u << 26) | (d << 21) | (a << 16) | (b << 11) | (266u << 1) | rc; // add[.]
+    case 9:  return (31u << 26) | (d << 21) | (a << 16) | (b << 11) | (40u << 1) | rc;  // subf[.]
+    case 10: return (31u << 26) | (d << 21) | (a << 16) | (b << 11) | (444u << 1) | rc; // or[.]
+    case 11: return (31u << 26) | (d << 21) | (a << 16) | (b << 11) | (28u << 1) | rc;  // and[.]
+    default: return (31u << 26) | (d << 21) | (a << 16) | (b << 11) | (316u << 1) | rc; // xor[.]
   }
 }
 
@@ -79,35 +85,48 @@ static uint32_t random_instr(void) {
 extern "C" int supermodel_jit_test_integer(int seed, int blocks, int blockLen)
 {
   uint32_t *gpr = ppc_jit_gpr();
-  uint32_t base = (uint32_t)(uintptr_t)gpr;
+  uint8_t *cr = ppc_jit_cr();
+  uint32_t *xer = ppc_jit_xer();
+  jit::Regs regs = { (uint32_t)(uintptr_t)gpr, (uint32_t)(uintptr_t)cr, (uint32_t)(uintptr_t)xer };
   rng_state = seed ? (uint32_t)seed : 1;
   int fails = 0;
 
   for (int blk = 0; blk < blocks; blk++) {
     std::vector<uint32_t> instrs;
     for (int i = 0; i < blockLen; i++) instrs.push_back(random_instr());
-    uint32_t init[32];
-    for (int i = 0; i < 32; i++) { init[i] = rng(); gpr[i] = init[i]; }
+    uint32_t initR[32], initXer; uint8_t initCr[8];
+    for (int i = 0; i < 32; i++) { initR[i] = rng(); gpr[i] = initR[i]; }
+    for (int i = 0; i < 8; i++) { initCr[i] = rng() & 0xF; cr[i] = initCr[i]; }
+    initXer = rng(); *xer = initXer; // random SO/OV/CA so the CR0 SO bit is exercised
 
     jit::Code c;
     bool covered = true;
-    for (uint32_t instr : instrs) if (!jit::compile_instr(c, base, instr)) { covered = false; break; }
-    if (!covered) continue; // only covered ops are generated, but stay safe
+    for (uint32_t instr : instrs) if (!jit::compile_instr(c, regs, instr)) { covered = false; break; }
+    if (!covered) continue;
     std::vector<uint8_t> mod = jit::module_void(c);
-    sm_jit_run_module(mod.data(), (int)mod.size()); // executes the block, storing into gpr[]
+    sm_jit_run_module(mod.data(), (int)mod.size());
 
-    uint32_t jitResult[32];
-    for (int i = 0; i < 32; i++) jitResult[i] = gpr[i];
+    uint32_t jitR[32], jitXer = *xer; uint8_t jitCr[8];
+    for (int i = 0; i < 32; i++) jitR[i] = gpr[i];
+    for (int i = 0; i < 8; i++) jitCr[i] = cr[i];
 
-    for (int i = 0; i < 32; i++) gpr[i] = init[i];
+    for (int i = 0; i < 32; i++) gpr[i] = initR[i];
+    for (int i = 0; i < 8; i++) cr[i] = initCr[i];
+    *xer = initXer;
     for (uint32_t instr : instrs) ppc_jit_interp_one(instr);
 
-    for (int i = 0; i < 32; i++) {
-      if (gpr[i] != jitResult[i]) {
-        if (fails < 5) printf("[jit] MISMATCH block %d r%d: jit=%08X interp=%08X\n", blk, i, jitResult[i], gpr[i]);
-        fails++;
-        break;
+    bool bad = (*xer != jitXer);
+    for (int i = 0; i < 32 && !bad; i++) bad = gpr[i] != jitR[i];
+    for (int i = 0; i < 8 && !bad; i++) bad = cr[i] != jitCr[i];
+    if (bad) {
+      if (fails < 5) {
+        printf("[jit] MISMATCH block %d:", blk);
+        for (int i = 0; i < 32; i++) if (gpr[i] != jitR[i]) printf(" r%d(jit=%08X interp=%08X)", i, jitR[i], gpr[i]);
+        for (int i = 0; i < 8; i++) if (cr[i] != jitCr[i]) printf(" cr%d(jit=%X interp=%X)", i, jitCr[i], cr[i]);
+        if (*xer != jitXer) printf(" xer(jit=%08X interp=%08X)", jitXer, *xer);
+        printf("\n");
       }
+      fails++;
     }
   }
   printf("[jit] integer block test: %d blocks x %d instrs -> %s\n", blocks, blockLen,
