@@ -13,6 +13,8 @@
 //!   nearer: nearby.rs).
 //! - `vab.throw(vx, vy)`: at the shuffleboard table, on this player's throw, throws the waiting
 //!   puck from where it is at exactly that velocity (table pixels per second), as a push would.
+//! - `vab.throwDart(x, y)`: at the dartboard, on this player's turn, throws a dart that lands
+//!   exactly at `x`, `y` (millimetres from the board's middle, y up), the hand's sway aside.
 
 use std::cell::RefCell;
 
@@ -35,6 +37,8 @@ thread_local! {
     static STAND_AT: RefCell<Option<Vec2>> = const { RefCell::new(None) };
     /// The throw `vab.throw` asked for, until the shuffleboard game takes it.
     static THROW: RefCell<Option<Vec2>> = const { RefCell::new(None) };
+    /// The dart `vab.throwDart` asked for, until the darts game takes it.
+    static DART: RefCell<Option<Vec2>> = const { RefCell::new(None) };
 }
 
 #[wasm_bindgen]
@@ -57,6 +61,16 @@ pub fn vab_stand_at(x: i32, y: i32, toward_x: i32, toward_y: i32) {
 #[wasm_bindgen]
 pub fn vab_throw(vx: f32, vy: f32) {
     THROW.with_borrow_mut(|throw| *throw = Some(Vec2::new(vx, vy)));
+}
+
+#[wasm_bindgen]
+pub fn vab_throw_dart(x: f32, y: f32) {
+    DART.with_borrow_mut(|dart| *dart = Some(Vec2::new(x, y)));
+}
+
+/// The dart asked for, if any: taken, so it's thrown once.
+pub fn take_dart() -> Option<Vec2> {
+    DART.with_borrow_mut(Option::take)
 }
 
 /// Sets what `vab.state()` says under `key`.

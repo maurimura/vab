@@ -1591,5 +1591,10 @@
             y: 4,
             tile: "objects/shuffleboard",
         ),
+        (
+            x: 5,
+            y: 2,
+            tile: "objects/dartboard",
+        ),
     ],
 )

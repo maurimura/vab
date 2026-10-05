@@ -1,8 +1,8 @@
 //! Tuning: `/settings` in the chat opens a panel of the numbers that shape how the games play,
 //! to try changes on the spot. Up and Down pick one, Left and Right change it (with Shift, ten
 //! steps at a time), and the mouse or a finger works the - and + buttons. N racks the pool
-//! table again (as New rack does), New game starts the shuffleboard game over, R puts
-//! everything back and Esc closes the panel. The numbers last until the page reloads.
+//! table again (as New rack does), New game starts the shuffleboard or the darts game over, R
+//! puts everything back and Esc closes the panel. The numbers last until the page reloads.
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::{ButtonState, InputSystems};
@@ -32,6 +32,13 @@ pub enum Knob {
     PuckKnock,
     HardestThrow,
     Flick,
+    Sway,
+    Steady,
+    SteadyFor,
+    Shake,
+    Scatter,
+    FlickSpeed,
+    FlickSpread,
 }
 
 struct Spec {
@@ -45,7 +52,7 @@ struct Spec {
 }
 
 /// Every knob in the order the panel lists them, under the heading of the game they're for.
-const SPECS: [Spec; 18] = [
+const SPECS: [Spec; 25] = [
     Spec {
         knob: Knob::TopSpeed,
         label: "Hardest shot",
@@ -208,6 +215,69 @@ const SPECS: [Spec; 18] = [
         step: 0.1,
         decimals: 1,
     },
+    Spec {
+        knob: Knob::Sway,
+        label: "Hand sway",
+        unit: "mm",
+        min: 0.0,
+        max: 100.0,
+        step: 1.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::Steady,
+        label: "Sway held",
+        unit: "x",
+        min: 0.0,
+        max: 1.0,
+        step: 0.05,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::SteadyFor,
+        label: "Steady for",
+        unit: "s",
+        min: 0.2,
+        max: 10.0,
+        step: 0.1,
+        decimals: 1,
+    },
+    Spec {
+        knob: Knob::Shake,
+        label: "Shake after",
+        unit: "mm/s",
+        min: 0.0,
+        max: 200.0,
+        step: 5.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::Scatter,
+        label: "Scatter",
+        unit: "mm",
+        min: 0.0,
+        max: 40.0,
+        step: 0.5,
+        decimals: 1,
+    },
+    Spec {
+        knob: Knob::FlickSpeed,
+        label: "Right flick",
+        unit: "mm/s",
+        min: 100.0,
+        max: 5000.0,
+        step: 50.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::FlickSpread,
+        label: "Flick error",
+        unit: "mm",
+        min: 0.0,
+        max: 300.0,
+        step: 5.0,
+        decimals: 0,
+    },
 ];
 
 /// Shows the panel (`/settings` in the chat).
@@ -221,6 +291,10 @@ pub struct NewRack;
 /// Starts a new game of shuffleboard (the panel's New game button).
 #[derive(Message)]
 pub struct NewShuffleboardGame;
+
+/// Starts a new game of darts (the panel's New game button, under Darts).
+#[derive(Message)]
+pub struct NewDartsGame;
 
 #[derive(Resource)]
 pub struct Settings {
@@ -272,6 +346,19 @@ impl Settings {
         }
     }
 
+    /// How the hand throwing darts moves, and throws.
+    pub fn darts(&self) -> darts::Hand {
+        darts::Hand {
+            drift: self.get(Knob::Sway),
+            steady: self.get(Knob::Steady),
+            steady_for: self.get(Knob::SteadyFor),
+            shake: self.get(Knob::Shake),
+            scatter: self.get(Knob::Scatter),
+            flick_speed: self.get(Knob::FlickSpeed),
+            flick_spread: self.get(Knob::FlickSpread),
+        }
+    }
+
     /// How the shuffleboard table plays.
     pub fn shuffleboard(&self) -> shuffleboard::Settings {
         shuffleboard::Settings {
@@ -303,6 +390,7 @@ fn defaults() -> [f32; SPECS.len()] {
     let pool = billiards::Settings::default();
     let hockey = hockey::Settings::default();
     let shuffleboard = shuffleboard::Settings::default();
+    let hand = darts::Hand::default();
     SPECS.map(|spec| match spec.knob {
         Knob::TopSpeed => pool.max_speed,
         Knob::SoftestShot => pool.min_speed,
@@ -323,6 +411,13 @@ fn defaults() -> [f32; SPECS.len()] {
         Knob::HardestThrow => shuffleboard.max_speed,
         // How much faster the puck goes than the hand that let it go: the canvas is small.
         Knob::Flick => 3.0,
+        Knob::Sway => hand.drift,
+        Knob::Steady => hand.steady,
+        Knob::SteadyFor => hand.steady_for,
+        Knob::Shake => hand.shake,
+        Knob::Scatter => hand.scatter,
+        Knob::FlickSpeed => hand.flick_speed,
+        Knob::FlickSpread => hand.flick_spread,
     })
 }
 
@@ -339,6 +434,7 @@ impl Plugin for SettingsPlugin {
             .add_message::<ShowSettings>()
             .add_message::<NewRack>()
             .add_message::<NewShuffleboardGame>()
+            .add_message::<NewDartsGame>()
             .add_systems(Startup, spawn_panel)
             // After the chat and the controls panel have had the keys, so a key that closes
             // either doesn't also tune something, and before anything else reads them.
@@ -363,13 +459,14 @@ struct Row(usize);
 #[derive(Component)]
 struct Value(usize);
 
-/// The panel's buttons: - and + by row and which way they go, New rack, New game (shuffleboard),
-/// and Close for a screen without Esc.
+/// The panel's buttons: - and + by row and which way they go, New rack, New game (shuffleboard
+/// and darts), and Close for a screen without Esc.
 #[derive(Component, Clone, Copy)]
 enum PanelButton {
     Step(usize, f32),
     NewRack,
     NewShuffleboardGame,
+    NewDartsGame,
     Close,
 }
 
@@ -475,6 +572,14 @@ fn spawn_panel(mut commands: Commands) {
                                 list.spawn(heading_with(
                                     "Shuffleboard",
                                     PanelButton::NewShuffleboardGame,
+                                    "New game",
+                                    6.0,
+                                ));
+                            }
+                            Knob::Sway => {
+                                list.spawn(heading_with(
+                                    "Darts",
+                                    PanelButton::NewDartsGame,
                                     "New game",
                                     6.0,
                                 ));
@@ -605,6 +710,7 @@ fn tune_with_pointer(
     panel_buttons: Query<(&PanelButton, &ComputedNode, &UiGlobalTransform)>,
     mut new_rack: MessageWriter<NewRack>,
     mut new_shuffleboard_game: MessageWriter<NewShuffleboardGame>,
+    mut new_darts_game: MessageWriter<NewDartsGame>,
 ) {
     if !settings.open {
         return;
@@ -632,6 +738,9 @@ fn tune_with_pointer(
             }
             Some(PanelButton::NewShuffleboardGame) => {
                 new_shuffleboard_game.write(NewShuffleboardGame);
+            }
+            Some(PanelButton::NewDartsGame) => {
+                new_darts_game.write(NewDartsGame);
             }
             Some(PanelButton::Close) => settings.open = false,
             None => {}
