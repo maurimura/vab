@@ -123,4 +123,43 @@ inline std::vector<uint8_t> module_returning_i32(const Code &code) {
   return m;
 }
 
+// Wraps a function body into a module exporting a () -> () function "run" that imports env.memory.
+// A compiled block stores its results into the register struct in that shared memory.
+inline std::vector<uint8_t> module_void(const Code &code) {
+  std::vector<uint8_t> m = { 0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00 };
+
+  std::vector<uint8_t> types;
+  put_uleb(types, 1); types.push_back(0x60); put_uleb(types, 0); put_uleb(types, 0); // () -> ()
+  put_section(m, 1, types);
+
+  std::vector<uint8_t> imports;
+  put_uleb(imports, 1);
+  const char *mod = "env", *nm = "memory";
+  put_uleb(imports, 3); imports.insert(imports.end(), mod, mod + 3);
+  put_uleb(imports, 6); imports.insert(imports.end(), nm, nm + 6);
+  imports.push_back(0x02); imports.push_back(0x00); put_uleb(imports, 1);
+  put_section(m, 2, imports);
+
+  std::vector<uint8_t> funcs; put_uleb(funcs, 1); put_uleb(funcs, 0);
+  put_section(m, 3, funcs);
+
+  std::vector<uint8_t> exports;
+  put_uleb(exports, 1);
+  const char *rn = "run";
+  put_uleb(exports, 3); exports.insert(exports.end(), rn, rn + 3);
+  exports.push_back(0x00); put_uleb(exports, 0);
+  put_section(m, 7, exports);
+
+  std::vector<uint8_t> bodies;
+  put_uleb(bodies, 1);
+  std::vector<uint8_t> body;
+  put_uleb(body, 0); // no locals
+  body.insert(body.end(), code.bytes.begin(), code.bytes.end());
+  body.push_back(OP_END);
+  put_uleb(bodies, (uint32_t)body.size());
+  bodies.insert(bodies.end(), body.begin(), body.end());
+  put_section(m, 10, bodies);
+  return m;
+}
+
 } // namespace jit

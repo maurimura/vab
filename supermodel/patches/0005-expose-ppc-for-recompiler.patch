@@ -1,0 +1,27 @@
+diff --git a/Src/CPU/PowerPC/ppc.cpp b/Src/CPU/PowerPC/ppc.cpp
+index 1343e69..b492557 100644
+--- a/Src/CPU/PowerPC/ppc.cpp
++++ b/Src/CPU/PowerPC/ppc.cpp
+@@ -1161,3 +1161,22 @@ UINT32 ppc_read_msr()
+ {
+ 	return ppc_get_msr();
+ }
++
++// --- Recompiler support (supermodel/RECOMPILER.md) ---
++// The JIT reads/writes the same ppc register struct the interpreter uses; these expose its
++// GPR array's address and run one instruction through the interpreter, the byte-exact reference
++// the JIT is validated against. Placed after ppc603.c/ppc_ops.c are included, so the op tables
++// are in scope.
++extern "C" UINT32 *ppc_jit_gpr(void) { return ppc.r; }
++extern "C" UINT32 ppc_jit_pc(void) { return ppc.pc; }
++extern "C" void ppc_jit_interp_one(UINT32 opcode)
++{
++	switch (opcode >> 26)
++	{
++		case 19: optable19[(opcode >> 1) & 0x3ff](opcode); break;
++		case 31: optable31[(opcode >> 1) & 0x3ff](opcode); break;
++		case 59: optable59[(opcode >> 1) & 0x3ff](opcode); break;
++		case 63: optable63[(opcode >> 1) & 0x3ff](opcode); break;
++		default: optable[opcode >> 26](opcode); break;
++	}
++}
