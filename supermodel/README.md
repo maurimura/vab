@@ -34,10 +34,15 @@ Measured on 2026-10-04 with Virtua Striker 2 '98, 30 s into the attract mode, on
 | wasm, Node (no GL) | 35.0 | 32.6 | 0.5 | 1.7 |
 | wasm, Chrome, WebGL2 | 36.8 | 28.0 | 6.3 | 1.7 |
 | wasm, Chrome, PowerPC at 50 MHz | 16.2 | 8.4 | 5.4 | 1.7 |
+| the same, frame read back a frame late | 12.7 | 8.4 | 2.1 | 1.7 |
 
-A save state is 31.9 MB and takes about 20 ms to write or read (through a file in the in-memory
-file system). The PowerPC interpreter is the cost; a PowerPC-to-WebAssembly recompiler is what
-would bring the real clock under budget.
+Reading the finished frame back from WebGL synchronously cost 4.7 ms of waiting for the GPU; the
+core now reads each frame into a pixel buffer behind a fence and takes it out a frame later, and
+hands the page RGBA bytes as they are (libretro.js's format 100), so the picture runs one frame
+behind the machine. A save state is 31.9 MB and takes about 20 ms to write or read (through a
+file in the in-memory file system). The PowerPC interpreter is the cost; a PowerPC-to-WebAssembly
+recompiler is what would bring the real clock under budget. Codegen flags (`-flto`, `-msimd128`,
+no exceptions) made no measurable difference.
 
 In the bar: a game with `core: "supermodel"` in assets/games.ron runs on this module (the page
 gives the worker's core an OffscreenCanvas), served from R2 at /supermodel/ (`make supermodel`,

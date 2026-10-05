@@ -90,6 +90,7 @@ window.bench = (async () => {
   };
   log(`browser${PPC ? ` (PowerPC ${PPC} MHz)` : ""}: ${FRAMES} frames, ${avg.toFixed(2)} ms/frame average, ${at(0.5)} median, ${at(0.95)} p95, ${sorted.at(-1).toFixed(2)} worst`);
   log(`  of which PowerPC board ${ms(t.ppc)} ms, Real3D + tile layers (incl. WebGL calls and read-back) ${ms(t.render)} ms, sound boards ${ms(t.sound)} ms`);
+  log(`  the read-back alone ${ms(t.readback)} ms, its conversion ${ms(t.convert)} ms; the rest of a frame (frontend, JS) ${(avg - (t.ppc + t.render + t.sound) / t.frames / 1000).toFixed(2)} ms`);
   let start = performance.now();
   const state = core.serialize();
   const saveMs = performance.now() - start;

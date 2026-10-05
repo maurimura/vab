@@ -65,7 +65,10 @@ static SuperAA *s_superAA;
 static bool s_glReady;
 static size_t s_stateSize;
 static std::vector<uint8_t> s_rgba;    // the frame as OpenGL reads it back, bottom row first
-static std::vector<uint32_t> s_frame;  // the frame for the frontend, XRGB8888, top row first
+static std::vector<uint32_t> s_frame;  // the frame for the frontend, top row first
+static bool s_rgbaFrames;              // the frontend takes RGBA bytes as they are (else XRGB8888)
+static uint64_t s_sum[7];              // microseconds per part of a frame since supermodel_timings()
+static uint64_t s_sumFrames;
 
 /******************************************************************************
  Logging
@@ -205,16 +208,15 @@ static void ApplyOverrides(Util::Config::Node &config)
 }
 
 // Where the frames since the last call went, in microseconds (OSD/Thread.cpp's ticks), as JSON:
-// {"frames":n,"ppc":..,"render":..,"sound":..,"drive":..,"total":..}. For bench.mjs.
-static uint64_t s_sum[5];
-static uint64_t s_sumFrames;
-
+// {"frames":n,"ppc":..,"render":..,"sound":..,"drive":..,"total":..,"readback":..,"convert":..}
+// (render includes the read-back and the conversion). For bench.mjs and the harness.
 extern "C" const char *supermodel_timings(void)
 {
-  static char text[256];
-  snprintf(text, sizeof(text), "{\"frames\":%llu,\"ppc\":%llu,\"render\":%llu,\"sound\":%llu,\"drive\":%llu,\"total\":%llu}",
+  static char text[320];
+  snprintf(text, sizeof(text), "{\"frames\":%llu,\"ppc\":%llu,\"render\":%llu,\"sound\":%llu,\"drive\":%llu,\"total\":%llu,\"readback\":%llu,\"convert\":%llu}",
            (unsigned long long)s_sumFrames, (unsigned long long)s_sum[0], (unsigned long long)s_sum[1],
-           (unsigned long long)s_sum[2], (unsigned long long)s_sum[3], (unsigned long long)s_sum[4]);
+           (unsigned long long)s_sum[2], (unsigned long long)s_sum[3], (unsigned long long)s_sum[4],
+           (unsigned long long)s_sum[5], (unsigned long long)s_sum[6]);
   memset(s_sum, 0, sizeof(s_sum));
   s_sumFrames = 0;
   return text;
@@ -229,18 +231,65 @@ bool BeginFrameVideo()
   return s_glReady;
 }
 
+// Reading the frame back synchronously waits for the GPU, 4 to 5 ms of a frame's budget in
+// Chrome. Instead each frame is read into a pixel buffer behind a fence and taken out a frame
+// later, once the fence says the GPU is done: the picture the frontend gets is the previous
+// frame's. A frame whose fence isn't done yet keeps the picture before it.
+static GLuint s_pixelBuffers[2];
+static GLsync s_fences[2];
+static unsigned s_frames;
+
 void EndFrameVideo()
 {
   if (!s_glReady || &sm_gl_is_null) return; // nothing to read back from the no-op GL
+  UINT32 start = CThread::GetTicks();
+  if (!s_pixelBuffers[0])
+  {
+    glGenBuffers(2, s_pixelBuffers);
+    for (GLuint buffer : s_pixelBuffers)
+    {
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, buffer);
+      glBufferData(GL_PIXEL_PACK_BUFFER, WIDTH * HEIGHT * 4, nullptr, GL_STREAM_READ);
+    }
+  }
+  unsigned now = s_frames & 1, before = now ^ 1;
   glBindFramebuffer(GL_FRAMEBUFFER, 0);
-  glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, s_rgba.data());
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, s_pixelBuffers[now]);
+  glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  if (s_fences[now]) glDeleteSync(s_fences[now]);
+  s_fences[now] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+  glFlush();
+  s_frames++;
+  bool ready = s_fences[before] != nullptr;
+  if (ready)
+  {
+    GLenum state = glClientWaitSync(s_fences[before], 0, 0);
+    ready = state == GL_ALREADY_SIGNALED || state == GL_CONDITION_SATISFIED;
+  }
+  if (!ready)
+  {
+    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+    s_sum[5] += CThread::GetTicks() - start;
+    return;
+  }
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, s_pixelBuffers[before]);
+  glGetBufferSubData(GL_PIXEL_PACK_BUFFER, 0, WIDTH * HEIGHT * 4, s_rgba.data());
+  glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+  UINT32 read = CThread::GetTicks();
   for (unsigned y = 0; y < HEIGHT; y++)
   {
     const uint8_t *src = &s_rgba[(HEIGHT - 1 - y) * WIDTH * 4];
     uint32_t *dst = &s_frame[y * WIDTH];
+    if (s_rgbaFrames)
+    {
+      memcpy(dst, src, WIDTH * 4);
+      continue;
+    }
     for (unsigned x = 0; x < WIDTH; x++, src += 4)
       dst[x] = 0xFF000000u | ((uint32_t)src[0] << 16) | ((uint32_t)src[1] << 8) | src[2];
   }
+  s_sum[5] += read - start;
+  s_sum[6] += CThread::GetTicks() - read;
 }
 
 static bool CreateGL()
@@ -322,8 +371,15 @@ RETRO_API unsigned retro_api_version(void) { return RETRO_API_VERSION; }
 RETRO_API void retro_set_environment(retro_environment_t cb)
 {
   environ_cb = cb;
-  enum retro_pixel_format format = RETRO_PIXEL_FORMAT_XRGB8888;
-  cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
+  // Our frontend (web/emulator/libretro.js) takes RGBA bytes as read back from WebGL, format 100;
+  // any other gets XRGB8888.
+  enum retro_pixel_format format = (enum retro_pixel_format)100;
+  s_rgbaFrames = cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
+  if (!s_rgbaFrames)
+  {
+    format = RETRO_PIXEL_FORMAT_XRGB8888;
+    cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &format);
+  }
   struct retro_log_callback logging;
   if (cb(RETRO_ENVIRONMENT_GET_LOG_INTERFACE, &logging)) log_cb = logging.log;
 }
@@ -443,6 +499,7 @@ RETRO_API bool retro_load_game_special(unsigned type, const struct retro_game_in
 
 RETRO_API void retro_unload_game(void)
 {
+  s_frames = 0;
   s_model3.reset(); // before the renderers and inputs it points at
   delete s_render3D; s_render3D = nullptr;
   delete s_render2D; s_render2D = nullptr;

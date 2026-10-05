@@ -17,7 +17,7 @@ else
   CC := emcc
   OBJDIR := $(OBJ)/wasm
   TARGET_FLAGS := -sUSE_ZLIB=1
-  EXCEPTIONS := -fwasm-exceptions
+  EXCEPTIONS ?= -fwasm-exceptions
 endif
 
 INCLUDES := -I$(SHIM) -I$(SRC)/Src -I$(SRC)/Src/Model3 -I$(SRC)/Src/Model3/DriveBoard -I$(SRC)/Src/CPU \
@@ -26,7 +26,9 @@ INCLUDES := -I$(SHIM) -I$(SRC)/Src -I$(SRC)/Src/Model3 -I$(SRC)/Src/Model3/Drive
   -I$(SRC)/Src/Sound -I$(SRC)/Src/Sound/MPEG -I$(SRC)/Src/Util -I$(GEN)
 WARN := -Wall -Wno-unused-parameter -Wno-unused-variable -Wno-sign-compare -Wno-unused-but-set-variable \
   -Wno-deprecated-declarations -Wno-unused-function -Wno-missing-braces -Wno-char-subscripts
-COMMON := -O3 -MMD -MP $(INCLUDES) $(TARGET_FLAGS) -DGLEW_STATIC $(EXCEPTIONS)
+# PERF_FLAGS: extra codegen flags to try (e.g. "-flto -msimd128"), on compile and link.
+PERF_FLAGS ?=
+COMMON := -O3 -MMD -MP $(INCLUDES) $(TARGET_FLAGS) -DGLEW_STATIC $(EXCEPTIONS) $(PERF_FLAGS)
 CXXFLAGS := $(COMMON) -std=c++17 $(WARN)
 CFLAGS := $(COMMON) -std=gnu11 -w
 MUSASHI_FLAGS := -DINLINE="static inline" -I$(SRC)/Src/CPU/68K/Musashi
@@ -92,7 +94,7 @@ $(OBJDIR):
 
 # Links: memory and stack sizes follow emulator/build.sh; a Model 3 set is up to ~250 MB of ROM.
 # DEBUG=1 links with Emscripten's assertions (names in stack traces, uncaught exception text).
-LINK_FLAGS := -O3 $(EXCEPTIONS) $(if $(DEBUG),-sASSERTIONS=1 -g2,) -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createSupermodel \
+LINK_FLAGS := -O3 $(EXCEPTIONS) $(PERF_FLAGS) $(if $(DEBUG),-sASSERTIONS=1 -g2,) -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createSupermodel \
   -sINITIAL_MEMORY=268435456 -sALLOW_MEMORY_GROWTH=1 -sMAXIMUM_MEMORY=2147483648 -sSTACK_SIZE=4194304 \
   -sALLOW_TABLE_GROWTH=1 -sFORCE_FILESYSTEM=1 -sUSE_ZLIB=1 \
   -sEXPORTED_FUNCTIONS=@$(HERE)/exports.json \

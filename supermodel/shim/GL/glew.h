@@ -26,6 +26,8 @@ static inline const GLubyte *glewGetString(GLenum name) { (void)name; return (co
 #ifdef __cplusplus
 extern "C" {
 #endif
+// WebGL2 has it and Emscripten implements it, but it is not in OpenGL ES 3.0's header.
+GL_APICALL void GL_APIENTRY glGetBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, void *data);
 void sm_glDrawBuffer(GLenum buf);
 void sm_glShaderSource(GLuint shader, GLsizei count, const GLchar *const *string, const GLint *length);
 #ifdef __cplusplus

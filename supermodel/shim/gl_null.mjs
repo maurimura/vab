@@ -27,4 +27,6 @@ for (const [, type, name, params] of header.matchAll(prototypes)) {
   else body = "return 0;";
   out += `${type} ${name}(${params})\n{\n  ${names.map((n) => `(void)${n};`).join(" ")}\n  ${body}\n}\n\n`;
 }
+// WebGL2-only, declared in GL/glew.h rather than gl3.h.
+out += "void glGetBufferSubData(GLenum target, GLintptr offset, GLsizeiptr size, void *data)\n{\n  (void)target; (void)offset; (void)size; (void)data;\n}\n";
 process.stdout.write(out);
