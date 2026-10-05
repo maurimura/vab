@@ -592,6 +592,7 @@
         window.vab = {
           state: () => JSON.parse(client.vab_state()),
           goTo: (name) => client.vab_go_to(name),
+          standAt: (x, y, towardX, towardY) => client.vab_stand_at(x, y, towardX, towardY),
           throw: (vx, vy) => client.vab_throw(vx, vy),
           id: () => room?.id,
         };

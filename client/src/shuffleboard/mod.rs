@@ -12,8 +12,7 @@ use crate::Mode;
 use crate::cabinets::{hint_label, place_hint};
 use crate::chat::chat_closed;
 use crate::help::help_closed;
-use crate::player::Player;
-use crate::pool::next_to;
+use crate::nearby::{Kind, Nearby};
 use crate::seats;
 use crate::settings::settings_closed;
 use crate::touch::{self, Touch, TouchButton};
@@ -48,6 +47,10 @@ impl Plugin for ShuffleboardPlugin {
 pub struct ShuffleboardTables(Vec<Placed>);
 
 impl ShuffleboardTables {
+    pub fn placed(&self) -> &[Placed] {
+        &self.0
+    }
+
     pub fn from_map(map: &Map) -> Self {
         Self(
             map.objects
@@ -83,8 +86,8 @@ fn spawn_hint(mut commands: Commands, touch: Res<Touch>) {
 
 fn show_hint(
     tables: Option<Res<ShuffleboardTables>>,
+    nearby: Res<Nearby>,
     touch: Res<Touch>,
-    player: Single<&Player>,
     camera: Single<(&Camera, &GlobalTransform)>,
     hint: Single<(&mut Text, &mut Node, &mut Visibility, &ComputedNode), With<Hint>>,
     mut buttons: Query<(&TouchButton, &mut Visibility), Without<Hint>>,
@@ -92,7 +95,7 @@ fn show_hint(
     let (mut text, mut node, mut visibility, computed) = hint.into_inner();
     let near = tables
         .as_ref()
-        .and_then(|tables| next_to(&tables.0, player.feet));
+        .and_then(|tables| nearby.of(Kind::Shuffleboard, &tables.0));
     for (button, mut shown) in &mut buttons {
         if *button == TouchButton::Shuffleboard {
             shown.set_if_neq(if near.is_some() {
@@ -128,13 +131,13 @@ fn step_up(
     keys: Res<ButtonInput<KeyCode>>,
     touch: Res<Touch>,
     tables: Option<Res<ShuffleboardTables>>,
-    player: Single<&Player>,
+    nearby: Res<Nearby>,
     mut mode: ResMut<NextState<Mode>>,
 ) {
     let pressed = keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Shuffleboard);
     let Some(table) = tables
         .as_ref()
-        .and_then(|tables| next_to(&tables.0, player.feet))
+        .and_then(|tables| nearby.of(Kind::Shuffleboard, &tables.0))
         .filter(|_| pressed)
     else {
         return;
