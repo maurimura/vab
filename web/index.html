@@ -338,13 +338,24 @@
           this.#goOnline(epoch, bytes);
         }
 
-        #goOnline(epoch, state) {
+        async #goOnline(epoch, state) {
           this.#linkPlayers();
-          const seats = [...this.#players.keys()].sort((a, b) => a - b);
-          this.#worker.postMessage({ type: "online", epoch, seats, state }, state ? [state.buffer] : []);
           this.#playing = true;
-          this.#stream();
+          const seats = [...this.#players.keys()].sort((a, b) => a - b);
           this.#show(`Player ${this.seat + 1}. Connecting to ${this.#others()}...`);
+          // A lockstep game waits for the others' input every frame, so its input delay comes
+          // from the round trip to them, timed now (worker.js).
+          const roundTrip = this.#game.lockstep ? await this.#roundTrip() : undefined;
+          if (this.#epoch !== epoch) return; // the players changed again meanwhile
+          this.#worker.postMessage({ type: "online", epoch, seats, state, roundTrip }, state ? [state.buffer] : []);
+          this.#stream();
+        }
+
+        /** The longest round trip to the other players, in ms, or undefined if none answered. */
+        async #roundTrip() {
+          const times = await Promise.all([...this.#links.values()].map((link) => link.roundTrip()));
+          const known = times.filter((ms) => ms !== undefined);
+          return known.length ? Math.max(...known) : undefined;
         }
 
         #nowPlaying(players) {
@@ -401,14 +412,15 @@
           return seats.length === 1 ? `player ${seats[0]}` : `players ${seats.slice(0, -1).join(", ")} and ${seats.at(-1)}`;
         }
 
-        #netplay({ event, seat, ping, frame }) {
+        #netplay({ event, seat, ping, frame, delay, rollback }) {
           const me = `Player ${this.seat + 1}`;
           if (event === "synchronized" || event === "resumed") this.#show(`${me}, online with ${this.#others()}`);
           if (event === "interrupted") this.#show(`${me}. Waiting for player ${seat + 1}'s connection...`);
           if (event === "desync") this.#show(`${me}. Out of step with the others since frame ${frame}.`);
           if (event === "stats" && !this.#status.includes("Out of step") && !this.#status.includes("Waiting")) {
             const direct = [...this.#links.values()].every((link) => link.direct);
-            this.#show(`${me}, online with ${this.#others()}, ${ping ?? "?"} ms, ${direct ? "direct" : "through the server"}`);
+            const lockstep = rollback === 0 ? `, ${delay} frames of input delay` : "";
+            this.#show(`${me}, online with ${this.#others()}, ${ping ?? "?"} ms${lockstep}, ${direct ? "direct" : "through the server"}`);
           }
         }
 

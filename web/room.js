@@ -256,7 +256,7 @@ export class Room {
     const from = view.getUint32(0, true);
     const kind = view.getUint8(4);
     if (kind === PACKET) {
-      this.#links.get(from)?.onpacket(message.slice(5));
+      this.#links.get(from)?.receive(message.slice(5));
       return;
     }
     const id = view.getUint32(5, true);
@@ -280,6 +280,8 @@ export class Room {
   }
 }
 
+const PING_LENGTH = 6;
+
 /** Game packets to and from another player at our cabinet. */
 class Link {
   /** Called with each packet (an ArrayBuffer) from the other player. */
@@ -300,6 +302,10 @@ class Link {
     this.#ready = getIceServers().then((iceServers) => this.#connect(iceServers, offers));
   }
 
+  /** Answers awaited to our round-trip pings, by ping number. */
+  #pings = new Map();
+  #pingNumber = 0;
+
   /** True once packets go straight to the other browser. */
   get direct() {
     return this.#channel?.readyState === "open";
@@ -308,6 +314,56 @@ class Link {
   send(packet) {
     if (this.direct) this.#channel.send(packet);
     else this.#room.relay(this.partner, packet);
+  }
+
+  /** A packet from the other player, direct or through the server: ours, or the game's. */
+  receive(packet) {
+    const bytes = new Uint8Array(packet);
+    if (bytes.length !== PING_LENGTH || bytes[0] !== 0x76 || bytes[1] !== 0x61 || bytes[2] !== 0x62 || bytes[3] !== 0x70) {
+      this.onpacket(packet);
+      return;
+    }
+    if (bytes[5] === 0) {
+      const answer = bytes.slice();
+      answer[5] = 1;
+      this.send(answer.buffer);
+    } else {
+      this.#pings.get(bytes[4])?.();
+    }
+  }
+
+  /**
+   * Times a round trip to the other player, in ms: the best of a few pings. Waits a moment for
+   * the direct channel to open first, so what's timed is the path the game will take; undefined
+   * if nothing came back.
+   */
+  async roundTrip(pings = 3) {
+    for (let i = 0; i < 20 && !this.direct && !this.#closed; i++) await new Promise((r) => setTimeout(r, 100));
+    let best;
+    for (let i = 0; i < pings; i++) {
+      const ms = await this.#ping();
+      if (ms !== undefined && !(best <= ms)) best = ms;
+    }
+    return best;
+  }
+
+  // "vabp", the ping's number, then 0 asking or 1 answering. Game packets never start so: the
+  // worker frames them with a session number, GGRS's bytes after it.
+  #ping() {
+    return new Promise((resolve) => {
+      const number = (this.#pingNumber = (this.#pingNumber + 1) & 0xff);
+      const started = performance.now();
+      const timeout = setTimeout(() => {
+        this.#pings.delete(number);
+        resolve(undefined);
+      }, 1000);
+      this.#pings.set(number, () => {
+        clearTimeout(timeout);
+        this.#pings.delete(number);
+        resolve(performance.now() - started);
+      });
+      this.send(Uint8Array.of(0x76, 0x61, 0x62, 0x70, number, 0).buffer);
+    });
   }
 
   async signal({ link, description, candidate }) {
@@ -360,7 +416,7 @@ class Link {
 
   #use(channel) {
     channel.binaryType = "arraybuffer";
-    channel.onmessage = ({ data }) => this.onpacket(data);
+    channel.onmessage = ({ data }) => this.receive(data);
     this.#channel = channel;
   }
 }

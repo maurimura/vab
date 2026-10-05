@@ -22,8 +22,11 @@
 //        alone right away, or with `hold` waits for "online" (joining a game in progress) or
 //        "watch-state" (watching; no `seat` or `port` then).
 //      { type: "capture", epoch } Stops and captures the machine, for a change of players.
-//      { type: "online", epoch, seats, state } Plays in step with the players in `seats` (their
-//        seat numbers, ascending) from `state`, or from this machine's capture for `epoch`.
+//        States that leave this worker (captured, watch-state) are deflated: a Model 3's 30 MB
+//        is two thirds zeros and packs to 5 MB; they come back the same way (online, watch-state).
+//      { type: "online", epoch, seats, state, roundTrip } Plays in step with the players in
+//        `seats` (their seat numbers, ascending) from `state`, or from this machine's capture
+//        for `epoch`; `roundTrip` (ms, to the farthest of them) sets a lockstep game's delay.
 //      { type: "solo" } Everyone else left: play on alone.
 //      { type: "stream", on } Streams this machine's game to the watchers, or stops.
 //      { type: "snapshot", to } A state for a new watcher, to go on from with the stream.
@@ -47,8 +50,30 @@ const PORTS = 4;
 const STREAM_EVERY = 100;
 /** Frames a watcher has in hand before playing: a little more than arrive at once. */
 const WATCH_BUFFER = 12;
-/** Input delay of a lockstep game, in frames: what the others' input has to arrive within. */
+/** Marks a deflated state: "vabz", then the deflate-raw bytes. */
+const PACKED = Uint8Array.of(0x76, 0x61, 0x62, 0x7a);
+
+/** Deflates a state for the trip to the other players, marked as such. */
+async function pack(state) {
+  const stream = new Blob([state]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+  const packed = new Uint8Array(await new Response(stream).arrayBuffer());
+  const out = new Uint8Array(PACKED.length + packed.length);
+  out.set(PACKED);
+  out.set(packed, PACKED.length);
+  return out;
+}
+
+/** The state back from `pack`; bytes not marked as packed are taken as they are. */
+async function unpack(bytes) {
+  if (bytes.length < PACKED.length || PACKED.some((b, i) => bytes[i] !== b)) return bytes;
+  const stream = new Blob([bytes.subarray(PACKED.length)]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
+/** Input delay of a lockstep game whose round trip is unknown, in frames. */
 const LOCKSTEP_DELAY = 4;
+/** Added to half the round trip when picking a lockstep delay: jitter and the worker's polling. */
+const LOCKSTEP_SLACK_MS = 25;
 
 let audioPort;
 let speakerRate = 48000;
@@ -291,22 +316,22 @@ class Cabinet {
     }
   }
 
-  #capture(epoch) {
+  async #capture(epoch) {
     const state = this.core.serialize();
     this.#captured = { epoch, state };
     this.paused = true;
-    const copy = state.slice();
-    postMessage({ type: "captured", epoch, state: copy }, [copy.buffer]);
+    const packed = await pack(state);
+    postMessage({ type: "captured", epoch, state: packed }, [packed.buffer]);
   }
 
-  #online({ epoch, seats, state }) {
-    state ??= this.#captured?.epoch === epoch ? this.#captured.state : undefined;
+  async #online({ epoch, seats, state, roundTrip }) {
+    state = state ? await unpack(state) : this.#captured?.epoch === epoch ? this.#captured.state : undefined;
     if (!state) return;
     this.#leaveSession();
     this.core.unserialize(state);
     this.#captured = undefined;
     if (this.#lockstep) {
-      this.#tuned = { rollback: 0, delay: LOCKSTEP_DELAY }; // GGRS never saves: no slots needed
+      this.#tuned = { rollback: 0, delay: lockstepDelay(roundTrip, this.fps) }; // GGRS never saves: no slots needed
     } else if (!this.#tuned) {
       this.muted = true;
       this.#tuned = tune(this.core, this.fps);
@@ -349,7 +374,8 @@ class Cabinet {
         stream.inputs.push(...byPort(confirmed.subarray(i, i + players), this.#seats));
       }
     }
-    if (!stream.inputs.length || (!now && performance.now() - stream.sentAt < STREAM_EVERY)) return;
+    // While a state is being packed, inputs wait: they must reach the watchers after it.
+    if (stream.packing || !stream.inputs.length || (!now && performance.now() - stream.sentAt < STREAM_EVERY)) return;
     const inputs = Uint16Array.from(stream.inputs);
     postMessage({ type: "watch-inputs", stream: stream.id, frame: stream.frame, inputs }, [inputs.buffer]);
     stream.frame += stream.inputs.length / PORTS;
@@ -361,21 +387,26 @@ class Cabinet {
    * The machine at the frame the stream goes on from, for one watcher or all. Online it's the
    * save GGRS made before that frame, unless the machine is there now (always, in lockstep).
    */
-  #sendState(to) {
+  async #sendState(to) {
     this.#flush(true);
-    const { id, frame } = this.#stream;
+    const stream = this.#stream;
+    const { id, frame } = stream;
     const session = this.#session;
     const saved = session && !this.#lockstep && frame < session.currentFrame();
-    const state = saved ? this.core.slotBytes(session.slot(frame)) : this.core.serialize();
+    stream.packing = true;
+    const state = await pack(saved ? this.core.slotBytes(session.slot(frame)) : this.core.serialize());
+    stream.packing = false;
+    if (this.#stream !== stream) return; // the stream started over meanwhile
     const bytes = new Uint8Array(4 + state.length);
     new DataView(bytes.buffer).setUint32(0, frame, true);
     bytes.set(state, 4);
     postMessage({ type: "watch-state", stream: id, bytes, to }, [bytes.buffer]);
+    this.#flush(true); // the frames run while packing
   }
 
-  #watchFrom(bytes) {
+  async #watchFrom(bytes) {
     const frame = new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true);
-    this.core.unserialize(bytes.subarray(4));
+    this.core.unserialize(await unpack(bytes.subarray(4)));
     this.#watch = { frames: [], end: frame, waiting: true };
     this.paused = false;
   }
@@ -415,6 +446,17 @@ function tune(core, fps) {
   const fits = Math.floor(((1000 / fps) * 0.75 - shown) / rerun);
   const rollback = Math.min(8, Math.max(2, fits));
   return { rollback, delay: rollback < 6 ? 3 : 2 };
+}
+
+/**
+ * A lockstep game's input delay, in frames: the others' input for a frame, sent when they ran
+ * the frame this many frames earlier, has to be here by the time the frame is due, so half the
+ * round trip and some slack. 2 to 10 frames; past that the game would stall anyway.
+ */
+function lockstepDelay(roundTrip, fps) {
+  if (roundTrip === undefined) return LOCKSTEP_DELAY;
+  const frames = Math.ceil((roundTrip / 2 + LOCKSTEP_SLACK_MS) / (1000 / fps));
+  return Math.min(10, Math.max(2, frames));
 }
 
 /** FNV-1a over the game's RAM. All machines' hashes match while they're in step. */
