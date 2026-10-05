@@ -56,7 +56,7 @@ SUPERMODEL_CPP := Src/BlockFile.cpp Src/GameLoader.cpp Src/ROMSet.cpp \
   Src/Pkgs/tinyxml2.cpp
 SUPERMODEL_C := Src/Pkgs/unzip.c Src/Pkgs/ioapi.c
 MUSASHI_C := $(SRC)/Src/CPU/68K/Musashi/m68kcpu.c $(GEN)/m68kops.c $(GEN)/m68kopac.c $(GEN)/m68kopdm.c $(GEN)/m68kopnz.c
-SHIM_CPP := libretro.cpp gl_shim.cpp RetroInputSystem.cpp osd/Audio.cpp osd/Thread.cpp osd/FileSystemPath.cpp \
+SHIM_CPP := libretro.cpp gl_shim.cpp RetroInputSystem.cpp jit/jit.cpp osd/Audio.cpp osd/Thread.cpp osd/FileSystemPath.cpp \
   Network/TCPSend.cpp Network/TCPReceive.cpp Network/TCPSendAsync.cpp
 
 obj_name = $(OBJDIR)/$(subst /,_,$(basename $(1))).o

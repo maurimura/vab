@@ -27,5 +27,6 @@
   "_retro_get_memory_data",
   "_retro_get_memory_size",
   "_supermodel_set",
-  "_supermodel_timings"
+  "_supermodel_timings",
+  "_supermodel_jit_selftest"
 ]
