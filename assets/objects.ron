@@ -5,4 +5,5 @@
 [
     (tile: "objects/pool_table", size: (2, 1)),
     (tile: "objects/air_hockey", size: (2, 1)),
+    (tile: "objects/shuffleboard", size: (4, 1)),
 ]

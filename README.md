@@ -52,6 +52,7 @@ as long as its pixel ratio is left at the computer's own (an emulated one gets t
 | `netplay/` | Rollback for two players at a cabinet (GGRS), run by the emulator worker | `cargo` + `wasm-bindgen` → `web/netplay/` |
 | `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
 | `hockey/` | Air hockey physics and the bot, without Bevy, tested natively (`cargo test -p hockey`) | |
+| `shuffleboard/` | Table shuffleboard physics and scoring, without Bevy, tested natively (`cargo test -p shuffleboard`) | |
 | `billiards/` | Pool physics, without Bevy: deterministic, tested natively (`cargo test -p billiards`) | |
 | `world/` | Map format, isometric grid math, tile drawing (shared by the editor and, later, the client) | |
 | `tools/editor/` | Bar layout editor: on the desktop (`make editor`), or on the web behind Cloudflare Access (`make editor-web`, served by the same Worker as `vab-editor`) | `cargo`, `bevy_egui` (+ `wasm-bindgen` → `tools/editor/web/pkg/`) |

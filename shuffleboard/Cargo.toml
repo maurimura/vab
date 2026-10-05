@@ -1,0 +1,15 @@
+[package]
+name = "shuffleboard"
+version = "0.1.0"
+edition = "2024"
+
+# Table shuffleboard physics and rules, without Bevy, so it tests natively
+# (client/src/shuffleboard).
+[dependencies]
+# The vector math Bevy uses, the same version.
+glam = "0.32"
+# With the `serde` feature: the table and the game, as they go between two players.
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+serde = ["dep:serde", "glam/serde"]
