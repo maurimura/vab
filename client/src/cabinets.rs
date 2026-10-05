@@ -8,13 +8,13 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
-use world::{Game, Map, cell_to_world, games_from_ron, world_to_cell};
+use world::{Game, Map, cell_to_world, games_from_ron};
 
 use crate::Mode;
 use crate::chat::chat_closed;
 use crate::emulator;
 use crate::help::help_closed;
-use crate::player::Player;
+use crate::nearby::{Kind, Nearby};
 use crate::settings::settings_closed;
 use crate::touch::{self, Touch, TouchButton};
 
@@ -88,17 +88,14 @@ impl Cabinets {
         )
     }
 
-    /// The nearest cabinet in one of the 8 cells around the player's feet.
-    fn next_to(&self, feet: Vec2) -> Option<&(IVec2, Game)> {
-        let cell = world_to_cell(feet);
-        self.0
-            .iter()
-            .filter(|(cabinet, _)| (*cabinet - cell).abs().max_element() == 1)
-            .min_by(|(a, _), (b, _)| {
-                let da = cell_to_world(a.x, a.y).distance_squared(feet);
-                let db = cell_to_world(b.x, b.y).distance_squared(feet);
-                da.total_cmp(&db)
-            })
+    pub fn cells(&self) -> impl Iterator<Item = IVec2> + '_ {
+        self.0.iter().map(|(cell, _)| *cell)
+    }
+
+    /// The cabinet nearest the player, if it's nearer than anything else (nearby.rs).
+    fn nearby(&self, nearby: &Nearby) -> Option<&(IVec2, Game)> {
+        let cell = nearby.cell(Kind::Cabinet)?;
+        self.0.iter().find(|(cabinet, _)| *cabinet == cell)
     }
 }
 
@@ -173,14 +170,14 @@ pub fn place_hint(
 /// the buttons for what can be done there.
 fn show_hint(
     cabinets: Res<Cabinets>,
+    nearby: Res<Nearby>,
     touch: Res<Touch>,
-    player: Single<&Player>,
     camera: Single<(&Camera, &GlobalTransform)>,
     hint: Single<(&mut Text, &mut Node, &mut Visibility, &ComputedNode), With<Hint>>,
     mut buttons: Query<(&TouchButton, &mut Visibility), Without<Hint>>,
 ) {
     let (mut text, mut node, mut visibility, computed) = hint.into_inner();
-    let near = cabinets.next_to(player.feet);
+    let near = cabinets.nearby(&nearby);
     for (button, mut shown) in &mut buttons {
         let offered = near.is_some_and(|(cell, game)| {
             let (seated, _) = people_at(*cell);
@@ -238,7 +235,7 @@ fn play(
     keys: Res<ButtonInput<KeyCode>>,
     touch: Res<Touch>,
     cabinets: Res<Cabinets>,
-    player: Single<&Player>,
+    nearby: Res<Nearby>,
     mut mode: ResMut<NextState<Mode>>,
 ) {
     let sit = keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Play);
@@ -246,7 +243,7 @@ fn play(
     if !sit && !watch {
         return;
     }
-    let Some((cell, game)) = cabinets.next_to(player.feet) else {
+    let Some((cell, game)) = cabinets.nearby(&nearby) else {
         return;
     };
     let (seated, _) = people_at(*cell);

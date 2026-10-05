@@ -3,6 +3,7 @@ mod chat;
 mod emulator;
 mod help;
 mod hockey;
+mod nearby;
 mod pixels;
 mod player;
 mod pool;
@@ -22,6 +23,7 @@ use chat::ChatPlugin;
 use emulator::EmulatorPlugin;
 use help::HelpPlugin;
 use hockey::{HockeyPlugin, HockeyTables};
+use nearby::{Kind, NearbyPlugin, Usables};
 use player::{PlayerPlugin, Walkable, spawn_player};
 use pool::{PoolPlugin, PoolTables};
 use room::RoomPlugin;
@@ -65,6 +67,7 @@ fn main() {
         HelpPlugin,
         PoolPlugin,
         HockeyPlugin,
+        NearbyPlugin,
         ShuffleboardPlugin,
         RoomPlugin,
         SettingsPlugin,
@@ -128,10 +131,29 @@ fn build_bar(
     let walkable = Walkable::from_map(map);
     spawn_player(&mut commands, &asset_server, &walkable);
     commands.insert_resource(walkable);
-    commands.insert_resource(Cabinets::from_map(map));
-    commands.insert_resource(PoolTables::from_map(map));
-    commands.insert_resource(HockeyTables::from_map(map));
-    commands.insert_resource(ShuffleboardTables::from_map(map));
+    let cabinets = Cabinets::from_map(map);
+    let pool_tables = PoolTables::from_map(map);
+    let hockey_tables = HockeyTables::from_map(map);
+    let shuffleboard_tables = ShuffleboardTables::from_map(map);
+    // Everything that can be used, for which is nearest the player (nearby.rs).
+    let mut usables = Usables::default();
+    for cell in cabinets.cells() {
+        usables.add_cell(Kind::Cabinet, cell);
+    }
+    for (kind, tables) in [
+        (Kind::Pool, pool_tables.placed()),
+        (Kind::Hockey, hockey_tables.placed()),
+        (Kind::Shuffleboard, shuffleboard_tables.placed()),
+    ] {
+        for table in tables {
+            usables.add(kind, table);
+        }
+    }
+    commands.insert_resource(usables);
+    commands.insert_resource(cabinets);
+    commands.insert_resource(pool_tables);
+    commands.insert_resource(hockey_tables);
+    commands.insert_resource(shuffleboard_tables);
     #[cfg(feature = "test-hooks")]
     commands.insert_resource(testing::Objects(map.objects.clone()));
     commands.remove_resource::<LoadingMap>();

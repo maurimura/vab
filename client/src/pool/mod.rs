@@ -6,13 +6,13 @@ mod game;
 mod online;
 
 use bevy::prelude::*;
-use world::{Map, Placed, world_to_cell};
+use world::{Map, Placed};
 
 use crate::Mode;
 use crate::cabinets::{hint_label, place_hint};
 use crate::chat::chat_closed;
 use crate::help::help_closed;
-use crate::player::Player;
+use crate::nearby::{Kind, Nearby};
 use crate::seats;
 use crate::settings::settings_closed;
 use crate::touch::{self, Touch, TouchButton};
@@ -56,27 +56,9 @@ impl PoolTables {
         )
     }
 
-    fn next_to(&self, feet: Vec2) -> Option<&Placed> {
-        next_to(&self.0, feet)
+    pub fn placed(&self) -> &[Placed] {
+        &self.0
     }
-}
-
-/// Of `tables` (objects covering several cells), the nearest with a cell in one of the 8 cells
-/// around the player's feet.
-pub fn next_to(tables: &[Placed], feet: Vec2) -> Option<&Placed> {
-    let cell = world_to_cell(feet);
-    tables
-        .iter()
-        .filter(|table| {
-            table
-                .cells()
-                .any(|covered| (covered - cell).abs().max_element() == 1)
-        })
-        .min_by(|a, b| {
-            let da = a.center().distance_squared(feet);
-            let db = b.center().distance_squared(feet);
-            da.total_cmp(&db)
-        })
 }
 
 #[derive(Component)]
@@ -103,14 +85,14 @@ fn spawn_hint(mut commands: Commands, touch: Res<Touch>) {
 
 fn show_hint(
     tables: Res<PoolTables>,
+    nearby: Res<Nearby>,
     touch: Res<Touch>,
-    player: Single<&Player>,
     camera: Single<(&Camera, &GlobalTransform)>,
     hint: Single<(&mut Text, &mut Node, &mut Visibility, &ComputedNode), With<Hint>>,
     mut buttons: Query<(&TouchButton, &mut Visibility), Without<Hint>>,
 ) {
     let (mut text, mut node, mut visibility, computed) = hint.into_inner();
-    let near = tables.next_to(player.feet);
+    let near = nearby.of(Kind::Pool, &tables.0);
     // A table with both seats taken has no seat to offer.
     let near = near.filter(|table| {
         seats::seated(&online::table_id(IVec2::new(table.x, table.y))) < 2 || !touch.is_on()
@@ -150,11 +132,11 @@ fn sit(
     keys: Res<ButtonInput<KeyCode>>,
     touch: Res<Touch>,
     tables: Res<PoolTables>,
-    player: Single<&Player>,
+    nearby: Res<Nearby>,
     mut mode: ResMut<NextState<Mode>>,
 ) {
     let sit = keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Pool);
-    let Some(table) = tables.next_to(player.feet).filter(|_| sit) else {
+    let Some(table) = nearby.of(Kind::Pool, &tables.0).filter(|_| sit) else {
         return;
     };
     let id = online::table_id(IVec2::new(table.x, table.y));

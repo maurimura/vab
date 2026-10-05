@@ -8,6 +8,9 @@
 //!   ("shuffleboard", "pool_table", "air_hockey") or whose cabinet runs the game `name`, for E
 //!   to use, instead of walking there, which a headless browser's few frames a second make
 //!   uneven.
+//! - `vab.standAt(x, y, towardX, towardY)`: puts the player in the cell `x`, `y`, a little to
+//!   the side of the cell `towardX`, `towardY` (to tell apart which of two things next to it is
+//!   nearer: nearby.rs).
 //! - `vab.throw(vx, vy)`: at the shuffleboard table, on this player's throw, throws the waiting
 //!   puck from where it is at exactly that velocity (table pixels per second), as a push would.
 
@@ -19,6 +22,7 @@ use wasm_bindgen::prelude::*;
 use world::{Placed, cell_to_world, world_to_cell};
 
 use crate::Mode;
+use crate::nearby::Nearby;
 use crate::player::{Player, Walkable};
 use crate::room;
 
@@ -27,6 +31,8 @@ thread_local! {
     static STATE: RefCell<Json<String, Value>> = RefCell::new(Json::new());
     /// Where `vab.goTo` asked the player to go, until they're there.
     static GO_TO: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Where `vab.standAt` asked the player to stand, until they're there.
+    static STAND_AT: RefCell<Option<Vec2>> = const { RefCell::new(None) };
     /// The throw `vab.throw` asked for, until the shuffleboard game takes it.
     static THROW: RefCell<Option<Vec2>> = const { RefCell::new(None) };
 }
@@ -39,6 +45,13 @@ pub fn vab_state() -> String {
 #[wasm_bindgen]
 pub fn vab_go_to(name: String) {
     GO_TO.with_borrow_mut(|go_to| *go_to = Some(name));
+}
+
+#[wasm_bindgen]
+pub fn vab_stand_at(x: i32, y: i32, toward_x: i32, toward_y: i32) {
+    let (at, toward) = (cell_to_world(x, y), cell_to_world(toward_x, toward_y));
+    let feet = at + (toward - at).normalize_or_zero() * 5.0;
+    STAND_AT.with_borrow_mut(|stand_at| *stand_at = Some(feet));
 }
 
 #[wasm_bindgen]
@@ -68,7 +81,10 @@ impl Plugin for TestingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (go_to.run_if(in_state(Mode::Walking)), report_player),
+            (
+                (go_to, stand_at).run_if(in_state(Mode::Walking)),
+                report_player,
+            ),
         );
     }
 }
@@ -76,6 +92,7 @@ impl Plugin for TestingPlugin {
 fn report_player(
     mode: Res<State<Mode>>,
     time: Res<Time>,
+    nearby: Res<Nearby>,
     mut frames: Local<u64>,
     player: Query<&Player>,
 ) {
@@ -83,6 +100,10 @@ fn report_player(
     report("mode", json!(format!("{:?}", mode.get())));
     report("frame", json!(*frames));
     report("seconds", json!(time.elapsed_secs()));
+    let near = nearby
+        .get()
+        .map(|(kind, cell)| json!({ "kind": format!("{kind:?}"), "cell": [cell.x, cell.y] }));
+    report("nearby", json!(near));
     if let Ok(player) = player.single() {
         let cell = world_to_cell(player.feet);
         report(
@@ -153,4 +174,15 @@ fn go_to(
         "go_to",
         json!({ "name": name, "found": true, "cell": [cell.x, cell.y] }),
     );
+}
+
+/// Puts the player where `vab.standAt` asked.
+fn stand_at(mut player: Query<&mut Player>) {
+    let Ok(mut player) = player.single_mut() else {
+        return;
+    };
+    if let Some(feet) = STAND_AT.with_borrow_mut(Option::take) {
+        player.feet = feet;
+        room::room_move(feet.x, feet.y, false);
+    }
 }
