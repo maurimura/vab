@@ -29,5 +29,6 @@
   "_supermodel_set",
   "_supermodel_timings",
   "_supermodel_jit_selftest",
-  "_supermodel_jit_test_integer"
+  "_supermodel_jit_test_integer",
+  "_supermodel_jit_benchmark"
 ]

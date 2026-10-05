@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- Try-out page for the recompiler: loads the core, loads the ROM so the interpreter is set up,
+     then races a compiled block against the interpreter. Result in #out and window.bench. -->
+<html><head><meta charset="utf-8"><title>Recompiler benchmark</title>
+<style>body{background:#111;color:#ddd;font:14px/1.6 monospace;margin:24px}</style></head>
+<body><pre id="out">running…</pre>
+<script type="module">
+import { Core } from "/web/emulator/libretro.js";
+import createSupermodel from "/supermodel/dist/supermodel.mjs";
+const out = document.getElementById("out");
+const log = (t) => { out.textContent += t + "\n"; };
+window.bench = (async () => {
+  const module = await createSupermodel({ canvas: new OffscreenCanvas(1, 1) });
+  const core = new Core(module, { onFrame(){}, onAudio(){}, onLog(l,t){ if(/\[jit\]/.test(t)) log(t); } });
+  const bytes = new Uint8Array(await (await fetch("/roms/vs298.zip")).arrayBuffer());
+  core.loadGame("vs298.zip", bytes);
+  for (let i = 0; i < 300; i++) core.run();
+  out.textContent = "";
+  const results = [];
+  for (const len of [16, 64]) results.push(module._supermodel_jit_benchmark(len, 2_000_000));
+  return results;
+})().catch((e) => { log("error: " + (e && e.stack || e)); return []; });
+</script></body></html>
