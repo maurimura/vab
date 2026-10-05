@@ -1,5 +1,5 @@
-//! Drawing pixel art into an image, pixel by pixel: the pool and air hockey tables are drawn
-//! this way, so lines and circles land on whole pixels at any angle.
+//! Drawing pixel art into an image, pixel by pixel: the pool, air hockey and shuffleboard
+//! tables are drawn this way, so lines and circles land on whole pixels at any angle.
 
 use bevy::prelude::*;
 
@@ -28,6 +28,33 @@ impl Pixels {
         if (0..self.size.x as i32).contains(&x) && (0..self.size.y as i32).contains(&y) {
             let i = (y as usize * self.size.x as usize + x as usize) * 4;
             self.data[i..i + 4].copy_from_slice(&color);
+        }
+    }
+
+    /// The colour at `x`, `y`, clear off the canvas.
+    pub fn get(&self, x: i32, y: i32) -> [u8; 4] {
+        if (0..self.size.x as i32).contains(&x) && (0..self.size.y as i32).contains(&y) {
+            let i = (y as usize * self.size.x as usize + x as usize) * 4;
+            self.data[i..i + 4].try_into().unwrap_or_default()
+        } else {
+            [0; 4]
+        }
+    }
+
+    pub fn size(&self) -> UVec2 {
+        self.size
+    }
+
+    /// Draws `other` over this canvas with its top-left corner at `at`, all but its clear
+    /// pixels.
+    pub fn draw(&mut self, other: &Pixels, at: IVec2) {
+        for y in 0..other.size.y as i32 {
+            for x in 0..other.size.x as i32 {
+                let color = other.get(x, y);
+                if color[3] > 0 {
+                    self.set(at.x + x, at.y + y, color);
+                }
+            }
         }
     }
 

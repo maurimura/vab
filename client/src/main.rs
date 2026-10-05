@@ -9,6 +9,7 @@ mod pool;
 mod room;
 mod seats;
 mod settings;
+mod shuffleboard;
 mod touch;
 
 use bevy::asset::AssetId;
@@ -23,6 +24,7 @@ use player::{PlayerPlugin, Walkable, spawn_player};
 use pool::{PoolPlugin, PoolTables};
 use room::RoomPlugin;
 use settings::SettingsPlugin;
+use shuffleboard::{ShuffleboardPlugin, ShuffleboardTables};
 use touch::TouchPlugin;
 use world::{Map, MapPlugin, map_sprite};
 
@@ -61,6 +63,7 @@ fn main() {
         HelpPlugin,
         PoolPlugin,
         HockeyPlugin,
+        ShuffleboardPlugin,
         RoomPlugin,
         SettingsPlugin,
         TouchPlugin,
@@ -77,7 +80,8 @@ fn main() {
     app.run();
 }
 
-/// Waiting for the bar's map, walking around the bar, playing a cabinet's game, or playing pool.
+/// Waiting for the bar's map, walking around the bar, playing a cabinet's game, or at one of
+/// the tables: pool, air hockey or shuffleboard.
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Mode {
     #[default]
@@ -86,6 +90,7 @@ enum Mode {
     Playing,
     Pool,
     Hockey,
+    Shuffleboard,
 }
 
 /// The bar's map, made with the editor, while it loads.
@@ -122,6 +127,7 @@ fn build_bar(
     commands.insert_resource(Cabinets::from_map(map));
     commands.insert_resource(PoolTables::from_map(map));
     commands.insert_resource(HockeyTables::from_map(map));
+    commands.insert_resource(ShuffleboardTables::from_map(map));
     commands.remove_resource::<LoadingMap>();
     mode.set(Mode::Walking);
 }

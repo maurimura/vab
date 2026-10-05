@@ -27,6 +27,11 @@ pub enum Knob {
     RailBounce,
     PaddleBounce,
     BotSpeed,
+    Sand,
+    SandGrip,
+    PuckKnock,
+    HardestThrow,
+    Flick,
 }
 
 struct Spec {
@@ -40,7 +45,7 @@ struct Spec {
 }
 
 /// Every knob in the order the panel lists them, under the heading of the game they're for.
-const SPECS: [Spec; 13] = [
+const SPECS: [Spec; 18] = [
     Spec {
         knob: Knob::TopSpeed,
         label: "Hardest shot",
@@ -158,6 +163,51 @@ const SPECS: [Spec; 13] = [
         step: 5.0,
         decimals: 0,
     },
+    Spec {
+        knob: Knob::Sand,
+        label: "Sand",
+        unit: "px/s²",
+        min: 1.0,
+        max: 300.0,
+        step: 1.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::SandGrip,
+        label: "Sand grip",
+        unit: "/s",
+        min: 0.0,
+        max: 3.0,
+        step: 0.05,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::PuckKnock,
+        label: "Puck bounce",
+        unit: "",
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::HardestThrow,
+        label: "Hardest throw",
+        unit: "px/s",
+        min: 100.0,
+        max: 1500.0,
+        step: 10.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::Flick,
+        label: "Flick strength",
+        unit: "x",
+        min: 0.2,
+        max: 5.0,
+        step: 0.1,
+        decimals: 1,
+    },
 ];
 
 /// Shows the panel (`/settings` in the chat).
@@ -218,6 +268,16 @@ impl Settings {
         }
     }
 
+    /// How the shuffleboard table plays.
+    pub fn shuffleboard(&self) -> shuffleboard::Settings {
+        shuffleboard::Settings {
+            friction: self.get(Knob::Sand),
+            grip: self.get(Knob::SandGrip),
+            bounce: self.get(Knob::PuckKnock),
+            max_speed: self.get(Knob::HardestThrow),
+        }
+    }
+
     /// Moves the value of the picked knob by `steps` of its step, within its range.
     fn nudge(&mut self, row: usize, steps: f32) {
         let spec = &SPECS[row];
@@ -238,6 +298,7 @@ fn index(knob: Knob) -> usize {
 fn defaults() -> [f32; SPECS.len()] {
     let pool = billiards::Settings::default();
     let hockey = hockey::Settings::default();
+    let shuffleboard = shuffleboard::Settings::default();
     SPECS.map(|spec| match spec.knob {
         Knob::TopSpeed => pool.max_speed,
         Knob::SoftestShot => pool.min_speed,
@@ -252,6 +313,12 @@ fn defaults() -> [f32; SPECS.len()] {
         Knob::RailBounce => hockey.rail_restitution,
         Knob::PaddleBounce => hockey.paddle_restitution,
         Knob::BotSpeed => hockey.bot_speed,
+        Knob::Sand => shuffleboard.friction,
+        Knob::SandGrip => shuffleboard.grip,
+        Knob::PuckKnock => shuffleboard.bounce,
+        Knob::HardestThrow => shuffleboard.max_speed,
+        // How much faster the puck goes than the hand that let it go: the canvas is small.
+        Knob::Flick => 3.0,
     })
 }
 
@@ -378,9 +445,14 @@ fn spawn_panel(mut commands: Commands) {
                         ],
                     ));
                     for (row, spec) in SPECS.iter().enumerate() {
-                        if spec.knob == Knob::PuckSpeed {
+                        let heading = match spec.knob {
+                            Knob::PuckSpeed => Some("Air hockey"),
+                            Knob::Sand => Some("Shuffleboard"),
+                            _ => None,
+                        };
+                        if let Some(heading) = heading {
                             list.spawn((
-                                text("Air hockey", 13.0, Color::srgb(0.6, 0.85, 0.6)),
+                                text(heading, 13.0, Color::srgb(0.6, 0.85, 0.6)),
                                 Node {
                                     margin: UiRect::top(Val::Px(6.0)),
                                     ..default()
