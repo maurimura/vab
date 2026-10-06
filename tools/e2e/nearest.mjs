@@ -9,11 +9,13 @@ await run("E uses the nearest thing", async () => {
     it.page.evaluate(([x, y, tx, ty]) => window.vab.standAt(x, y, tx, ty), [...cell, ...toward]);
 
   await standAt([-4, 3], [-4, 2]);
-  let state = await waitFor(it, (s) => s.nearby?.kind === "Cabinet", { what: "the cabinet to be nearest" });
+  // Once the player is there: a cabinet may be nearest where they spawned too.
+  const at = (s) => s.player.cell.join() === "-4,3";
+  let state = await waitFor(it, (s) => at(s) && s.nearby?.kind === "Cabinet", { what: "the cabinet to be nearest" });
   check(state.player.cell.join() === "-4,3", "leaning toward the cabinet, it's the one offered");
 
   await standAt([-4, 3], [-4, 4]);
-  state = await waitFor(it, (s) => s.nearby?.kind === "Shuffleboard", { what: "the table to be nearest" });
+  state = await waitFor(it, (s) => at(s) && s.nearby?.kind === "Shuffleboard", { what: "the table to be nearest" });
   check(state.player.cell.join() === "-4,3", "in the same cell, leaning toward the table, the table is");
   await sleep(200);
   await it.page.keyboard.press("KeyE");
