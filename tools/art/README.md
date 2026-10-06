@@ -298,6 +298,57 @@ the four new ROMs/states and the Psikyo core. Uploads require separate permissio
 no ROM/core/state has been uploaded, committed or deployed by this batch, and no
 cabinet has been placed on the user's map.
 
+### Virtua Striker 2 '98 — Sega sports upright
+
+```sh
+python3 tools/art/cabinet_pipeline.py validate vs298
+python3 tools/art/cabinet_pipeline.py build vs298
+python3 -m unittest discover -s tools/art -p 'test_*.py'
+```
+
+Four **40×56** sprites and seven editable layers per facing use the reusable
+`upright` renderer's `sega-sports` shell. Review `art/previews/vs298.png`.
+The existing `vs298` catalog entry now selects this skin; its Supermodel core,
+two seats and lockstep mode are unchanged. No map placement, upload or deployment.
+
+Selected variant: the white Sega **Virtua Striker 2 sports upright running the
+'98 update**, retaining the base-game stadium/player side print and marquee.
+White stepped sides/molding, a broad black monitor hood/bezel, teal overhanging
+deck, white fascia, gray front recesses and dark foot follow the photos. Two green
+sticks and six raised green/blue/red actions are modeled; two yellow Start buttons
+remain in the photographed deck. The alternative camouflaged-green panel indexed
+as `vs298` is retained as research only, not mixed into this teal-deck variant.
+
+Sources are archived from [Arcade Artwork's vs2 search](https://www.arcadeartwork.org/qsearch.php?q=vs2):
+[front cabinet](https://www.arcadeartwork.org/galleries/arcadecabs168/vs298.png),
+[three-quarter side](https://www.arcadeartwork.org/galleries/arcadecabs168/vs2.png),
+[alternative panel](https://www.arcadeartwork.org/galleries/arcadecpanels/vs298.png)
+and [1997 Sega flyer](https://www.arcadeartwork.org/galleries/arcadeflyers168/vs2.png).
+The flyer corroborates Model 3 and joystick/three-button controls; it is not a
+'98-specific flyer or publisher-hosted master. Photos' authors/restoration status
+are unknown, and Sega artwork/photograph redistribution rights are unresolved.
+Archive hosting is not authorization. Exact region/model is unverified; one
+low-resolution side photo supports the print repeated readably on both sides,
+not invented opposite-side art or a fabricated dedicated '98 decal kit. Measured
+image corners, polygon masking, dimensions and SHA-256 hashes are in
+`tools/art/recipes/vs298.json`; original downloads are retained without resizing.
+
+The screen is a real **496×384 '98 field/players attract frame**, not another
+game or a synthetic soccer image. Capture uses only the supplied local ROM:
+
+```sh
+./supermodel/build.sh web
+node supermodel/harness/serve.mjs  # local server, default ROMS=~/Downloads
+# In another terminal, using our own headless Chrome:
+node supermodel/harness/run.mjs '?rom=vs298&warmup=600&play&frames=1800' \
+  art/references/vs298/screen.png --canvas
+```
+
+`--canvas` exports only the native canvas; ordinary harness screenshots retain
+their existing full-page behavior. Update the recipe hash after recapturing.
+Screen filtering preserves aspect with `fit: contain`. No ROM is stored in art,
+committed or downloaded by this workflow.
+
 ### Metal Slug: online-source trial
 
 `mslug` uses a **40×56**, two-player Neo Geo MVS big-red shell with red sides,

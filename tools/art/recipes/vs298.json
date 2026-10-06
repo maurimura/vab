@@ -1,0 +1,408 @@
+{
+  "version": 1,
+  "skin": "vs298",
+  "rom": "vs298",
+  "title": "VIRTUA STRIKER 2 '98 / SEGA SPORTS UPRIGHT",
+  "variant": "White Sega Virtua Striker 2 sports upright running the '98 Model 3 update; retained base-game soccer-player sides and marquee, teal deck",
+  "renderer": "upright",
+  "shell": "sega-sports",
+  "size": [
+    40,
+    56
+  ],
+  "players": 2,
+  "control_stations": 2,
+  "buttons_per_player": 3,
+  "stations": [
+    12,
+    5.5
+  ],
+  "buttons": [
+    {
+      "position": [
+        12,
+        -1.2
+      ],
+      "color": [
+        38,
+        187,
+        76
+      ]
+    },
+    {
+      "position": [
+        11.7,
+        -2.15
+      ],
+      "color": [
+        31,
+        152,
+        211
+      ]
+    },
+    {
+      "position": [
+        11.4,
+        -3.1
+      ],
+      "color": [
+        235,
+        62,
+        49
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      227,
+      224,
+      211
+    ],
+    "side": [
+      224,
+      221,
+      208
+    ],
+    "trim": [
+      244,
+      235,
+      207
+    ],
+    "stick": [
+      47,
+      209,
+      103
+    ],
+    "hood": [
+      22,
+      27,
+      28
+    ],
+    "bezel": [
+      18,
+      23,
+      24
+    ],
+    "deck": [
+      227,
+      224,
+      211
+    ],
+    "deck_trim": [
+      23,
+      29,
+      29
+    ],
+    "front_recess": [
+      147,
+      148,
+      139
+    ]
+  },
+  "preview_note": "40 x 56 px | white Sega upright / teal deck / 2 green sticks + 6 actions / real '98 display",
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Front photograph indexed as vs298; corroborates retained Virtua Striker 2 marquee, white shell, teal panel, green sticks, three colored actions per player and two yellow Start buttons.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=vs2",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/vs298.png",
+      "rights": "Underlying Sega artwork/trademarks; archive hosting is not publisher authorization. Photo author, restoration status and redistribution rights are unknown.",
+      "sha256": "dccaa68290a11c6e11ab039a90c28f407f367f0421601c17afce391f88309761"
+    },
+    "side_cabinet": {
+      "file": "side-cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Three-quarter base Virtua Striker 2 cabinet photograph; corroborates same white shell, teal deck and blue soccer-player/stadium side print. One documented side repeated readably; not a claim of unique 98-version side artwork.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=vs2",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/vs2.png",
+      "rights": "Underlying Sega artwork/trademarks; archive hosting is not publisher authorization. Photo author, restoration status and redistribution rights are unknown.",
+      "sha256": "2d4b4b62a0a73bc84c2cd20547118bdd2f297c0f820bb0ba406cffa9073a6163"
+    },
+    "controls_alternative": {
+      "file": "controls.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Archive vs298 camouflaged-green alternative panel, used only to corroborate two joysticks and three actions; NOT mixed with the selected photographed teal cabinet deck.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=vs2",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/vs298.png",
+      "rights": "Underlying Sega artwork/trademarks; archive hosting is not publisher authorization. Photo author, restoration status and redistribution rights are unknown.",
+      "sha256": "ef66e4691303679c033eb7a1f39cdfadd4947b94607fb2f0b8ac407c4b944865"
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "kind": "original-art-scan",
+      "purpose": "Scan of 1997 Sega printed operator flyer: Model 3, two players and joystick plus three-button controls. Base game documentation, not misidentified as a 98-specific flyer or publisher-hosted master.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=vs2",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadeflyers168/vs2.png",
+      "rights": "Underlying Sega artwork/trademarks; archive hosting is not publisher authorization. Photo author, restoration status and redistribution rights are unknown.",
+      "sha256": "3a26b8c21353e8765b179e0fac2753310742bbe44d99fbbd3e0286708c8e5674"
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Native 496x384 Virtua Striker 2 98 field/players attract display captured from the supplied local ~/Downloads/vs298.zip with this repository's Supermodel web core (pinned 8b4de239bf3e0fd921f4383edcd3c21c2e62067b). Own headless Chrome; harness warmup=600 play frames=1800, native canvas export (no UI). Reproduce with node supermodel/harness/run.mjs '?rom=vs298&warmup=600&play&frames=1800' art/references/vs298/screen.png --canvas, while the local harness server runs. No ROM fetched or uploaded.",
+      "rom_sha256": "e4a22441318d53ab23d2651d19186ea169369b0da6baf0a377133303b779a409",
+      "rights": "Game imagery Sega, captured from already supplied local ROM; no redistribution license inferred.",
+      "sha256": "414f7f8d88c2d60378c149702eff55a3408f5b676de722b7c328aeede8854839"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "cabinet",
+      "quad": [
+        [
+          49,
+          37
+        ],
+        [
+          398,
+          29
+        ],
+        [
+          400,
+          124
+        ],
+        [
+          52,
+          132
+        ]
+      ],
+      "rectified_size": [
+        350,
+        95
+      ],
+      "size": [
+        24,
+        6
+      ]
+    },
+    "controls": {
+      "source": "cabinet",
+      "quad": [
+        [
+          45,
+          450
+        ],
+        [
+          406,
+          448
+        ],
+        [
+          430,
+          496
+        ],
+        [
+          15,
+          496
+        ]
+      ],
+      "rectified_size": [
+        240,
+        70
+      ],
+      "size": [
+        28,
+        9
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        22,
+        17
+      ],
+      "fit": "contain"
+    },
+    "left": {
+      "source": "side_cabinet",
+      "mask_polygon": [
+        [
+          103,
+          3
+        ],
+        [
+          136,
+          21
+        ],
+        [
+          155,
+          38
+        ],
+        [
+          178,
+          65
+        ],
+        [
+          175,
+          263
+        ],
+        [
+          82,
+          317
+        ],
+        [
+          82,
+          295
+        ],
+        [
+          108,
+          278
+        ],
+        [
+          111,
+          242
+        ],
+        [
+          113,
+          214
+        ],
+        [
+          109,
+          173
+        ],
+        [
+          106,
+          148
+        ],
+        [
+          122,
+          56
+        ],
+        [
+          112,
+          43
+        ]
+      ],
+      "background": [
+        224,
+        221,
+        208
+      ],
+      "quad": [
+        [
+          103,
+          3
+        ],
+        [
+          178,
+          65
+        ],
+        [
+          175,
+          263
+        ],
+        [
+          82,
+          317
+        ]
+      ],
+      "rectified_size": [
+        90,
+        320
+      ],
+      "size": [
+        18,
+        48
+      ]
+    },
+    "right": {
+      "source": "side_cabinet",
+      "mask_polygon": [
+        [
+          103,
+          3
+        ],
+        [
+          136,
+          21
+        ],
+        [
+          155,
+          38
+        ],
+        [
+          178,
+          65
+        ],
+        [
+          175,
+          263
+        ],
+        [
+          82,
+          317
+        ],
+        [
+          82,
+          295
+        ],
+        [
+          108,
+          278
+        ],
+        [
+          111,
+          242
+        ],
+        [
+          113,
+          214
+        ],
+        [
+          109,
+          173
+        ],
+        [
+          106,
+          148
+        ],
+        [
+          122,
+          56
+        ],
+        [
+          112,
+          43
+        ]
+      ],
+      "background": [
+        224,
+        221,
+        208
+      ],
+      "quad": [
+        [
+          103,
+          3
+        ],
+        [
+          178,
+          65
+        ],
+        [
+          175,
+          263
+        ],
+        [
+          82,
+          317
+        ]
+      ],
+      "rectified_size": [
+        90,
+        320
+      ],
+      "size": [
+        18,
+        48
+      ]
+    }
+  },
+  "uncertainties": [
+    "Variant is a documented Sega white sports upright running the 98 update with retained base Virtua Striker 2 prints, not a fabricated dedicated 98 decal kit. Exact region/model and original-versus-restored print authenticity are unverified.",
+    "No publisher-hosted master was located. Copyright/photograph redistribution rights remain unresolved; archive access is not deployment permission.",
+    "Side photo is only 182x320; rectification and pixel-size filtering limit logo/player detail. One photographed print is repeated with readable orientation; the unseen opposite original is unverified.",
+    "Teal deck is extracted from the selected front cabinet photo. The separately archived camo-green panel is not used as its texture. Two yellow Start buttons remain photographed, not extra modeled actions.",
+    "Geometry is a low-resolution interpretation: white stepped sides, black hood/bezel, broad CRT, overhanging panel and white fascia, center coin door with gray recesses and dark foot. Dimensions are world-space estimates, not measured plans."
+  ]
+}
