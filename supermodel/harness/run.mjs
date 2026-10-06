@@ -1,6 +1,7 @@
 // Runs the harness page in a headless Chrome of our own (never the user's) over CDP and prints
 // its results, saving a screenshot next to them.
-//   node supermodel/harness/run.mjs [?rom=vs298&frames=600&warmup=600&ppc=50] [screenshot.png]
+//   node supermodel/harness/run.mjs [?rom=vs298&frames=600&warmup=600&ppc=50] [screenshot.png] [--canvas]
+// --canvas exports the native game canvas only, for cabinet screen references.
 // Needs serve.mjs running on 8790. Node 22+ (built-in WebSocket).
 import { spawn } from "node:child_process";
 import { writeFileSync } from "node:fs";
@@ -59,7 +60,16 @@ if (exceptionDetails) console.error(exceptionDetails.text, exceptionDetails.exce
 const value = result?.value ?? {};
 for (const line of value.lines ?? []) console.log(line);
 if (value.error) console.error("harness error:", value.error.split("\n").slice(0, 3).join("\n"));
-const { data } = await send("Page.captureScreenshot", { format: "png" }, sessionId);
+let data;
+if (process.argv.includes("--canvas")) {
+  if (value.error || exceptionDetails) throw new Error(value.error ?? "canvas capture failed");
+  const { result: canvas } = await send("Runtime.evaluate", {
+    expression: 'document.getElementById("screen").toDataURL("image/png")', returnByValue: true,
+  }, sessionId);
+  data = canvas.value.split(",")[1];
+} else {
+  ({ data } = await send("Page.captureScreenshot", { format: "png" }, sessionId));
+}
 writeFileSync(shot, Buffer.from(data, "base64"));
 console.log(`screenshot: ${shot}`);
 ws.close();

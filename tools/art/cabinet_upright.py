@@ -17,6 +17,22 @@ def model(recipe):
         ]
         for ymin, ymax in ((0, 1), (15, 16)):
             solids.append(base.Solid('side', 2, 9.5, ymin, ymax, 22, 38))
+    elif recipe.get('shell') == 'sega-sports':
+        # Wide Sega sports upright: white stepped sides, full-width black hood,
+        # broad landscape monitor and a teal overhanging deck, not a pedestal.
+        solids = [
+            base.Solid('lower', 2, 11, 1, 15, 0, 16),
+            base.Solid('foot', 2, 11.5, 1, 15, 0, 1),
+            base.Solid('upper', 2, 9.5, 2, 14, 16, 28, (((1, 0, .15), 12.35),)),
+            base.Solid('hood', 2, 10.5, 2, 14, 26, 32, (((1, 0, -2), -45.5),)),
+            base.Solid('deck', 8, 14, .5, 15.5, 15.5, 18.5, (((1, 0, 6), 122),)),
+        ]
+        for ymin, ymax in ((1, 2), (14, 15)):
+            solids.extend([
+                base.Solid('side', 2, 11, ymin, ymax, 0, 16),
+                base.Solid('side', 2, 9.5, ymin, ymax, 16, 27, (((8, 0, 1), 95),)),
+                base.Solid('side', 2, 10.5, ymin, ymax, 27, 32, (((1, 0, -2), -45.5),)),
+            ])
     elif recipe.get('shell') == 'flat-upright':
         solids = [
             base.Solid('lower', 2, 11, 3, 13, 0, 16),
@@ -59,6 +75,9 @@ def paint(solid, p, n, tex, *, recipe):
     part = solid.part
     colors = {name: tuple(color) for name, color in recipe['colors'].items()}
     pedestal = recipe.get('shell') == 'pedestal'
+    sega = recipe.get('shell') == 'sega-sports'
+    if part == 'foot':
+        return 'body', colors['deck_trim'], False
     if part == 'side':
         front = 9.5 if pedestal else 11 if recipe.get('shell') == 'flat-upright' else base.side_front(z)
         top = 38 if pedestal else 32
@@ -69,24 +88,28 @@ def paint(solid, p, n, tex, *, recipe):
             return 'side art', base.sample(tex['left' if ny > 0 else 'right'], u, (top - z) / top), False
         return 'side art', colors.get('hood', colors['side']) if pedestal else colors['side'], False
     if part == 'deck':
-        lo, hi = (0, 16) if pedestal else (3, 13)
+        lo, hi = (0, 16) if pedestal else (.5, 15.5) if sega else (3, 13)
         if nz > .7:
             if x > 13.5 or y < lo + .4 or y > hi - .4:
-                return 'trim', colors['trim'], False
+                return 'trim', colors.get('deck_trim', colors['trim']), False
             return 'controls', base.sample(tex['controls'], (hi - y) / (hi - lo), (x - 8) / 6), False
         if nx > .9 and 'panel' in tex:
             return 'controls', base.sample(tex['panel'], (hi - y) / (hi - lo), (18.5 - z) / 3), False
         return 'controls', colors.get('deck', colors['trim']), False
     if part == 'hood' and nx > .9:
         top = 38 if pedestal else 32
-        lo, hi = (1, 15) if pedestal else (4, 12)
+        lo, hi = (1, 15) if pedestal else (2, 14) if sega else (4, 12)
+        if sega and z < 28.6:
+            return 'body', colors['hood'], False
         if z > top - .4 or z < top - 3.4:
             return 'trim', colors.get('hood_trim', colors['trim']), False
         return 'marquee', base.sample(tex['marquee'], (hi - y) / (hi - lo), (top - z) / 4), True
     if part == 'upper' and nx > .5:
-        lo, hi = (1, 15) if pedestal else (4, 12)
+        lo, hi = (1, 15) if pedestal else (2, 14) if sega else (4, 12)
         if pedestal:
             bottom, top = 23, 32.5
+        elif sega:
+            bottom, top = 18.1, 27.4
         elif recipe.get('shell') == 'flat-upright':
             bottom, top = 18.3, 28.4
         elif recipe.get('portrait_monitor'):
@@ -108,6 +131,8 @@ def paint(solid, p, n, tex, *, recipe):
             return 'front', (15, 18, 21), False
         if 'front' in tex:
             return 'front', base.sample(tex['front'], (13 - y) / 10, (16 - z) / 16), False
+        if sega and (y < 5.8 or y > 10.2):
+            return 'front', colors['front_recess'], False
         return 'front', colors['body'], False
     if part == 'neck':
         return 'body', colors['body'], False
@@ -123,6 +148,6 @@ def paint(solid, p, n, tex, *, recipe):
         if 5 < y < 11 and 4 < z < 15:
             edge = y < 5.35 or y > 10.65 or z < 4.35 or z > 14.65
             return 'body', (42, 44, 53) if edge else (24, 27, 35), False
-    if pedestal and part in ('upper', 'hood'):
+    if (pedestal or sega) and part in ('upper', 'hood'):
         return 'body', colors.get('hood', colors['body']), False
     return 'body', colors.get('back', colors['body']), False

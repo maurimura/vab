@@ -25,5 +25,5 @@
     (rom: "asteroid", core: "classics", title: "Asteroids", turns: true, cabinets: ["asteroid"]),
     (rom: "s1945", core: "psikyo", title: "Strikers 1945", cabinets: ["s1945"]),
     (rom: "term2", core: "midway", title: "Terminator 2: Judgment Day", cabinets: ["term2"]),
-    (rom: "vs298", core: "supermodel", title: "Virtua Striker 2 '98", lockstep: true),
+    (rom: "vs298", core: "supermodel", title: "Virtua Striker 2 '98", lockstep: true, cabinets: ["vs298"]),
 ]
