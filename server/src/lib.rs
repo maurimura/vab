@@ -250,19 +250,21 @@ fn not_found() -> Result<Response> {
     Ok(Response::error("Not found", 404)?.with_headers(headers))
 }
 
-/// A bar room: everyone in it sees each other walk around and who plays at which cabinet, and
-/// the players at a cabinet (up to 4) find each other here to play online. Anyone else can watch
-/// a cabinet's game: one of its players streams it to them through the room. WebSockets go through
-/// the Hibernation API, so an idle room is evicted from memory while its connections stay open;
-/// what the room knows about each player lives on their socket (its attachment), and each
-/// socket is tagged with its player's id.
+/// A bar room: everyone in it sees each other walk around and who plays at which cabinet or
+/// table (a place with seats, named "x,y" for a cabinet and "pool:x,y" and the like for a
+/// table), and the players at one (up to 4) find each other here to play online. Anyone else
+/// can watch a place's game: one of its players streams it to them through the room. WebSockets
+/// go through the Hibernation API, so an idle room is evicted from memory while its connections
+/// stay open; what the room knows about each player lives on their socket (its attachment), and
+/// each socket is tagged with its player's id.
 ///
 /// Players have a name, shown above their head and next to what they say in the chat.
 ///
 /// Text messages are JSON (`FromPlayer`, `ToPlayer`). Binary messages are for another player,
 /// passed on as they are but for the address: `[to: u32 LE][bytes]` in, `[from: u32 LE][bytes]`
 /// out. The page sends game packets this way until WebRTC connects, and hands games over. A
-/// seated player sending to `WATCHERS` reaches everyone watching their cabinet.
+/// seated player sending to `WATCHERS`, in binary or as a `Signal`, reaches everyone watching
+/// their place.
 #[durable_object]
 pub struct Room {
     state: State,
@@ -327,8 +329,9 @@ enum FromPlayer {
     Say {
         text: String,
     },
-    /// Messages between the players at a cabinet (WebRTC offers, answers and ICE candidates,
-    /// handing a game over), passed on as they are.
+    /// Messages between the players at a cabinet or table (WebRTC offers, answers and ICE
+    /// candidates, handing a game over, a table's game), passed on as they are: to another
+    /// player, or to everyone watching the sender's place (`WATCHERS`).
     Signal {
         to: u32,
         data: serde_json::Value,
@@ -548,16 +551,43 @@ impl Room {
             }
             return Ok(());
         }
-        let Some(seat) = &player.seat else {
-            return Ok(());
-        };
-        for (ws, other) in self.players() {
-            if other.watching.as_ref() == Some(&seat.cabinet) {
-                // A socket that is closing can't take it; the others still should.
-                let _ = ws.send_with_bytes(&message);
-            }
+        for ws in self.watchers_sockets(player) {
+            // A socket that is closing can't take it; the others still should.
+            let _ = ws.send_with_bytes(&message);
         }
         Ok(())
+    }
+
+    /// Passes on a `Signal` from `player`: to another player, or to everyone watching the
+    /// player's cabinet or table.
+    fn signal(&self, player: &Player, to: u32, data: serde_json::Value) -> Result<()> {
+        let message = ToPlayer::Signal {
+            from: player.id,
+            data,
+        };
+        if to != WATCHERS {
+            if let Some(other) = self.socket_of(to) {
+                other.send(&message)?;
+            }
+            return Ok(());
+        }
+        let text = serde_json::to_string(&message)?;
+        for ws in self.watchers_sockets(player) {
+            let _ = ws.send_with_str(&text);
+        }
+        Ok(())
+    }
+
+    /// The sockets of everyone watching the place `player` sits at; none if they sit nowhere.
+    fn watchers_sockets(&self, player: &Player) -> Vec<WebSocket> {
+        let Some(seat) = &player.seat else {
+            return Vec::new();
+        };
+        self.players()
+            .into_iter()
+            .filter(|(_, other)| other.watching.as_ref() == Some(&seat.cabinet))
+            .map(|(ws, _)| ws)
+            .collect()
     }
 }
 
@@ -675,14 +705,7 @@ impl DurableObject for Room {
             }
             FromPlayer::Watch { cabinet } => self.watch(&ws, &mut player, cabinet)?,
             FromPlayer::Stand => self.stand(&ws, &mut player)?,
-            FromPlayer::Signal { to, data } => {
-                if let Some(other) = self.socket_of(to) {
-                    other.send(&ToPlayer::Signal {
-                        from: player.id,
-                        data,
-                    })?;
-                }
-            }
+            FromPlayer::Signal { to, data } => self.signal(&player, to, data)?,
         }
         Ok(())
     }

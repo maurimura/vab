@@ -1,0 +1,15 @@
+[package]
+name = "darts"
+version = "0.1.0"
+edition = "2024"
+
+# Darts: the board's scoring, a game of 301 and the throwing hand's sway, without Bevy, so it
+# tests natively (client/src/darts).
+[dependencies]
+# The vector math Bevy uses, the same version.
+glam = "0.32"
+# With the `serde` feature: the game, as it goes between two players.
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+serde = ["dep:serde", "glam/serde"]

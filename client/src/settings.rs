@@ -1,8 +1,8 @@
 //! Tuning: `/settings` in the chat opens a panel of the numbers that shape how the games play,
 //! to try changes on the spot. Up and Down pick one, Left and Right change it (with Shift, ten
 //! steps at a time), and the mouse or a finger works the - and + buttons. N racks the pool
-//! table again, R puts everything back and Esc closes the panel. The numbers last until the
-//! page reloads.
+//! table again (as New rack does), New game starts the shuffleboard or the darts game over, R
+//! puts everything back and Esc closes the panel. The numbers last until the page reloads.
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::{ButtonState, InputSystems};
@@ -27,6 +27,18 @@ pub enum Knob {
     RailBounce,
     PaddleBounce,
     BotSpeed,
+    Sand,
+    SandGrip,
+    PuckKnock,
+    HardestThrow,
+    Flick,
+    Sway,
+    Steady,
+    SteadyFor,
+    Shake,
+    Scatter,
+    FlickSpeed,
+    FlickSpread,
 }
 
 struct Spec {
@@ -40,7 +52,7 @@ struct Spec {
 }
 
 /// Every knob in the order the panel lists them, under the heading of the game they're for.
-const SPECS: [Spec; 13] = [
+const SPECS: [Spec; 25] = [
     Spec {
         knob: Knob::TopSpeed,
         label: "Hardest shot",
@@ -158,6 +170,114 @@ const SPECS: [Spec; 13] = [
         step: 5.0,
         decimals: 0,
     },
+    Spec {
+        knob: Knob::Sand,
+        label: "Sand",
+        unit: "px/s²",
+        min: 1.0,
+        max: 300.0,
+        step: 1.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::SandGrip,
+        label: "Sand grip",
+        unit: "/s",
+        min: 0.0,
+        max: 3.0,
+        step: 0.05,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::PuckKnock,
+        label: "Puck bounce",
+        unit: "",
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::HardestThrow,
+        label: "Hardest throw",
+        unit: "px/s",
+        min: 100.0,
+        max: 1500.0,
+        step: 10.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::Flick,
+        label: "Flick strength",
+        unit: "x",
+        min: 0.2,
+        max: 5.0,
+        step: 0.1,
+        decimals: 1,
+    },
+    Spec {
+        knob: Knob::Sway,
+        label: "Hand sway",
+        unit: "mm",
+        min: 0.0,
+        max: 100.0,
+        step: 1.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::Steady,
+        label: "Sway held",
+        unit: "x",
+        min: 0.0,
+        max: 1.0,
+        step: 0.05,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::SteadyFor,
+        label: "Steady for",
+        unit: "s",
+        min: 0.2,
+        max: 10.0,
+        step: 0.1,
+        decimals: 1,
+    },
+    Spec {
+        knob: Knob::Shake,
+        label: "Shake after",
+        unit: "mm/s",
+        min: 0.0,
+        max: 200.0,
+        step: 5.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::Scatter,
+        label: "Scatter",
+        unit: "mm",
+        min: 0.0,
+        max: 40.0,
+        step: 0.5,
+        decimals: 1,
+    },
+    Spec {
+        knob: Knob::FlickSpeed,
+        label: "Right flick",
+        unit: "mm/s",
+        min: 100.0,
+        max: 5000.0,
+        step: 50.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::FlickSpread,
+        label: "Flick error",
+        unit: "mm",
+        min: 0.0,
+        max: 300.0,
+        step: 5.0,
+        decimals: 0,
+    },
 ];
 
 /// Shows the panel (`/settings` in the chat).
@@ -167,6 +287,14 @@ pub struct ShowSettings;
 /// Puts the pool table's balls back in the rack (the panel's New rack button, or N).
 #[derive(Message)]
 pub struct NewRack;
+
+/// Starts a new game of shuffleboard (the panel's New game button).
+#[derive(Message)]
+pub struct NewShuffleboardGame;
+
+/// Starts a new game of darts (the panel's New game button, under Darts).
+#[derive(Message)]
+pub struct NewDartsGame;
 
 #[derive(Resource)]
 pub struct Settings {
@@ -218,6 +346,29 @@ impl Settings {
         }
     }
 
+    /// How the hand throwing darts moves, and throws.
+    pub fn darts(&self) -> darts::Hand {
+        darts::Hand {
+            drift: self.get(Knob::Sway),
+            steady: self.get(Knob::Steady),
+            steady_for: self.get(Knob::SteadyFor),
+            shake: self.get(Knob::Shake),
+            scatter: self.get(Knob::Scatter),
+            flick_speed: self.get(Knob::FlickSpeed),
+            flick_spread: self.get(Knob::FlickSpread),
+        }
+    }
+
+    /// How the shuffleboard table plays.
+    pub fn shuffleboard(&self) -> shuffleboard::Settings {
+        shuffleboard::Settings {
+            friction: self.get(Knob::Sand),
+            grip: self.get(Knob::SandGrip),
+            bounce: self.get(Knob::PuckKnock),
+            max_speed: self.get(Knob::HardestThrow),
+        }
+    }
+
     /// Moves the value of the picked knob by `steps` of its step, within its range.
     fn nudge(&mut self, row: usize, steps: f32) {
         let spec = &SPECS[row];
@@ -238,6 +389,8 @@ fn index(knob: Knob) -> usize {
 fn defaults() -> [f32; SPECS.len()] {
     let pool = billiards::Settings::default();
     let hockey = hockey::Settings::default();
+    let shuffleboard = shuffleboard::Settings::default();
+    let hand = darts::Hand::default();
     SPECS.map(|spec| match spec.knob {
         Knob::TopSpeed => pool.max_speed,
         Knob::SoftestShot => pool.min_speed,
@@ -252,6 +405,19 @@ fn defaults() -> [f32; SPECS.len()] {
         Knob::RailBounce => hockey.rail_restitution,
         Knob::PaddleBounce => hockey.paddle_restitution,
         Knob::BotSpeed => hockey.bot_speed,
+        Knob::Sand => shuffleboard.friction,
+        Knob::SandGrip => shuffleboard.grip,
+        Knob::PuckKnock => shuffleboard.bounce,
+        Knob::HardestThrow => shuffleboard.max_speed,
+        // How much faster the puck goes than the hand that let it go: the canvas is small.
+        Knob::Flick => 3.0,
+        Knob::Sway => hand.drift,
+        Knob::Steady => hand.steady,
+        Knob::SteadyFor => hand.steady_for,
+        Knob::Shake => hand.shake,
+        Knob::Scatter => hand.scatter,
+        Knob::FlickSpeed => hand.flick_speed,
+        Knob::FlickSpread => hand.flick_spread,
     })
 }
 
@@ -267,6 +433,8 @@ impl Plugin for SettingsPlugin {
         app.init_resource::<Settings>()
             .add_message::<ShowSettings>()
             .add_message::<NewRack>()
+            .add_message::<NewShuffleboardGame>()
+            .add_message::<NewDartsGame>()
             .add_systems(Startup, spawn_panel)
             // After the chat and the controls panel have had the keys, so a key that closes
             // either doesn't also tune something, and before anything else reads them.
@@ -291,12 +459,14 @@ struct Row(usize);
 #[derive(Component)]
 struct Value(usize);
 
-/// The panel's buttons: - and + by row and which way they go, New rack, and Close for a
-/// screen without Esc.
+/// The panel's buttons: - and + by row and which way they go, New rack, New game (shuffleboard
+/// and darts), and Close for a screen without Esc.
 #[derive(Component, Clone, Copy)]
 enum PanelButton {
     Step(usize, f32),
     NewRack,
+    NewShuffleboardGame,
+    NewDartsGame,
     Close,
 }
 
@@ -357,35 +527,64 @@ fn spawn_panel(mut commands: Commands) {
                 ))
                 .with_children(|list| {
                     list.spawn(text("Settings", 18.0, Color::WHITE));
-                    list.spawn((
-                        Node {
-                            justify_content: JustifyContent::SpaceBetween,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        children![
-                            text("Pool", 13.0, Color::srgb(0.6, 0.85, 0.6)),
-                            (
-                                PanelButton::NewRack,
-                                Node {
-                                    padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
-                                    border_radius: BorderRadius::all(Val::Px(4.0)),
-                                    ..default()
-                                },
-                                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
-                                children![text("New rack (N)", 12.0, Color::WHITE)],
-                            ),
-                        ],
+                    // A game's heading, and a button for it on the right.
+                    let heading_with = |heading: &str, button: PanelButton, label: &str, top| {
+                        (
+                            Node {
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                margin: UiRect::top(Val::Px(top)),
+                                ..default()
+                            },
+                            children![
+                                text(heading, 13.0, Color::srgb(0.6, 0.85, 0.6)),
+                                (
+                                    button,
+                                    Node {
+                                        padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
+                                        border_radius: BorderRadius::all(Val::Px(4.0)),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
+                                    children![text(label, 12.0, Color::WHITE)],
+                                ),
+                            ],
+                        )
+                    };
+                    list.spawn(heading_with(
+                        "Pool",
+                        PanelButton::NewRack,
+                        "New rack (N)",
+                        0.0,
                     ));
                     for (row, spec) in SPECS.iter().enumerate() {
-                        if spec.knob == Knob::PuckSpeed {
-                            list.spawn((
-                                text("Air hockey", 13.0, Color::srgb(0.6, 0.85, 0.6)),
-                                Node {
-                                    margin: UiRect::top(Val::Px(6.0)),
-                                    ..default()
-                                },
-                            ));
+                        match spec.knob {
+                            Knob::PuckSpeed => {
+                                list.spawn((
+                                    text("Air hockey", 13.0, Color::srgb(0.6, 0.85, 0.6)),
+                                    Node {
+                                        margin: UiRect::top(Val::Px(6.0)),
+                                        ..default()
+                                    },
+                                ));
+                            }
+                            Knob::Sand => {
+                                list.spawn(heading_with(
+                                    "Shuffleboard",
+                                    PanelButton::NewShuffleboardGame,
+                                    "New game",
+                                    6.0,
+                                ));
+                            }
+                            Knob::Sway => {
+                                list.spawn(heading_with(
+                                    "Darts",
+                                    PanelButton::NewDartsGame,
+                                    "New game",
+                                    6.0,
+                                ));
+                            }
+                            _ => {}
                         }
                         list.spawn((
                             Row(row),
@@ -499,8 +698,9 @@ fn tune_with_keys(
     }
 }
 
-/// A click or tap on - or + changes that knob, on a line picks it, and on New rack or Close
-/// does that.
+/// A click or tap on - or + changes that knob, on a line picks it, and on New rack, New game
+/// or Close does that.
+#[allow(clippy::too_many_arguments)]
 fn tune_with_pointer(
     window: Single<&Window>,
     mouse: Res<ButtonInput<MouseButton>>,
@@ -509,6 +709,8 @@ fn tune_with_pointer(
     rows: Query<(&Row, &ComputedNode, &UiGlobalTransform)>,
     panel_buttons: Query<(&PanelButton, &ComputedNode, &UiGlobalTransform)>,
     mut new_rack: MessageWriter<NewRack>,
+    mut new_shuffleboard_game: MessageWriter<NewShuffleboardGame>,
+    mut new_darts_game: MessageWriter<NewDartsGame>,
 ) {
     if !settings.open {
         return;
@@ -533,6 +735,12 @@ fn tune_with_pointer(
             Some(PanelButton::Step(row, way)) => settings.nudge(row, way),
             Some(PanelButton::NewRack) => {
                 new_rack.write(NewRack);
+            }
+            Some(PanelButton::NewShuffleboardGame) => {
+                new_shuffleboard_game.write(NewShuffleboardGame);
+            }
+            Some(PanelButton::NewDartsGame) => {
+                new_darts_game.write(NewDartsGame);
             }
             Some(PanelButton::Close) => settings.open = false,
             None => {}

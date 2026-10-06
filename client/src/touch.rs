@@ -1,8 +1,8 @@
 //! Touch controls, for phones and tablets: the page says when the screen is one
 //! (web/index.html). In the bar a thumb dragged anywhere off the buttons is the stick, and
 //! walks. Buttons are UI nodes with a [`TouchButton`], spawned by whoever knows what they do,
-//! who then asks [`Touch`] about them: Play and Watch by a cabinet (cabinets.rs) and Leave at
-//! one (emulator.rs). The game's own controls are here: the pad, with its buttons under the
+//! who then asks [`Touch`] about them: Play and Watch by a cabinet or a table (nearby.rs) and
+//! Leave at one (emulator.rs). The game's own controls are here: the pad, with its buttons under the
 //! right thumb, laid out like the keys and named as the game names them, and a d-pad under the
 //! left. The d-pad stays put, unlike the stick in the bar, so that each way is always in the
 //! same place to tap twice or roll through, as a fighting game's moves ask. The chat is the
@@ -54,12 +54,10 @@ extern "C" {
 /// A button for a finger, and what it's for.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TouchButton {
+    /// Plays whatever is nearest the player: a cabinet or a table (nearby.rs).
     Play,
+    /// Watches the game being played there.
     Watch,
-    /// Sits at the pool table next to the player.
-    Pool,
-    /// Plays at the air hockey table next to the player.
-    Hockey,
     Leave,
     /// One of the game's, by RetroPad id.
     Pad(u16),
@@ -333,12 +331,15 @@ fn show_stick(
 ) {
     for (part, mut node, mut visibility) in &mut parts {
         // The d-pad shows itself, and at the pool table the finger aims the cue instead, as at
-        // the air hockey table it moves the paddle.
-        let Some(thumb) = touch
-            .thumb
-            .as_ref()
-            .filter(|thumb| !thumb.on_dpad && !matches!(mode.get(), Mode::Pool | Mode::Hockey))
-        else {
+        // the air hockey table it moves the paddle, and at the shuffleboard table and the
+        // dartboard it throws.
+        let Some(thumb) = touch.thumb.as_ref().filter(|thumb| {
+            !thumb.on_dpad
+                && !matches!(
+                    mode.get(),
+                    Mode::Pool | Mode::Hockey | Mode::Shuffleboard | Mode::Darts
+                )
+        }) else {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         };

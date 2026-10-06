@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["billiards", "client", "hockey", "netplay", "server", "world", "tools/editor"]
+members = ["billiards", "client", "darts", "hockey", "shuffleboard", "netplay", "server", "world", "tools/editor"]
 
 # GGRS as published, plus P2PSession::set_frame_delay so a lockstep game can change its input
 # delay while playing (netplay/vendor/ggrs/PATCH.md).

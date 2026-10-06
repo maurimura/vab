@@ -7,6 +7,11 @@
 //! (the hockey crate), and letting the pointer go pauses; when someone sits at the other seat,
 //! they play each other (online.rs). First to 7 wins, and a click starts the next game (player
 //! 1's, against someone). Esc goes back to the bar. How it plays can be tuned with `/settings`.
+//!
+//! Anyone can watch the game at a table (F in the bar): they see the rink as seat 0 does, the
+//! paddles out of their hands. The lowest seat playing sends them the rink as it is a few
+//! times a second (`online::Message::State`); in between, their rink plays on as it was going,
+//! and what each state puts right is drawn gliding there, as rollback's corrections are.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
@@ -18,13 +23,12 @@ use hockey::{
     Bot, Event, FRAME, GOAL_WIDTH, HEIGHT, PADDLE_RADIUS, PUCK_RADIUS, Rink, WIDTH, WINNING_SCORE,
 };
 
-use wasm_bindgen::prelude::*;
-
 use super::online::{self, Message};
 use crate::Mode;
 use crate::chat::{Chat, ShowNetStats, chat_closed};
 use crate::help::Help;
 use crate::pixels::Pixels;
+use crate::pointer_lock;
 use crate::seats;
 use crate::settings::Settings;
 use crate::touch::{self, Touch, TouchButton};
@@ -62,26 +66,16 @@ const TIMING_GIVES_UP: f32 = 3.5;
 const SMOOTHING: f32 = 0.08;
 /// A jump bigger than this (pixels) isn't smoothed: it's real, or too far to glide.
 const SMOOTH_UP_TO: f32 = 40.0;
+/// How often the rink goes to the watchers, in seconds.
+const STREAM_EVERY: f32 = 1.0 / 20.0;
 
-/// The air hockey table the player sits at, as the room names it (online::table_id, seats.rs).
-/// Set before switching to `Mode::Hockey`.
+/// The air hockey table the player is at, as the room names it (online::table_id, seats.rs),
+/// and whether they watch the game there rather than play. Set before switching to
+/// `Mode::Hockey`.
 #[derive(Resource)]
-pub struct AtTable(pub String);
-
-// Defined in index.html.
-#[wasm_bindgen]
-extern "C" {
-    /// Whether a click on the canvas should lock the pointer (and, turned off, lets it go).
-    #[wasm_bindgen(js_name = pointerLockWanted)]
-    fn pointer_lock_wanted(on: bool);
-    #[wasm_bindgen(js_name = pointerLocked)]
-    fn pointer_locked() -> bool;
-    /// This browser won't lock the pointer.
-    #[wasm_bindgen(js_name = pointerLockFailed)]
-    fn pointer_lock_failed() -> bool;
-    /// Lets the locked pointer go.
-    #[wasm_bindgen(js_name = releasePointer)]
-    fn release_pointer();
+pub struct AtTable {
+    pub id: String,
+    pub watching: bool,
 }
 
 /// How the player moves their paddle.
@@ -101,9 +95,9 @@ impl Control {
     fn now(touch: &Touch) -> Self {
         if touch.is_on() {
             Control::Finger
-        } else if pointer_locked() {
+        } else if pointer_lock::locked() {
             Control::Locked
-        } else if pointer_lock_failed() {
+        } else if pointer_lock::failed() {
             Control::Unlocked
         } else {
             Control::Paused
@@ -142,6 +136,7 @@ impl Plugin for GamePlugin {
                     fit_canvas,
                     sync,
                     play,
+                    stream,
                     draw,
                     show_text,
                     show_net_stats,
@@ -152,6 +147,11 @@ impl Plugin for GamePlugin {
                     .run_if(in_state(Mode::Hockey)),
             )
             .add_systems(OnExit(Mode::Hockey), hide_rink);
+        #[cfg(feature = "test-hooks")]
+        app.add_systems(
+            Update,
+            test_hooks.after(play).run_if(in_state(Mode::Hockey)),
+        );
     }
 }
 
@@ -180,11 +180,20 @@ struct Game {
     table_id: Option<String>,
     /// Player 1 timing round trips to player 2, before the match begins.
     timing: Option<Timing>,
-    /// How far from where they really are the puck and the other player's paddle are drawn,
-    /// fading: the jumps rollback makes, smoothed over (as seat 0 sees the rink).
-    drawn_off: [Vec2; 2],
+    /// How far from where they really are the puck, then each paddle, are drawn, fading: the
+    /// jumps rollback makes (and, watching, each state), smoothed over (as seat 0 sees the
+    /// rink).
+    drawn_off: [Vec2; 3],
     /// The other player at the table, when there is one: then they play each other, not the bot.
     opponent: Option<Opponent>,
+    /// Watching the game at the table, not playing: a player there sends the rink.
+    watching: bool,
+    /// Watching, and no rink has come yet.
+    waiting_for_start: bool,
+    /// Who plays, by seat, while watching: the bot's seat is the bot's.
+    watched_names: [String; 2],
+    /// How long since the rink last went to the watchers.
+    streamed_ago: f32,
 }
 
 /// Round trips being timed (in seconds of `Time`): when each ping went, and how long the
@@ -235,9 +244,38 @@ impl Game {
         };
         self.bot = Bot::default();
         self.goal = None;
-        self.drawn_off = [Vec2::ZERO; 2];
+        self.drawn_off = [Vec2::ZERO; 3];
         self.paddle_placed = false;
         self.slack = Vec2::ZERO;
+    }
+
+    /// Watching: the rink as a player there has it. What moved since the last state is drawn
+    /// gliding there, unless a goal moved it; a goal shows as one.
+    fn take_state(&mut self, state: Rink) {
+        let before = self.rink.clone();
+        let drawn = [
+            before.puck + self.drawn_off[0],
+            before.paddles[0] + self.drawn_off[1],
+            before.paddles[1] + self.drawn_off[2],
+        ];
+        self.rink = state;
+        let rink = &self.rink;
+        if self.waiting_for_start {
+            // The first state: nothing to glide from, nothing scored just now.
+            self.waiting_for_start = false;
+            self.drawn_off = [Vec2::ZERO; 3];
+        } else if rink.score != before.score {
+            self.drawn_off = [Vec2::ZERO; 3];
+            if rink.score == [0, 0] {
+                self.goal = None;
+            } else if let Some(scorer) = (0..2).find(|&seat| rink.score[seat] > before.score[seat])
+            {
+                self.goal = Some((scorer, 0.0));
+            }
+        } else {
+            let now = [rink.puck, rink.paddles[0], rink.paddles[1]];
+            self.drawn_off = [0, 1, 2].map(|i| smoothed(drawn[i] - now[i]));
+        }
     }
 
     /// Against `opponent` now, or against the bot (`None`): a new game either way, the match
@@ -259,6 +297,15 @@ impl Game {
         self.new_game();
         self.target = Some(self.rink.paddles[me]);
         online::start(me, input_delay);
+    }
+}
+
+/// A jump to draw gliding over, or not at all when it's too big to be a correction.
+fn smoothed(jump: Vec2) -> Vec2 {
+    if jump.length() < SMOOTH_UP_TO {
+        jump
+    } else {
+        Vec2::ZERO
     }
 }
 
@@ -303,6 +350,7 @@ fn show_rink(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     game: Option<ResMut<Game>>,
+    at: Option<Res<AtTable>>,
     touch: Res<Touch>,
 ) {
     match game {
@@ -313,8 +361,9 @@ fn show_rink(
         }
         None => commands.init_resource::<Game>(),
     }
-    if !touch.is_on() {
-        pointer_lock_wanted(true);
+    // A watcher's pointer is their own.
+    if !touch.is_on() && !at.is_some_and(|at| at.watching) {
+        pointer_lock::wanted(true);
     }
     let image = Image::new_fill(
         Extent3d {
@@ -417,8 +466,8 @@ fn fit_canvas(window: Single<&Window>, mut canvas: Single<&mut Node, With<Canvas
 }
 
 /// Sits at the table in the room, starts a match when someone sits at the other seat (and goes
-/// back to the bot when they leave), and follows what they say: their paddle, the puck while
-/// it's theirs, the puck when they hand it over, and the goals they've let in.
+/// back to the bot when they leave), and follows what they say: when the match begins, and by
+/// what settings. Watching, takes the rink as a player there sends it.
 fn sync(
     at: Option<Res<AtTable>>,
     settings: Res<Settings>,
@@ -430,12 +479,25 @@ fn sync(
         return;
     };
     let game = &mut *game;
-    if game.table_id.as_deref() != Some(at.0.as_str()) {
-        game.table_id = Some(at.0.clone());
-        seats::sit(&at.0);
+    if game.table_id.as_deref() != Some(at.id.as_str()) {
+        game.table_id = Some(at.id.clone());
+        game.watching = at.watching;
+        if at.watching {
+            // The rink comes from whoever plays there; until then, nothing.
+            game.timing = None;
+            game.play_against(None);
+            game.waiting_for_start = true;
+            seats::watch(&at.id);
+        } else {
+            seats::sit(&at.id);
+        }
+    }
+    if game.watching {
+        watch(game, &at.id);
+        return;
     }
 
-    let now = seats::seats_at(&at.0).and_then(|seats| {
+    let now = seats::seats_at(&at.id).and_then(|seats| {
         let me = seats.mine()?;
         let (_, id) = seats.opponent()?;
         Some(Opponent {
@@ -453,7 +515,7 @@ fn sync(
             let (me, id, my_id) = (now.me, now.id, now.my_id);
             game.play_against(Some(now));
             // Linked straight away: the round trips are timed over the match's own path.
-            online::link(&at.0, me, id, my_id);
+            online::link(&at.id, me, id, my_id);
             // Player 1 times a few round trips, then begins the match; player 2 waits for them.
             game.timing = (me == 0).then(|| Timing {
                 started: now_s,
@@ -467,7 +529,7 @@ fn sync(
         (None, None) => {}
     }
 
-    let messages = seats::take_messages::<Message>(&at.0);
+    let messages = seats::take_messages::<Message>(&at.id);
     let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
         return;
     };
@@ -487,7 +549,7 @@ fn sync(
             } if game.me() == 1 => {
                 game.begin_match(online::settings_from_message(settings), input_delay);
             }
-            Message::Begin { .. } => {}
+            Message::Begin { .. } | Message::State { .. } => {}
         }
     }
 
@@ -513,9 +575,61 @@ fn sync(
             settings: online::settings_to_message(&settings),
             input_delay,
         };
-        seats::send(&at.0, id, &begin);
+        seats::send(&at.id, id, &begin);
         game.begin_match(settings, input_delay);
     }
+}
+
+/// Watching: takes the rink as the players at the table send it, and who they are. Alone, a
+/// player plays the bot, whichever seat they're in.
+fn watch(game: &mut Game, table: &str) {
+    let Some(seats) = seats::seats_at(table) else {
+        return;
+    };
+    let names = seats.names();
+    game.watched_names = match seats.players.each_ref().map(Option::is_some) {
+        [true, false] => [names[0].clone(), "Bot".to_string()],
+        [false, true] => [names[1].clone(), "Bot".to_string()],
+        _ => names,
+    };
+    let players: Vec<u32> = seats.ids().collect();
+    for (_, message) in seats::take_messages::<Message>(table)
+        .into_iter()
+        .filter(|(from, _)| players.contains(from))
+    {
+        if let Message::State {
+            puck,
+            velocity,
+            paddles,
+            score,
+            settings,
+        } = message
+        {
+            game.take_state(online::rink_from_state(
+                puck, velocity, paddles, score, settings,
+            ));
+        }
+    }
+}
+
+/// Sends the rink to whoever watches the table, a few times a second, from the lowest seat
+/// playing (alone, this player).
+fn stream(at: Option<Res<AtTable>>, time: Res<Time>, mut game: ResMut<Game>) {
+    let Some(at) = at.filter(|at| !at.watching) else {
+        return;
+    };
+    let streaming = seats::watching(&at.id) > 0
+        && seats::seats_at(&at.id).is_some_and(|seats| seats.am_first());
+    if !streaming {
+        game.streamed_ago = 0.0;
+        return;
+    }
+    game.streamed_ago += time.delta_secs();
+    if game.streamed_ago < STREAM_EVERY {
+        return;
+    }
+    game.streamed_ago = 0.0;
+    seats::send_watchers(&at.id, &online::state_of(&game.rink));
 }
 
 /// The player's paddle moves as they say, the bot's where it says, and time moves on, unless
@@ -537,12 +651,26 @@ fn play(
 ) {
     let game = &mut *game;
     let seconds = time.delta_secs();
+    if let Some((_, since)) = &mut game.goal {
+        *since += seconds;
+    }
+    if game.watching {
+        // Between states, the rink plays on as it was going: the paddles stay, the puck glides.
+        // Goals are the players' to score: a state says.
+        let fade = (-seconds / SMOOTHING).exp();
+        game.drawn_off = game.drawn_off.map(|off| off * fade);
+        if !game.waiting_for_start {
+            let before = game.rink.clone();
+            game.rink.advance(before.paddles, seconds);
+            if game.rink.score != before.score {
+                game.rink = before;
+            }
+        }
+        return;
+    }
     // Against someone, both rinks play by the settings the match began with.
     if game.opponent.is_none() {
         game.rink.settings = settings.hockey();
-    }
-    if let Some((_, since)) = &mut game.goal {
-        *since += seconds;
     }
     let control = Control::now(&touch);
     let just_locked = control == Control::Locked && !game.was_locked;
@@ -610,10 +738,11 @@ fn play(
         // press after someone won starts the next game, on both rinks at the same frame.
         let target = game.target.unwrap_or(game.rink.paddles[me]);
         let new_game = fresh_press && me == 0 && game.rink.winner().is_some();
+        let other = 1 - me;
         let before = game.rink.clone();
         let drawn_before = [
             before.puck + game.drawn_off[0],
-            before.paddles[1 - me] + game.drawn_off[1],
+            before.paddles[other] + game.drawn_off[1 + other],
         ];
         let played = online::play(&mut game.rink, target, new_game, seconds);
         let rink = &game.rink;
@@ -623,20 +752,11 @@ fn play(
         game.drawn_off = game.drawn_off.map(|off| off * fade);
         if played.rolled_back && rink.score == before.score {
             let went = before.velocity * played.frames as f32 * FRAME;
-            let jumps = [
-                drawn_before[0] + went - rink.puck,
-                drawn_before[1] - rink.paddles[1 - me],
-            ];
-            game.drawn_off = jumps.map(|jump| {
-                if jump.length() < SMOOTH_UP_TO {
-                    jump
-                } else {
-                    Vec2::ZERO
-                }
-            });
+            game.drawn_off[0] = smoothed(drawn_before[0] + went - rink.puck);
+            game.drawn_off[1 + other] = smoothed(drawn_before[1] - rink.paddles[other]);
         }
         if rink.score != before.score {
-            game.drawn_off = [Vec2::ZERO; 2];
+            game.drawn_off = [Vec2::ZERO; 3];
         }
         let after = rink.score;
         if after == [0, 0] && before.score != after {
@@ -685,14 +805,14 @@ fn draw(
     let mut pixels = rink_art.get_or_insert_with(draw_rink).clone();
     let rink = &game.rink;
     // Turned the player's way round: their paddle at the bottom, in their colour. The puck and
-    // the other player's paddle where they're drawn, smoothing over rollback's jumps.
+    // the other player's paddle (watching, both) where they're drawn, smoothing over the jumps.
     let me = game.me();
     for (seat, paddle) in rink.paddles.iter().enumerate() {
         let (body, knob) = PADDLES[usize::from(seat != me)];
-        let off = if seat == me {
+        let off = if seat == me && !game.watching {
             Vec2::ZERO
         } else {
-            game.drawn_off[1]
+            game.drawn_off[1 + seat]
         };
         let at = turned(me, *paddle + off) + RINK;
         pixels.disc(at, PADDLE_RADIUS, body);
@@ -782,6 +902,34 @@ fn draw_rink() -> Pixels {
 
 fn show_text(game: Res<Game>, touch: Res<Touch>, mut texts: Query<(&Says, &mut Text)>) {
     let rink = &game.rink;
+    if game.watching {
+        let names = &game.watched_names;
+        let seated = game.table_id.as_deref().map_or(0, seats::seated);
+        let back = if touch.is_on() { "Leave" } else { "Esc" };
+        for (says, mut text) in &mut texts {
+            let line = match says {
+                Says::TheirScore => format!("{}\n{}", names[1], rink.score[1]),
+                Says::YourScore => format!("{}\n{}", rink.score[0], names[0]),
+                Says::Status if seated == 0 => {
+                    format!("Nobody is playing right now.\n{back} goes back.")
+                }
+                Says::Status if game.waiting_for_start => {
+                    "Watching.\nWaiting for the game...".to_string()
+                }
+                Says::Status => match (rink.winner(), game.goal) {
+                    (Some(winner), _) => format!("{} wins!", names[winner]),
+                    (None, Some((scorer, since))) if since < GOAL_SHOWN_FOR => {
+                        format!("Goal for {}!", names[scorer])
+                    }
+                    (None, _) => format!("Watching. First to {WINNING_SCORE}.\n{back} leaves."),
+                },
+            };
+            if text.0 != line {
+                text.0 = line;
+            }
+        }
+        return;
+    }
     let control = Control::now(&touch);
     let net = online::state();
     let me = game.me();
@@ -949,9 +1097,9 @@ fn leave(
     mut mode: ResMut<NextState<Mode>>,
 ) {
     let esc = keys.just_pressed(KeyCode::Escape);
-    let locked = pointer_locked();
+    let locked = pointer_lock::locked();
     if esc && locked {
-        release_pointer();
+        pointer_lock::release();
         return;
     }
     let just_let_go = game
@@ -968,18 +1116,48 @@ fn hide_rink(
     overlays: Query<Entity, With<Overlay>>,
     mut cursor: Query<&mut CursorOptions>,
 ) {
-    pointer_lock_wanted(false);
+    pointer_lock::wanted(false);
     for mut options in &mut cursor {
         options.visible = true;
     }
     // Up from the table: whoever is left there plays the bot, and so does this player when they
-    // come back alone, in a new game if they were playing someone.
+    // come back alone, in a new game if they were playing someone, or watching.
     seats::stand();
     game.table_id = None;
-    if game.opponent.is_some() {
+    if game.opponent.is_some() || game.watching {
         game.play_against(None);
     }
+    game.watching = false;
+    game.waiting_for_start = false;
     for overlay in &overlays {
         commands.entity(overlay).despawn();
     }
+}
+
+/// For browser tests (testing.rs): what the game is doing.
+#[cfg(feature = "test-hooks")]
+fn test_hooks(game: Res<Game>) {
+    use serde_json::json;
+
+    let rink = &game.rink;
+    let net = match online::state() {
+        online::State::None => "none",
+        online::State::Connecting => "connecting",
+        online::State::Running => "running",
+        online::State::Interrupted => "interrupted",
+    };
+    crate::testing::report(
+        "hockey",
+        json!({
+            "score": rink.score,
+            "winner": rink.winner(),
+            "puck": [rink.puck.x, rink.puck.y],
+            "paddles": rink.paddles.map(|paddle| [paddle.x, paddle.y]),
+            "seat": game.opponent.as_ref().map(|opponent| opponent.me),
+            "net": net,
+            "watching": game.watching,
+            "waiting_for_start": game.waiting_for_start,
+            "watchers": game.table_id.as_deref().map_or(0, seats::watching),
+        }),
+    );
 }

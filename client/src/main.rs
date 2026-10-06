@@ -1,29 +1,40 @@
 mod cabinets;
 mod chat;
+mod darts;
 mod emulator;
 mod help;
 mod hockey;
+mod nearby;
 mod pixels;
 mod player;
+mod pointer_lock;
 mod pool;
 mod room;
 mod seats;
 mod settings;
+mod shuffleboard;
+#[cfg(feature = "test-hooks")]
+mod testing;
 mod touch;
+mod voice;
 
 use bevy::asset::AssetId;
 use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
 use cabinets::{Cabinets, CabinetsPlugin};
 use chat::ChatPlugin;
+use darts::{Dartboards, DartsPlugin};
 use emulator::EmulatorPlugin;
 use help::HelpPlugin;
 use hockey::{HockeyPlugin, HockeyTables};
+use nearby::{Kind, NearbyPlugin, Usables};
 use player::{PlayerPlugin, Walkable, spawn_player};
 use pool::{PoolPlugin, PoolTables};
 use room::RoomPlugin;
 use settings::SettingsPlugin;
+use shuffleboard::{ShuffleboardPlugin, ShuffleboardTables};
 use touch::TouchPlugin;
+use voice::VoicePlugin;
 use world::{Map, MapPlugin, map_sprite};
 
 /// All text is in Fira Mono cut down to Latin-1, so names and chat can have accents and ñ
@@ -59,11 +70,18 @@ fn main() {
         ChatPlugin,
         EmulatorPlugin,
         HelpPlugin,
-        PoolPlugin,
-        HockeyPlugin,
+        // The games played in the bar, besides the cabinets' (a tuple takes 15 at most).
+        (
+            PoolPlugin,
+            HockeyPlugin,
+            NearbyPlugin,
+            ShuffleboardPlugin,
+            DartsPlugin,
+        ),
         RoomPlugin,
         SettingsPlugin,
         TouchPlugin,
+        VoicePlugin,
     ))
     .init_state::<Mode>()
     .insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.08)))
@@ -74,10 +92,13 @@ fn main() {
         .resource_mut::<Assets<Font>>()
         .insert(AssetId::default(), Font::from_bytes(FONT.to_vec()))
         .expect("the default font handle takes a font");
+    #[cfg(feature = "test-hooks")]
+    app.add_plugins(testing::TestingPlugin);
     app.run();
 }
 
-/// Waiting for the bar's map, walking around the bar, playing a cabinet's game, or playing pool.
+/// Waiting for the bar's map, walking around the bar, playing a cabinet's game, or at one of
+/// the tables: pool, air hockey or shuffleboard, or at the dartboard.
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Mode {
     #[default]
@@ -86,6 +107,8 @@ enum Mode {
     Playing,
     Pool,
     Hockey,
+    Shuffleboard,
+    Darts,
 }
 
 /// The bar's map, made with the editor, while it loads.
@@ -119,9 +142,34 @@ fn build_bar(
     let walkable = Walkable::from_map(map);
     spawn_player(&mut commands, &asset_server, &walkable);
     commands.insert_resource(walkable);
-    commands.insert_resource(Cabinets::from_map(map));
-    commands.insert_resource(PoolTables::from_map(map));
-    commands.insert_resource(HockeyTables::from_map(map));
+    let cabinets = Cabinets::from_map(map);
+    let pool_tables = PoolTables::from_map(map);
+    let hockey_tables = HockeyTables::from_map(map);
+    let shuffleboard_tables = ShuffleboardTables::from_map(map);
+    let dartboards = Dartboards::from_map(map);
+    // Everything that can be used, for which is nearest the player (nearby.rs).
+    let mut usables = Usables::default();
+    for cell in cabinets.cells() {
+        usables.add_cell(Kind::Cabinet, cell);
+    }
+    for (kind, tables) in [
+        (Kind::Pool, pool_tables.placed()),
+        (Kind::Hockey, hockey_tables.placed()),
+        (Kind::Shuffleboard, shuffleboard_tables.placed()),
+        (Kind::Darts, dartboards.placed()),
+    ] {
+        for table in tables {
+            usables.add(kind, table);
+        }
+    }
+    commands.insert_resource(usables);
+    commands.insert_resource(cabinets);
+    commands.insert_resource(pool_tables);
+    commands.insert_resource(hockey_tables);
+    commands.insert_resource(shuffleboard_tables);
+    commands.insert_resource(dartboards);
+    #[cfg(feature = "test-hooks")]
+    commands.insert_resource(testing::Objects(map.objects.clone()));
     commands.remove_resource::<LoadingMap>();
     mode.set(Mode::Walking);
 }

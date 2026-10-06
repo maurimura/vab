@@ -1592,5 +1592,15 @@
             y: -1,
             tile: "objects/air_hockey",
         ),
+        (
+            x: -5,
+            y: 4,
+            tile: "objects/shuffleboard",
+        ),
+        (
+            x: 5,
+            y: 2,
+            tile: "objects/dartboard",
+        ),
     ],
 )
