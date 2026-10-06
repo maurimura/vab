@@ -61,6 +61,8 @@ pub enum TouchButton {
     Leave,
     /// One of the game's, by RetroPad id.
     Pad(u16),
+    /// Someone in the voice panel (voice.rs), which handles the tap itself.
+    Voice,
 }
 
 /// What the fingers on the screen are doing.

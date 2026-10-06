@@ -7,7 +7,7 @@ object are walkable. Everyone on the page is in the same bar room and sees the o
 join the one being played there (see [Online play](#online-play)); next to a table (pool, air
 hockey, shuffleboard, darts, below) it sits you at that. F watches the game being played there,
 at a cabinet, a table or the dartboard, as does E once every seat is taken (see
-[Watching](#watching)). Players at a cabinet can talk (see [Voice](#voice)). Esc stands up. Y
+[Watching](#watching)). Players sitting together can talk (see [Voice](#voice)). Esc stands up. Y
 opens the chat for everyone in the room; `/name <name>` there sets the name shown above your
 head, and a cookie keeps it. The controls show on a first visit and with `/help`; when a game
 starts, a card lists its buttons as the game names them (the core reports them, e.g. "Z  Low
@@ -229,15 +229,21 @@ both players, like an upright cabinet.
 
 ## Voice
 
-Players at a cabinet talk over the same WebRTC connections as their game: each link carries
-audio both ways, and the microphone goes on it once the browser allows it (it asks when someone
-first plays with you). Echo cancellation and noise suppression are on; headphones still help,
-since the game's sound plays from the same speakers. A panel under the status line lists
-everyone at the cabinet like a voice channel (`client/src/voice.rs`), with a green ring while
-they talk. M turns your microphone off or on. Clicking someone, Shift with their player number,
-or `/mute <name>` in the chat mutes them for you only (`/unmute <name>` undoes it); mutes are
-remembered by name in a cookie. Voice needs the browsers to reach each other directly or through
-TURN: players whose game goes through the room show "no voice".
+Players sitting together talk, wherever that is: a cabinet, a table, any place with seats in the
+room. Voice follows the room's seats alone (`Voice` in `web/index.html`), so a new game gets it
+without doing anything. Each player calls each other player there (`Room.call` in `web/room.js`):
+a WebRTC connection of its own, audio both ways, straight between the browsers or through TURN,
+whatever the game's own packets do. The microphone goes on once the browser allows it (it asks
+when someone first sits with you) and off when nobody is left to talk to. Echo cancellation and
+noise suppression are on; headphones still help, since the game's sound plays from the same
+speakers.
+
+A panel in the top-left corner (under a cabinet's status line) lists everyone there like a voice
+channel (`client/src/voice.rs`), with a green ring while they talk. M turns your microphone off
+or on. Clicking or tapping someone, Shift with their player number, or `/mute <name>` in the chat
+mutes them for you only (`/unmute <name>` undoes it); mutes are remembered by name in a cookie. A
+click on the panel is the panel's: the tables count it as busy (`VoicePointer`), and on a touch
+screen its lines are touch buttons. Players no call can reach show "no voice".
 
 ## Watching
 

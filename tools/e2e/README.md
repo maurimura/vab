@@ -16,9 +16,11 @@ node tools/e2e/shuffleboard.mjs   # or just one
 - `nearest.mjs`: next to both a cabinet and a table, E uses the one the player stands nearer.
 - `shuffleboard.mjs`: two players at the shuffleboard table: seats, throws alike on both
   tables, the held puck, a reload mid-game, a whole round, someone leaving.
-- `voice.mjs`: two players at a cabinet hear each other (Chrome's fake microphone beeps), mute
-  each other with Shift and a number, unmute with `/unmute`, and turn their microphones off with
-  M and with a click. `GAME` picks the cabinet (Snow Bros. unless said).
+- `voice.mjs`: two players hear each other (Chrome's fake microphone beeps) at a cabinet, then at
+  each table. At the cabinet they mute each other with Shift and a number, unmute with
+  `/unmute`, turn their microphones off with M and with a click, and standing up ends the call;
+  at the pool table a click on the panel leaves the cue alone. `GAME` picks the cabinet (Snow
+  Bros. unless said).
 - `watch.mjs`: a second player watches each table (F): the pool rack and where a shot ends, the
   air hockey rink as the player has it, where a shuffleboard throw stops, a dart scored on the
   board.

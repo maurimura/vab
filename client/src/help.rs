@@ -24,21 +24,21 @@ const DIM: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
 
 /// What to press, and what it does. Short enough not to wrap: keys are padded into a column
 /// (the font is monospaced).
-const IN_THE_BAR: [(&str, &str); 6] = [
+const IN_THE_BAR: [(&str, &str); 8] = [
     ("Arrows / W A S D", "Walk"),
     ("E", "Play the cabinet or table you're next to"),
     ("F", "Watch the game being played there"),
+    ("M", "Your microphone, playing with others"),
+    ("Shift+1-4", "Mute player 1-4 (or click them)"),
     ("Y", "Chat (Enter sends)"),
     ("/name Mauri", "Set your name, in the chat"),
     ("/help", "These controls, in the chat"),
 ];
-const AT_A_CABINET: [(&str, &str); 7] = [
+const AT_A_CABINET: [(&str, &str); 5] = [
     ("5", "Insert a coin"),
     ("1", "Start"),
     ("Arrows", "Move"),
     ("Z X C  A S D", "Buttons, listed when a game starts"),
-    ("M", "Your microphone, playing with others"),
-    ("Shift+1-4", "Mute player 1-4 (or click them)"),
     ("Esc", "Stand up"),
 ];
 const KEY_COLUMN: usize = 18;

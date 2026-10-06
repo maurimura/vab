@@ -177,9 +177,9 @@
         remember("muted", JSON.stringify([...muted.names].slice(-50)));
       }
       // Called by Bevy (client/src/voice.rs, client/src/chat.rs).
-      window.voiceToggle = (id) => play?.voice?.toggle(id);
-      window.voiceToggleSeat = (seat) => play?.voice?.toggleSeat(seat);
-      window.voiceToggleMic = () => play?.voice?.toggle(room.id);
+      window.voiceToggle = (id) => voice.toggle(id);
+      window.voiceToggleSeat = (seat) => voice.toggleSeat(seat);
+      window.voiceToggleMic = () => voice.toggle(room.id);
       /** Mutes or unmutes someone by name (/mute, /unmute in the chat); returns the name. */
       window.voiceMute = (name, on) => {
         const key = name.toLowerCase();
@@ -189,14 +189,18 @@
       };
 
       /**
-       * Talking with the others at our cabinet over the links the game uses (web/room.js): our
-       * microphone goes to each of them and theirs plays here, unless muted. Bevy's voice panel
-       * (client/src/voice.rs) shows who's there and who's talking, and toggles mutes.
+       * Talking with whoever sits at the same place as this player, a cabinet or a table
+       * (room.seats): a voice call to each of them (Room.call), our microphone going to all and
+       * theirs playing here, unless muted. It follows the seats alone, so every game with seats
+       * has it. Bevy's voice panel (client/src/voice.rs) shows who's there and who's talking, and
+       * toggles mutes.
        */
       class Voice {
-        #cabinet;
+        /** Where we sit with the others, our seat there, and our id when the calls were made. */
+        #place;
         #seat;
-        /** The others: player id -> { id, seat, link, element, analyser, loudUntil }. */
+        #me;
+        /** The others: player id -> { id, seat, call, element, analyser, loudUntil }. */
         #people = new Map();
         /** Whether each other player's microphone is on, as they last said. */
         #theirMics = new Map();
@@ -204,30 +208,47 @@
         #mic;
         /** off (not asked yet), asking, on, or blocked (not allowed, or none). */
         #micState = "off";
-        #timer = setInterval(() => this.#show(), 100);
+        #timer;
         #shown;
-        #stopped = false;
 
-        constructor(cabinet) {
-          this.#cabinet = cabinet;
-        }
-
-        /** Who plays with us: our seat, and each other player's id -> { seat, link }. */
-        players(seat, others) {
-          this.#seat = seat;
-          for (const [id, person] of this.#people) {
-            if (others.get(id)?.link !== person.link) this.#forget(id);
+        /** Who sits where changed: talks with whoever sits with us now, and no one else. */
+        seated() {
+          const [place, players] = [...room.seats].find(([, players]) => players.includes(room.id)) ?? [];
+          const others = new Map(
+            (players ?? []).flatMap((id, seat) => (id === null || id === room.id ? [] : [[id, seat]])),
+          );
+          // Somewhere else now, or back with a new id after a lost connection: new calls.
+          if (place !== this.#place || room.id !== this.#me) {
+            for (const id of [...this.#people.keys()]) this.#forget(id);
+            this.#place = place;
+            this.#me = room.id;
           }
-          for (const [id, { seat, link }] of others) {
+          this.#seat = players?.indexOf(room.id);
+          for (const id of [...this.#people.keys()]) if (!others.has(id)) this.#forget(id);
+          for (const [id, seat] of others) {
             const person = this.#people.get(id);
             if (person) person.seat = seat;
-            else this.#meet(id, seat, link);
+            else this.#meet(id, seat);
           }
-          if (others.size && this.#micState === "off") this.#askForMic();
+          if (others.size) {
+            if (this.#micState === "off") this.#askForMic();
+            this.#timer ??= setInterval(() => this.#show(), 100);
+            return;
+          }
+          // Nobody to talk to: the microphone goes off until there is (the browser stops
+          // showing that it's in use).
+          clearInterval(this.#timer);
+          this.#timer = undefined;
+          this.#mic?.track.stop();
+          this.#mic = undefined;
+          if (this.#micState !== "blocked") this.#micState = "off";
+          this.#shown = "";
+          voice_people("");
         }
 
         /** Mutes or unmutes another player, or with our own id turns our microphone off or on. */
         toggle(id) {
+          if (!this.#people.size) return;
           if (id !== room.id) {
             if (this.#people.has(id)) setMuted(id, names.get(id) ?? "", !isMuted(id));
             return;
@@ -250,20 +271,13 @@
           this.#theirMics.set(from, mic);
         }
 
-        stop() {
-          this.#stopped = true;
-          clearInterval(this.#timer);
-          for (const id of [...this.#people.keys()]) this.#forget(id);
-          this.#mic?.track.stop();
-          voice_people("");
-        }
-
-        #meet(id, seat, link) {
-          const person = { id, seat, link, loudUntil: 0 };
+        #meet(id, seat) {
+          const match = `voice/${this.#place}/${Math.min(id, room.id)}/${Math.max(id, room.id)}`;
+          const call = room.call(id, room.id < id, match);
+          const person = { id, seat, call, loudUntil: 0 };
           this.#people.set(id, person);
-          link.microphone(this.#mic?.track ?? null);
-          link.onvoice = (stream) => this.#hear(person, stream);
-          if (link.voice) this.#hear(person, link.voice);
+          call.microphone(this.#mic?.track ?? null);
+          call.onvoice = (stream) => this.#hear(person, stream);
           this.#tell(id);
         }
 
@@ -281,8 +295,7 @@
           const person = this.#people.get(id);
           this.#people.delete(id);
           if (!person) return;
-          person.link.onvoice = () => {};
-          person.link.microphone(null);
+          room.hangUp(person.call);
           person.element?.pause();
         }
 
@@ -293,11 +306,16 @@
               audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
             });
             const [track] = stream.getAudioTracks();
-            if (this.#stopped) return track.stop();
+            // Everyone left while the browser asked.
+            if (!this.#people.size) {
+              track.stop();
+              this.#micState = "off";
+              return;
+            }
             track.enabled = !micOff;
             this.#mic = { stream, track, analyser: this.#analyser(stream), loudUntil: 0 };
             this.#micState = "on";
-            for (const { link } of this.#people.values()) link.microphone(track);
+            for (const { call } of this.#people.values()) call.microphone(track);
           } catch (error) {
             console.warn("Microphone:", error);
             this.#micState = "blocked";
@@ -306,7 +324,7 @@
         }
 
         #tell(id) {
-          room.message(id, { cabinet: this.#cabinet, voice: { mic: this.#micState === "on" && !micOff } });
+          room.message(id, { voice: { mic: this.#micState === "on" && !micOff } });
         }
 
         #analyser(stream) {
@@ -329,25 +347,23 @@
         /**
          * Tells Bevy who's here, as lines of "id, seat, name, flags" (tab-separated, in seat
          * order), when anything changed. Flags: y you, t talking, m muted by you, o microphone
-         * off, b microphone blocked, n no voice (the browsers can't reach each other directly;
-         * the game goes through the room, voice can't). Nothing while there's nobody to talk to.
+         * off, b microphone blocked, c connecting, n no voice (no way between the browsers, even
+         * through TURN).
          */
         #show() {
           const now = performance.now();
           const people = [...this.#people.values()].map((person) => {
-            const { id, seat, element } = person;
+            const { id, seat, element, call } = person;
             const mute = isMuted(id);
             if (element) element.muted = mute; // names may have come in since
             const flags =
               (mute ? "m" : this.#talking(person, now) ? "t" : "") +
               (this.#theirMics.get(id) === false ? "o" : "") +
-              (person.link.direct ? "" : "n");
+              ({ connecting: "c", failed: "n" }[call.state] ?? "");
             return { id, seat, name: names.get(id) ?? `Player ${seat + 1}`, flags };
           });
-          if (people.length) {
-            const mic = { blocked: "b", on: micOff ? "o" : this.#talking(this.#mic, now) ? "t" : "" }[this.#micState] ?? "";
-            people.push({ id: room.id, seat: this.#seat, name: myName, flags: `y${mic}` });
-          }
+          const mic = { blocked: "b", on: micOff ? "o" : this.#talking(this.#mic, now) ? "t" : "" }[this.#micState] ?? "";
+          people.push({ id: room.id, seat: this.#seat, name: myName, flags: `y${mic}` });
           const shown = people
             .sort((a, b) => a.seat - b.seat)
             .map(({ id, seat, name, flags }) => `${id}\t${seat}\t${name}\t${flags}`)
@@ -356,6 +372,7 @@
           this.#shown = shown;
         }
       }
+      const voice = new Voice();
 
       /** An emulator worker for a cabinet's game, its sound going to the speaker. */
       function emulatorWorker(onmessage) {
@@ -375,8 +392,6 @@
        */
       class Play {
         seat;
-        /** Talking with the others playing here. */
-        voice;
         #game;
         #worker;
         #packets;
@@ -404,7 +419,6 @@
         constructor(game) {
           this.#game = game;
           this.cabinet = game.cabinet;
-          this.voice = new Voice(game.cabinet);
         }
 
         /** Who sits at our cabinet changed. */
@@ -440,17 +454,12 @@
           this.#worker?.terminate();
           clearTimeout(this.#settle);
           clearTimeout(this.#joinTimeout);
-          this.voice.stop();
           for (const link of this.#links.values()) room.unlink(link);
         }
 
-        /**
-         * Another player at our cabinet said whether their microphone is on, or handed us a
-         * game: its players (and its bytes, below).
-         */
-        message(from, { cabinet, epoch, players, voice }) {
+        /** Another player at our cabinet handed us a game: its players (and its bytes, below). */
+        message(from, { cabinet, epoch, players }) {
           if (cabinet !== this.cabinet) return;
-          if (voice) return this.voice.heard(from, voice);
           this.#handovers.set(epoch, { ...this.#handovers.get(epoch), players: new Map(players) });
           this.#join(epoch);
         }
@@ -609,7 +618,6 @@
             };
             this.#links.set(id, link);
           }
-          this.voice.players(this.seat, new Map([...others].map(([seat, id]) => [id, { seat, link: this.#links.get(id) }])));
         }
 
         /**
@@ -857,6 +865,7 @@
           players_reset();
           own_name(name);
           myName = name;
+          voice.seated();
         },
         moved(id, x, y, flip, name) {
           const renamed = names.has(id) && names.get(id) !== name;
@@ -870,6 +879,7 @@
         },
         said: (id, name, text) => chat_said(name, text),
         seats(cabinet, players) {
+          voice.seated();
           cabinet_seats(cabinet, players.filter((id) => id !== null).length);
           if (isTable(cabinet)) tableSeats(cabinet, players);
           if (play?.cabinet === cabinet) play.seated(players);
@@ -882,8 +892,11 @@
           if (isTable(cabinet)) table_watchers(cabinet, Uint32Array.from(players));
           if (play?.cabinet === cabinet) play.watchers?.(players);
         },
-        message: (from, data) =>
-          data.table ? table_message(data.table, from, JSON.stringify(data)) : play?.message?.(from, data),
+        message(from, data) {
+          if (data.voice) voice.heard(from, data.voice);
+          else if (data.table) table_message(data.table, from, JSON.stringify(data));
+          else play?.message?.(from, data);
+        },
         handover: (from, epoch, bytes) => play?.handover?.(from, epoch, bytes),
         watchState: (from, stream, bytes) => play?.watchState?.(from, stream, bytes),
         watchInputs: (from, stream, frame, inputs) => play?.watchInputs?.(from, stream, frame, inputs),
