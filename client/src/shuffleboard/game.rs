@@ -37,6 +37,7 @@ use crate::pixels::Pixels;
 use crate::seats;
 use crate::settings::{Knob, NewShuffleboardGame, Settings};
 use crate::touch::{self, Touch, TouchButton};
+use crate::voice::VoicePointer;
 
 /// The image the table is drawn into.
 const CANVAS: UVec2 = UVec2::new(320, 180);
@@ -653,6 +654,7 @@ fn play(
     chat: Res<Chat>,
     help: Res<Help>,
     settings: Res<Settings>,
+    voice: Res<VoicePointer>,
     time: Res<Time>,
     mut game: ResMut<Game>,
 ) {
@@ -663,7 +665,7 @@ fn play(
         .their_settings
         .unwrap_or_else(|| settings.shuffleboard());
     let pressed = mouse.pressed(MouseButton::Left) || touch.finger().is_some();
-    let busy = chat.is_open() || help.is_open() || settings.is_open();
+    let busy = chat.is_open() || help.is_open() || settings.is_open() || voice.busy();
     // As if held all along while a panel is up, so the click that closes it does nothing here.
     let fresh_press = pressed && !game.was_pressed && !busy;
     game.was_pressed = pressed || busy;
