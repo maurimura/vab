@@ -32,6 +32,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SETTLE = Number(argv.settle ?? 40);
 /** With --poke=N, browser B flips a word of the game's RAM after its Nth frame, a drift the machines must notice. */
 const POKE = Number(argv.poke ?? 0);
+/** With --rttA=N, browser A's worker is told the round trip was N ms when it goes online: a bigger input delay on one side only. */
+const RTT_A = Number(argv.rttA ?? 0);
 // The core's wasm exports are minified; the served glue maps them: _retro_run=Module["_retro_run"]=wasmExports["hb"].
 const glue = await (await fetch(`${SITE}/supermodel/supermodel.mjs`)).text();
 const exportName = (fn) => glue.match(new RegExp(`_${fn}=Module\\["_${fn}"\\]=wasmExports\\["(\\w+)"\\]`))?.[1];
@@ -82,6 +84,10 @@ const PAGE_PROBE = `(() => {
 // ------------------------------------------------------- probes injected in the emulator worker
 const WORKER_PROBE = `(() => {
   globalThis.addEventListener("message", (e) => { if (e.data && e.data.type === "lab-echo") postMessage({ type: "lab-echo", t: e.data.t }); });
+  // The worker's onmessage, wrapped: an "online" message can be told a different round trip (--rttA).
+  const od = Object.getOwnPropertyDescriptor(globalThis, "onmessage") || Object.getOwnPropertyDescriptor(Object.getPrototypeOf(globalThis), "onmessage");
+  if (od && od.set) Object.defineProperty(globalThis, "onmessage", { configurable: true, get() { return od.get.call(globalThis); },
+    set(fn) { od.set.call(globalThis, (ev) => { if (ev.data && ev.data.type === "online" && W.forceRtt) { ev.data.roundTrip = W.forceRtt; W.events.push("rtt forced " + W.forceRtt); } return fn(ev); }); } });
   const W = globalThis.__lab = { events: [], t0: performance.timeOrigin + performance.now(), poke: 0, ticks: 0, tickRuns: [0, 0, 0, 0, 0, 0], tickDurs: [], timerLags: [], runs: [], runsAt: [], framePosts: [], frameDups: 0, outs: [], ins: [], pollWaits: [], stats: null, statsLog: [], saves: [], loads: [], stalls: 0 };
   const abs = () => performance.timeOrigin + performance.now();
   let cur = null;
@@ -271,6 +277,7 @@ async function startMatch(b) {
 const A = new Browser(); browsers.push(A);
 await A.launch("A");
 await sitDown(A);
+if (RTT_A) await A.eval(`globalThis.__lab.forceRtt = ${RTT_A}`, A.workers[0]);
 let B;
 if (MODE === "online") {
   B = new Browser(); browsers.push(B);

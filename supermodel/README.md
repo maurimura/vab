@@ -53,9 +53,16 @@ everyone's input is in and never saves per frame, since a save state is 32 MB. T
 (web/emulator/worker.js) runs one frame per 60 Hz slot on a precise clock, sends each input the
 moment GGRS makes it, and picks the input delay from the measured round trip, then follows the
 other machines' lateness: a frame more when their input keeps arriving late, a frame less after a
-quiet stretch (the status line shows the delay and any waits). patches/0002 pins the Model 3's
-clock chip so the players' machines stay identical. Joining a game in progress and spectating
-hand over a 32 MB state, deflated to about 5 MB.
+quiet stretch (the status line shows the delay and any waits). Every 120 frames the machines
+compare a hash of the game's RAM; if they have drifted apart, the lowest seat hands its machine
+to everyone again and play goes on in step half a second later (the lab's `--poke` flips a word
+of one machine's RAM to try it). patches/0002 pins the Model 3's clock chip so the players'
+machines stay identical; patches/0006 puts the PowerPC's timebase and decrementer anchors in
+the save state (Supermodel left them out, so a machine joining a game read a different
+timebase than the host and took the decrementer interrupt at a different cycle, and the two
+drifted apart: a goal on one machine only); patches/0005 makes every NaN the PowerPC FPU
+produces the same one (WebAssembly leaves a NaN's bits to the host, and x86 and ARM differ).
+Joining a game in progress and spectating hand over a 32 MB state, deflated to about 5 MB.
 
 Not done yet: the Model 3's 57.5 Hz (the core reports 60 Hz so its 735 samples a frame stay in
 step), and presenting frames from the worker itself instead of the one-frame-late read-back.

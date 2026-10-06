@@ -134,6 +134,15 @@ export class Core {
     this.#m._retro_run();
   }
 
+  /**
+   * Resets the machine, as powering it on. Before loading a state that another machine made:
+   * whatever a core leaves out of its states (Supermodel leaves out a few timers and device
+   * registers) is then at power-on on both, instead of each machine's own.
+   */
+  reset() {
+    this.#m._retro_reset();
+  }
+
   /** Snapshot of the whole machine. Only loads into the same core build and game. */
   serialize() {
     const m = this.#m;

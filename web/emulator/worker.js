@@ -677,6 +677,8 @@ class Cabinet {
     state = state ? await unpack(state) : this.#captured?.epoch === epoch ? this.#captured.state : undefined;
     if (!state) return;
     this.#leaveSession();
+    // Power-on, then the state: every machine then has the same of what the state leaves out.
+    this.core.reset();
     this.core.unserialize(state);
     this.#captured = undefined;
     if (this.#lockstep) {
@@ -779,6 +781,7 @@ class Cabinet {
     this.paused = true;
     const state = await unpack(bytes.subarray(4));
     if (this.#watch !== watch) return; // a newer state came meanwhile
+    this.core.reset();
     this.core.unserialize(state);
     this.paused = false;
     this.#alarm.now();
