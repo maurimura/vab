@@ -29,4 +29,7 @@ node_modules/
 .env*
 !.env.example
 
+# Ad-hoc debug screenshots in the repository root (keep art/assets PNGs tracked)
+/*.png
+
 .DS_Store
