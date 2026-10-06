@@ -107,7 +107,10 @@ export class Room {
     this.#send({ type: "stand" });
   }
 
-  /** A message for another player at our cabinet (it arrives as events.message). */
+  /**
+   * A message for another player at our cabinet (it arrives as events.message), or with `to`
+   * 0 (WATCHERS) for everyone watching our cabinet or table.
+   */
   message(to, data) {
     this.#send({ type: "signal", to, data });
   }

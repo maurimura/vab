@@ -14,6 +14,11 @@
 //! After a foul the next player has ball in hand: the cue ball follows the pointer (or the
 //! arrow keys) until a click, a tap or Space puts it down. The physics and the rules are the
 //! billiards crate's, and how it plays can be tuned with `/settings` (settings.rs).
+//!
+//! Anyone can watch the game at a table (F in the bar): they see the table as the players do,
+//! hands off the cue. The lowest seat gives each watcher the game as it is, between shots, and
+//! from then on whatever the players send each other (where the cue points, each shot, where it
+//! ended) goes to the watchers too, so their table plays each shot out as the players' do.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -173,10 +178,13 @@ fn settings_from_message(values: [f32; 6]) -> billiards::Settings {
     }
 }
 
-/// The pool table the player sits at, as the room names it (online::table_id, seats.rs). Set before
-/// switching to `Mode::Pool`.
+/// The pool table the player is at, as the room names it (online::table_id, seats.rs), and
+/// whether they watch the game there rather than play. Set before switching to `Mode::Pool`.
 #[derive(Resource)]
-pub struct AtTable(pub String);
+pub struct AtTable {
+    pub id: String,
+    pub watching: bool,
+}
 
 pub struct GamePlugin;
 
@@ -233,8 +241,15 @@ struct Game {
     /// The room last had this player at the table on their own: whoever sits down next gets
     /// the game from them.
     alone_here: bool,
-    /// The game is owed to this player, who just sat down: it goes once no shot is under way.
-    owe_game: Option<u32>,
+    /// The game is owed to these players, who just sat down or started watching: it goes once
+    /// no shot is under way.
+    owe_game: Vec<u32>,
+    /// The watchers given the game so far (or owed it), to spot new ones.
+    streamed_to: Vec<u32>,
+    /// Watching the game at the table, not playing: its players send what they do.
+    watching: bool,
+    /// Who sits at the table, by seat, while watching.
+    watched_names: [String; 2],
     /// The settings the other player shot with, while their shot rolls here.
     their_settings: Option<billiards::Settings>,
     /// Where the other player's shot ended on their table, when it came in before it stopped
@@ -277,7 +292,10 @@ impl Default for Game {
             waiting_since: 0.0,
             match_seat: None,
             alone_here: false,
-            owe_game: None,
+            owe_game: Vec::new(),
+            streamed_to: Vec::new(),
+            watching: false,
+            watched_names: ["Player 1".to_string(), "Player 2".to_string()],
             their_settings: None,
             their_result: None,
             sent: (Message::Place { at: [0.0; 2] }, 0.0),
@@ -299,23 +317,28 @@ impl Game {
     }
 
     /// A new game on a fresh rack, the other player breaking this time. Against someone, only
-    /// player 1 starts games, and tells player 2. Alone at a game whose other seat is empty, it
-    /// ends: the player takes both sides again.
+    /// player 1 starts games, and tells player 2 (and the watchers). Alone at a game whose other
+    /// seat is empty, it ends: the player takes both sides again. A watcher starts nothing.
     fn start_over(&mut self) {
+        if !self.may_start_over() {
+            return;
+        }
         let breaker = 1 - self.rules.breaker;
         let seed = new_seed();
-        match &self.opponent {
-            None => {
-                self.match_seat = None;
-                self.begin(seed, breaker);
-            }
-            Some(opponent) if opponent.me == 0 => {
-                let id = opponent.id;
-                self.begin(seed, breaker);
-                self.send(id, Message::Start { seed, breaker });
-            }
-            Some(_) => {}
+        if self.opponent.is_none() {
+            self.match_seat = None;
         }
+        self.begin(seed, breaker);
+        self.tell(Message::Start { seed, breaker });
+    }
+
+    /// Whether this player may start the next game: alone, or as player 1 against someone.
+    fn may_start_over(&self) -> bool {
+        !self.watching
+            && self
+                .opponent
+                .as_ref()
+                .is_none_or(|opponent| opponent.me == 0)
     }
 
     /// The whole game, for a player sitting down: every ball, and where the 8-ball game is at.
@@ -368,21 +391,95 @@ impl Game {
         }
     }
 
+    /// Tells the other player, and everyone watching the table, `message`.
+    fn tell(&self, message: Message) {
+        let Some(table) = &self.table_id else {
+            return;
+        };
+        if let Some(opponent) = &self.opponent {
+            seats::send(table, opponent.id, &message);
+        }
+        if seats::watching(table) > 0 {
+            seats::send_watchers(table, &message);
+        }
+    }
+
+    /// Whether anyone follows what this player does: an opponent, or watchers.
+    fn has_audience(&self) -> bool {
+        self.opponent.is_some()
+            || self
+                .table_id
+                .as_deref()
+                .is_some_and(|table| seats::watching(table) > 0)
+    }
+
     /// Whether this player takes the next shot: always when alone, on their turn in a game
-    /// against someone (who may have left their seat: then it waits for them).
+    /// against someone (who may have left their seat: then it waits for them). Never watching.
     fn my_turn(&self) -> bool {
-        !self.waiting_for_start
+        !self.watching
+            && !self.waiting_for_start
             && self
                 .match_seat
                 .as_ref()
                 .is_none_or(|(me, _)| self.rules.turn == *me)
     }
 
-    /// Both players' names: their names in the room in a game against someone.
+    /// Both players' names: their names in the room in a game against someone, or watched.
     fn names(&self) -> [String; 2] {
         match &self.match_seat {
             Some((_, names)) => names.clone(),
+            None if self.watching => self.watched_names.clone(),
             None => ["Player 1".to_string(), "Player 2".to_string()],
+        }
+    }
+
+    /// Follows what another player at the table did (on their turn, when it's a shot): the game
+    /// they hand over, and their cue, cue ball, shot and where it ended.
+    fn follow(&mut self, message: Message) {
+        let theirs = !self.my_turn();
+        let cue_free = matches!(
+            self.cue,
+            Cue::Aiming | Cue::Pulling(_) | Cue::Placing { .. }
+        );
+        match message {
+            Message::Start { seed, breaker } => self.begin(seed, breaker),
+            Message::Sync { balls, rules } => self.take_whole_game(balls, rules),
+            // Nothing else counts until the game is here.
+            _ if self.waiting_for_start => {}
+            Message::Aim { aim, pull } if theirs && cue_free => {
+                self.aim = Vec2::from(aim);
+                self.cue = if pull > 0.0 {
+                    Cue::Pulling(pull)
+                } else {
+                    Cue::Aiming
+                };
+            }
+            Message::Place { at } if theirs && cue_free => {
+                self.table.balls[0].position = Vec2::from(at);
+                self.cue = Cue::Placing { held: false };
+            }
+            Message::Shot {
+                cue,
+                aim,
+                power,
+                settings,
+            } if theirs => {
+                self.table.balls[0].position = Vec2::from(cue);
+                self.aim = Vec2::from(aim);
+                self.their_settings = Some(settings_from_message(settings));
+                self.cue = Cue::Striking {
+                    pull: power,
+                    time: 0.0,
+                };
+            }
+            result @ Message::Settled { .. } if theirs => {
+                if let Cue::Waiting = self.cue {
+                    self.take_their_result(result);
+                } else {
+                    self.their_result = Some(result);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -573,17 +670,34 @@ fn fit_canvas(window: Single<&Window>, mut canvas: Single<&mut Node, With<Canvas
 
 /// Sits at the table in the room, starts a game when someone sits at the other seat (player 1
 /// racks it), goes back to both sides when they leave, and follows what they do on their turn.
+/// Watching, follows whatever the players there do.
 fn sync(at: Option<Res<AtTable>>, time: Res<Time>, mut game: ResMut<Game>) {
     let Some(at) = at else {
         return;
     };
     let game = &mut *game;
-    if game.table_id.as_deref() != Some(at.0.as_str()) {
-        game.table_id = Some(at.0.clone());
-        seats::sit(&at.0);
+    if game.table_id.as_deref() != Some(at.id.as_str()) {
+        game.table_id = Some(at.id.clone());
+        game.watching = at.watching;
+        if at.watching {
+            // The game comes from whoever plays there, between shots; until then, nothing.
+            game.waiting_for_start = true;
+            game.waiting_since = 0.0;
+            game.cue = Cue::Aiming;
+            game.dropping.clear();
+            game.their_settings = None;
+            game.their_result = None;
+            seats::watch(&at.id);
+        } else {
+            seats::sit(&at.id);
+        }
     }
 
-    let seats = seats::seats_at(&at.0);
+    let seats = seats::seats_at(&at.id);
+    if game.watching {
+        watch(game, &at.id, seats);
+        return;
+    }
     let now = seats.as_ref().and_then(|seats| {
         let me = seats.mine()?;
         let (_, id) = seats.opponent()?;
@@ -607,19 +721,20 @@ fn sync(at: Option<Res<AtTable>>, time: Res<Time>, mut game: ResMut<Game>) {
             game.match_seat = Some((me, names));
             if was_alone {
                 // They sat down with this player already here: they get the game as it is.
-                game.owe_game = Some(id);
+                game.owe_game.push(id);
             } else {
                 // Sat down with them already here: the game comes from them.
                 game.waiting_for_start = true;
                 game.waiting_since = 0.0;
             }
         }
-        (Some(_), None) => {
+        (Some(opponent), None) => {
             // They left: the game waits for them as it is, their seat empty. Their shot, if
             // it's still rolling, ends here.
+            let left = opponent.id;
             game.opponent = None;
             game.waiting_for_start = false;
-            game.owe_game = None;
+            game.owe_game.retain(|id| *id != left);
             game.their_settings = None;
             game.their_result = None;
             if let Cue::Waiting = game.cue {
@@ -640,71 +755,65 @@ fn sync(at: Option<Res<AtTable>>, time: Res<Time>, mut game: ResMut<Game>) {
             game.send(id, Message::Start { seed, breaker: 0 });
         }
     }
-    // The game owed to someone who sat down goes once no shot is under way.
+    // The lowest seat gives each new watcher the game, as it does a player who sits down.
+    let watchers = seats::watchers_of(&at.id);
+    if seats.as_ref().is_some_and(seats::Seats::am_first) && !game.waiting_for_start {
+        for &watcher in &watchers {
+            if !game.streamed_to.contains(&watcher) {
+                game.streamed_to.push(watcher);
+                game.owe_game.push(watcher);
+            }
+        }
+    }
+    game.streamed_to
+        .retain(|watcher| watchers.contains(watcher));
+    // The game owed to those who sat down or started watching goes once no shot is under way,
+    // and the cue as it is right after, moved or not.
     let between_shots = !matches!(game.cue, Cue::Striking { .. } | Cue::Rolling | Cue::Waiting);
-    if between_shots && let Some(id) = game.owe_game.take() {
-        let whole = game.whole_game();
-        game.send(id, whole);
+    if between_shots && !game.owe_game.is_empty() {
+        for id in std::mem::take(&mut game.owe_game) {
+            let whole = game.whole_game();
+            game.send(id, whole);
+        }
+        game.sent = (
+            Message::Start {
+                seed: 0,
+                breaker: 0,
+            },
+            AIM_SEND_EVERY,
+        );
     }
 
-    let messages = seats::take_messages::<Message>(&at.0);
+    let messages = seats::take_messages::<Message>(&at.id);
     let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
         return;
     };
     for (_, message) in messages.into_iter().filter(|(from, _)| *from == id) {
-        let theirs = !game.my_turn();
-        let cue_free = matches!(
-            game.cue,
-            Cue::Aiming | Cue::Pulling(_) | Cue::Placing { .. }
-        );
-        match message {
-            Message::Start { seed, breaker } => game.begin(seed, breaker),
-            Message::Sync { balls, rules } => game.take_whole_game(balls, rules),
-            Message::Aim { aim, pull } if theirs && cue_free => {
-                game.aim = Vec2::from(aim);
-                game.cue = if pull > 0.0 {
-                    Cue::Pulling(pull)
-                } else {
-                    Cue::Aiming
-                };
-            }
-            Message::Place { at } if theirs && cue_free => {
-                game.table.balls[0].position = Vec2::from(at);
-                game.cue = Cue::Placing { held: false };
-            }
-            Message::Shot {
-                cue,
-                aim,
-                power,
-                settings,
-            } if theirs => {
-                game.table.balls[0].position = Vec2::from(cue);
-                game.aim = Vec2::from(aim);
-                game.their_settings = Some(settings_from_message(settings));
-                game.cue = Cue::Striking {
-                    pull: power,
-                    time: 0.0,
-                };
-            }
-            result @ Message::Settled { .. } if theirs => {
-                if let Cue::Waiting = game.cue {
-                    game.take_their_result(result);
-                } else {
-                    game.their_result = Some(result);
-                }
-            }
-            _ => {}
-        }
+        game.follow(message);
     }
 }
 
-/// On this player's turn against someone: where their cue points, or where they have the cue
-/// ball, goes to the other player as it changes, a few times a second.
-fn send_aim(time: Res<Time>, mut game: ResMut<Game>) {
-    let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
-        return;
+/// Watching: follows what the players at the table do, and who they are.
+fn watch(game: &mut Game, table: &str, seats: Option<seats::Seats>) {
+    let players: Vec<u32> = match &seats {
+        Some(seats) => {
+            game.watched_names = seats.names();
+            seats.ids().collect()
+        }
+        None => Vec::new(),
     };
-    if !game.my_turn() {
+    for (_, message) in seats::take_messages::<Message>(table)
+        .into_iter()
+        .filter(|(from, _)| players.contains(from))
+    {
+        game.follow(message);
+    }
+}
+
+/// On this player's turn, with someone to see it: where their cue points, or where they have
+/// the cue ball, goes to the other player and the watchers as it changes, a few times a second.
+fn send_aim(time: Res<Time>, mut game: ResMut<Game>) {
+    if !game.has_audience() || !game.my_turn() {
         return;
     }
     game.sent.1 += time.delta_secs();
@@ -720,7 +829,7 @@ fn send_aim(time: Res<Time>, mut game: ResMut<Game>) {
     };
     if message != game.sent.0 && game.sent.1 >= AIM_SEND_EVERY {
         game.sent = (message.clone(), 0.0);
-        game.send(id, message);
+        game.tell(message);
     }
 }
 
@@ -866,14 +975,14 @@ fn play(time: Res<Time>, holding: Res<Holding>, settings: Res<Settings>, mut gam
             time: 0.0,
         },
         Cue::Striking { pull, time } if time + delta >= STRIKE_TIME => {
-            if let Some(opponent) = game.opponent.as_ref().filter(|_| mine) {
+            if mine {
                 let shot = Message::Shot {
                     cue: game.table.cue_ball().position.into(),
                     aim: game.aim.into(),
                     power: pull,
                     settings: settings_to_message(&game.table.settings),
                 };
-                game.send(opponent.id, shot);
+                game.tell(shot);
             }
             game.table.shoot(game.aim, pull);
             game.pending = 0.0;
@@ -923,22 +1032,20 @@ fn play(time: Res<Time>, holding: Res<Holding>, settings: Res<Settings>, mut gam
                     None => Cue::Waiting,
                 }
             } else {
-                if let Some(opponent) = &game.opponent {
-                    let settled = Message::Settled {
-                        balls: game
-                            .table
-                            .balls
-                            .iter()
-                            .map(|ball| {
-                                let down = if ball.pocketed { 1.0 } else { 0.0 };
-                                [ball.position.x, ball.position.y, down]
-                            })
-                            .collect(),
-                        first_hit: game.table.shot.first_hit,
-                        pocketed: game.table.shot.pocketed.clone(),
-                    };
-                    game.send(opponent.id, settled);
-                }
+                let settled = Message::Settled {
+                    balls: game
+                        .table
+                        .balls
+                        .iter()
+                        .map(|ball| {
+                            let down = if ball.pocketed { 1.0 } else { 0.0 };
+                            [ball.position.x, ball.position.y, down]
+                        })
+                        .collect(),
+                    first_hit: game.table.shot.first_hit,
+                    pocketed: game.table.shot.pocketed.clone(),
+                };
+                game.tell(settled);
                 game.finish_shot();
                 game.cue
             }
@@ -1128,18 +1235,27 @@ fn show_status(
         }
         _ => None,
     };
-    let line = if game.waiting_for_start {
+    let back = if touch.is_on() { "Leave" } else { "Esc" };
+    let line = if game.watching && game.table_id.as_deref().map_or(0, seats::seated) == 0 {
+        format!("Nobody is playing right now. {back} goes back.")
+    } else if game.watching && game.waiting_for_start {
+        "Watching. Waiting for the game...".to_string()
+    } else if game.waiting_for_start {
         "Joining the game...".to_string()
     } else if let Some(name) = waiting_on {
         format!("Waiting for {name} to come back. New rack (in /settings) starts over.")
     } else {
         // Against someone, only player 1 starts the next game.
-        let can_start_over = game
-            .opponent
-            .as_ref()
-            .is_none_or(|opponent| opponent.me == 0);
-        let mut line = describe(&game.rules, &names, placing, touch.is_on(), can_start_over);
-        if game.rules.win.is_some() && !can_start_over {
+        let can_start_over = game.may_start_over();
+        let mut line = describe(
+            &game.rules,
+            &names,
+            placing,
+            touch.is_on(),
+            can_start_over,
+            game.watching,
+        );
+        if game.rules.win.is_some() && !can_start_over && !game.watching {
             line.push_str(&format!(" Waiting for {} to rack again.", names[0]));
         }
         line
@@ -1180,13 +1296,15 @@ fn show_status(
 }
 
 /// What the status line says: what the last shot did (and how to put the cue ball down, with
-/// ball in hand), or who won; how to play before anything has happened.
+/// ball in hand), or who won; how to play before anything has happened, or that one is
+/// `watching`.
 fn describe(
     game: &rules::Game,
     names: &[String; 2],
     placing: bool,
     touch: bool,
     can_start_over: bool,
+    watching: bool,
 ) -> String {
     let name = |player: usize| names[player].clone();
     let group_name = |group: Group| match group {
@@ -1236,11 +1354,17 @@ fn describe(
         said.push(format!("{} goes again.", name(game.turn)));
     }
     if said.is_empty() {
-        // Nothing has happened yet: how to play.
-        said.push(if touch {
-            "Your finger aims. Hold to pull the cue back, lift to shoot.".to_string()
-        } else {
-            "The mouse aims. Hold to pull the cue back, let go to shoot. Esc leaves.".to_string()
+        // Nothing has happened yet: how to play, or that one only watches.
+        said.push(match (watching, touch) {
+            (true, true) => "Watching.".to_string(),
+            (true, false) => "Watching. Esc leaves.".to_string(),
+            (false, true) => {
+                "Your finger aims. Hold to pull the cue back, lift to shoot.".to_string()
+            }
+            (false, false) => {
+                "The mouse aims. Hold to pull the cue back, let go to shoot. Esc leaves."
+                    .to_string()
+            }
         });
     }
     said.join(" ")
@@ -1265,7 +1389,9 @@ fn hide_table(
     game.opponent = None;
     game.match_seat = None;
     game.alone_here = false;
-    game.owe_game = None;
+    game.owe_game.clear();
+    game.streamed_to.clear();
+    game.watching = false;
     game.waiting_for_start = false;
     game.their_settings = None;
     game.their_result = None;
@@ -1435,6 +1561,8 @@ fn test_hooks(game: Res<Game>) {
             "names": game.names(),
             "opponent": game.opponent.is_some(),
             "waiting_for_start": game.waiting_for_start,
+            "watching": game.watching,
+            "watchers": game.table_id.as_deref().map_or(0, seats::watching),
         }),
     );
 }

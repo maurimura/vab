@@ -13,6 +13,11 @@
 //! Alone at the board, the player throws for both sides; when someone is at the other seat, they
 //! play each other (online.rs), the first seat throwing red. Esc goes back to the bar, and New
 //! game in `/settings` starts over.
+//!
+//! Anyone can watch the game at a board (F in the bar): they see it as the players do, with no
+//! dart of their own. The lowest seat gives each watcher the game as it is, between darts, and
+//! from then on whatever the players send each other (the thrower's hand, each dart) goes to the
+//! watchers too, so their board scores each dart as the players' do.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::input::mouse::AccumulatedMouseMotion;
@@ -113,10 +118,13 @@ extern "C" {
     fn random() -> f64;
 }
 
-/// The dartboard the player is at, as the room names it (online::table_id, seats.rs). Set before
-/// switching to `Mode::Darts`.
+/// The dartboard the player is at, as the room names it (online::table_id, seats.rs), and
+/// whether they watch the game there rather than play. Set before switching to `Mode::Darts`.
 #[derive(Resource)]
-pub struct AtBoard(pub String);
+pub struct AtBoard {
+    pub id: String,
+    pub watching: bool,
+}
 
 pub struct GamePlugin;
 
@@ -222,8 +230,15 @@ struct Game {
     /// The room last had this player at the board on their own: whoever arrives next gets the
     /// game from them.
     alone_here: bool,
-    /// The game is owed to this player, who just arrived: it goes between darts.
-    owe_game: Option<u32>,
+    /// The game is owed to these players, who just arrived or started watching: it goes between
+    /// darts.
+    owe_game: Vec<u32>,
+    /// The watchers given the game so far (or owed it), to spot new ones.
+    streamed_to: Vec<u32>,
+    /// Watching the game at the board, not playing: its players send what they do.
+    watching: bool,
+    /// Who is at the board, by seat, while watching.
+    watched_names: [String; 2],
     /// Where the other player's hand has the dart, and whether they hold the throw, on their
     /// turn.
     their_hand: Option<(Vec2, bool)>,
@@ -260,7 +275,10 @@ impl Default for Game {
             waiting_since: 0.0,
             match_seat: None,
             alone_here: false,
-            owe_game: None,
+            owe_game: Vec::new(),
+            streamed_to: Vec::new(),
+            watching: false,
+            watched_names: NAMES.map(String::from),
             their_hand: None,
             sent: (None, 0.0),
         }
@@ -279,28 +297,26 @@ impl Game {
     }
 
     /// A new game, `first` throwing first. Against someone, only player 1 starts games, and
-    /// tells player 2. Alone at a game whose other seat is empty, it ends: the player takes both
-    /// sides again.
+    /// tells player 2 (and the watchers). Alone at a game whose other seat is empty, it ends:
+    /// the player takes both sides again. A watcher starts nothing.
     fn start_over(&mut self, first: usize) {
-        match &self.opponent {
-            None => {
-                self.match_seat = None;
-                self.begin(first);
-            }
-            Some(opponent) if opponent.me == 0 => {
-                let id = opponent.id;
-                self.begin(first);
-                self.send(id, &Message::Start { first });
-            }
-            Some(_) => {}
+        if !self.may_start_over() {
+            return;
         }
+        if self.opponent.is_none() {
+            self.match_seat = None;
+        }
+        self.begin(first);
+        self.tell(&Message::Start { first });
     }
 
     /// Whether this player may start the next game: alone, or as player 1 against someone.
     fn may_start_over(&self) -> bool {
-        self.opponent
-            .as_ref()
-            .is_none_or(|opponent| opponent.me == 0)
+        !self.watching
+            && self
+                .opponent
+                .as_ref()
+                .is_none_or(|opponent| opponent.me == 0)
     }
 
     fn send(&self, to: u32, message: &Message) {
@@ -309,22 +325,80 @@ impl Game {
         }
     }
 
+    /// Tells the other player, and everyone watching the board, `message`.
+    fn tell(&self, message: &Message) {
+        let Some(board) = &self.board_id else {
+            return;
+        };
+        if let Some(opponent) = &self.opponent {
+            seats::send(board, opponent.id, message);
+        }
+        if seats::watching(board) > 0 {
+            seats::send_watchers(board, message);
+        }
+    }
+
+    /// Whether anyone follows what this player does: an opponent, or watchers.
+    fn has_audience(&self) -> bool {
+        self.opponent.is_some()
+            || self
+                .board_id
+                .as_deref()
+                .is_some_and(|board| seats::watching(board) > 0)
+    }
+
     /// Whether this player throws next: always when alone, on their turn in a game against
-    /// someone (who may have left their seat: then it waits for them).
+    /// someone (who may have left their seat: then it waits for them). Never watching.
     fn my_turn(&self) -> bool {
-        !self.waiting_for_start
+        !self.watching
+            && !self.waiting_for_start
             && self
                 .match_seat
                 .as_ref()
                 .is_none_or(|(me, _)| self.rules.turn == *me)
     }
 
-    /// Both players' names: their names in the room in a game against someone, their darts'
-    /// colours when one player throws for both.
+    /// Both players' names: their names in the room in a game against someone, or watched;
+    /// their darts' colours when one player throws for both.
     fn names(&self) -> [String; 2] {
         match &self.match_seat {
             Some((_, names)) => names.clone(),
+            None if self.watching => self.watched_names.clone(),
             None => NAMES.map(String::from),
+        }
+    }
+
+    /// Follows what another player at the board did: the game they hand over, and on their turn
+    /// their hand and each dart.
+    fn follow(&mut self, message: Message) {
+        match message {
+            Message::Start { first } => self.begin(first),
+            Message::Sync { rules, stuck } => {
+                self.rules = rules;
+                self.stuck = stuck;
+                self.phase = if self.rules.turn_over() {
+                    Phase::TurnOver { since: 0.0 }
+                } else {
+                    Phase::Aiming
+                };
+                self.waiting_for_start = false;
+                self.their_hand = None;
+            }
+            // Nothing else counts until the game is here.
+            _ if self.waiting_for_start => {}
+            Message::Aim { at, held } => {
+                self.catch_up();
+                if !self.my_turn() {
+                    self.their_hand = Some((at, held));
+                }
+            }
+            Message::Throw { at } => {
+                self.catch_up();
+                if !self.my_turn() && self.rules.win.is_none() {
+                    self.fly(at);
+                    self.their_hand = None;
+                }
+            }
         }
     }
 
@@ -340,11 +414,9 @@ impl Game {
         }
     }
 
-    /// This player throws a dart that lands at `at`, telling the other player.
+    /// This player throws a dart that lands at `at`, telling the other player and the watchers.
     fn throw(&mut self, at: Vec2) {
-        if let Some(opponent) = &self.opponent {
-            self.send(opponent.id, &Message::Throw { at });
-        }
+        self.tell(&Message::Throw { at });
         self.fly(at);
     }
 
@@ -416,6 +488,7 @@ fn show_board(
     mut commands: Commands,
     mut images: ResMut<Assets<Image>>,
     game: Option<ResMut<Game>>,
+    at: Option<Res<AtBoard>>,
     touch: Res<Touch>,
 ) {
     match game {
@@ -427,7 +500,8 @@ fn show_board(
         }
         None => commands.init_resource::<Game>(),
     }
-    if !touch.is_on() {
+    // A watcher's pointer is their own.
+    if !touch.is_on() && !at.is_some_and(|at| at.watching) {
         pointer_lock::wanted(true);
     }
     let image = Image::new_fill(
@@ -661,18 +735,33 @@ fn play(
 
 /// Sits at the board in the room, starts a game when someone arrives at the other seat (player 1
 /// starts it, or the one already there hands theirs over), goes back to both sides when they
-/// leave, and follows what they do on their turn.
+/// leave, and follows what they do on their turn. Watching, follows whatever the players do.
 fn sync(at: Option<Res<AtBoard>>, time: Res<Time>, mut game: ResMut<Game>) {
     let Some(at) = at else {
         return;
     };
     let game = &mut *game;
-    if game.board_id.as_deref() != Some(at.0.as_str()) {
-        game.board_id = Some(at.0.clone());
-        seats::sit(&at.0);
+    if game.board_id.as_deref() != Some(at.id.as_str()) {
+        game.board_id = Some(at.id.clone());
+        game.watching = at.watching;
+        if at.watching {
+            // The game comes from whoever plays there, between darts; until then, nothing.
+            game.waiting_for_start = true;
+            game.waiting_since = 0.0;
+            game.held = None;
+            game.flick = None;
+            game.their_hand = None;
+            seats::watch(&at.id);
+        } else {
+            seats::sit(&at.id);
+        }
     }
 
-    let seats = seats::seats_at(&at.0);
+    let seats = seats::seats_at(&at.id);
+    if game.watching {
+        watch(game, &at.id, seats);
+        return;
+    }
     let now = seats.as_ref().and_then(|seats| {
         let me = seats.mine()?;
         let (_, id) = seats.opponent()?;
@@ -693,18 +782,19 @@ fn sync(at: Option<Res<AtBoard>>, time: Res<Time>, mut game: ResMut<Game>) {
             game.flick = None;
             if was_alone {
                 // They arrived with this player already here: they get the game as it is.
-                game.owe_game = Some(id);
+                game.owe_game.push(id);
             } else {
                 // Arrived with them already here: the game comes from them.
                 game.waiting_for_start = true;
                 game.waiting_since = 0.0;
             }
         }
-        (Some(_), None) => {
+        (Some(opponent), None) => {
             // They left: the game waits for them as it is, their seat empty.
+            let left = opponent.id;
             game.opponent = None;
             game.waiting_for_start = false;
-            game.owe_game = None;
+            game.owe_game.retain(|id| *id != left);
             game.their_hand = None;
         }
         (None, None) => {}
@@ -721,59 +811,65 @@ fn sync(at: Option<Res<AtBoard>>, time: Res<Time>, mut game: ResMut<Game>) {
             game.send(id, &Message::Start { first: 0 });
         }
     }
-    // The game owed to someone who arrived goes between darts.
-    if !matches!(game.phase, Phase::Flying { .. })
-        && let Some(id) = game.owe_game.take()
-    {
-        let whole = Message::Sync {
-            rules: game.rules.clone(),
-            stuck: game.stuck.clone(),
-        };
-        game.send(id, &whole);
+    // The lowest seat gives each new watcher the game, as it does a player who arrives.
+    let watchers = seats::watchers_of(&at.id);
+    if seats.as_ref().is_some_and(seats::Seats::am_first) && !game.waiting_for_start {
+        for &watcher in &watchers {
+            if !game.streamed_to.contains(&watcher) {
+                game.streamed_to.push(watcher);
+                game.owe_game.push(watcher);
+            }
+        }
+    }
+    game.streamed_to
+        .retain(|watcher| watchers.contains(watcher));
+    // The game owed to those who arrived or started watching goes between darts, and the hand
+    // as it is right after, moved or not.
+    if !matches!(game.phase, Phase::Flying { .. }) && !game.owe_game.is_empty() {
+        for id in std::mem::take(&mut game.owe_game) {
+            let whole = Message::Sync {
+                rules: game.rules.clone(),
+                stuck: game.stuck.clone(),
+            };
+            game.send(id, &whole);
+        }
+        game.sent = (None, AIM_SEND_EVERY);
     }
 
-    let messages = seats::take_messages::<Message>(&at.0);
+    let messages = seats::take_messages::<Message>(&at.id);
     let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
         return;
     };
     for (_, message) in messages.into_iter().filter(|(from, _)| *from == id) {
-        match message {
-            Message::Start { first } => game.begin(first),
-            Message::Sync { rules, stuck } => {
-                game.rules = rules;
-                game.stuck = stuck;
-                game.phase = if game.rules.turn_over() {
-                    Phase::TurnOver { since: 0.0 }
-                } else {
-                    Phase::Aiming
-                };
-                game.waiting_for_start = false;
-                game.their_hand = None;
-            }
-            Message::Aim { at, held } => {
-                game.catch_up();
-                if !game.my_turn() {
-                    game.their_hand = Some((at, held));
-                }
-            }
-            Message::Throw { at } => {
-                game.catch_up();
-                if !game.my_turn() && game.rules.win.is_none() {
-                    game.fly(at);
-                    game.their_hand = None;
-                }
-            }
-        }
+        game.follow(message);
     }
 }
 
-/// On this player's turn against someone: where their hand has the dart goes to the other
-/// player as it moves, a few times a second.
-fn send_aim(time: Res<Time>, mut game: ResMut<Game>) {
-    let Some(id) = game.opponent.as_ref().map(|opponent| opponent.id) else {
-        return;
+/// Watching: follows what the players at the board do, and who they are.
+fn watch(game: &mut Game, board: &str, seats: Option<seats::Seats>) {
+    let players: Vec<u32> = match &seats {
+        Some(seats) => {
+            game.watched_names = seats.names();
+            seats.ids().collect()
+        }
+        None => Vec::new(),
     };
-    if !game.my_turn() || game.phase != Phase::Aiming || game.rules.win.is_some() {
+    for (_, message) in seats::take_messages::<Message>(board)
+        .into_iter()
+        .filter(|(from, _)| players.contains(from))
+    {
+        game.follow(message);
+    }
+}
+
+/// On this player's turn, with someone to see it: where their hand has the dart goes to the
+/// other player and the watchers as it moves, a few times a second.
+fn send_aim(time: Res<Time>, mut game: ResMut<Game>) {
+    if !game.has_audience()
+        || !game.my_turn()
+        || game.phase != Phase::Aiming
+        || game.rules.win.is_some()
+    {
         return;
     }
     game.sent.1 += time.delta_secs();
@@ -781,7 +877,7 @@ fn send_aim(time: Res<Time>, mut game: ResMut<Game>) {
     if game.sent.0 != Some(now) && game.sent.1 >= AIM_SEND_EVERY {
         game.sent = (Some(now), 0.0);
         let (at, held) = now;
-        game.send(id, &Message::Aim { at, held });
+        game.tell(&Message::Aim { at, held });
     }
 }
 
@@ -952,6 +1048,8 @@ fn show_text(
     let turn = rules.turn;
     let names = game.names();
     let me = game.match_seat.as_ref().map(|(me, _)| *me);
+    let seated = game.board_id.as_deref().map_or(0, seats::seated);
+    let back = if touch.is_on() { "Leave" } else { "Esc" };
     // The game waits on a player who left their seat, on their turn.
     let waiting_on = match (me, &game.opponent) {
         (Some(me), None) if turn != me && rules.win.is_none() => Some(&names[turn]),
@@ -987,11 +1085,18 @@ fn show_text(
                 }
                 line
             }
+            Says::Status if game.watching && seated == 0 => {
+                format!("Nobody is playing\nright now.\n\n{back} goes back.")
+            }
+            Says::Status if game.watching && game.waiting_for_start => {
+                "Watching.\nWaiting for the game...".to_string()
+            }
             Says::Status if game.waiting_for_start => "Joining the game...".to_string(),
             Says::Status if let Some(name) = waiting_on => {
                 format!("Waiting for {name} to come back.\n\nNew game (in /settings) starts over.")
             }
             Says::Status => match (rules.win, game.phase) {
+                (Some(winner), _) if game.watching => format!("{} wins!", names[winner]),
                 (Some(winner), _) => {
                     let again = if !game.may_start_over() {
                         format!("Waiting for {} to play again.", names[0])
@@ -1008,6 +1113,11 @@ fn show_text(
                 (None, Phase::TurnOver { .. }) => {
                     format!("{} scores {}.", names[turn], rules.turn_points())
                 }
+                (None, _) if game.watching => format!(
+                    "{}'s throw, dart {} of {DARTS_PER_TURN}.\n\nFrom {START} to exactly 0 wins.\n\nWatching. {back} leaves.",
+                    names[turn],
+                    rules.darts.len() + 1,
+                ),
                 (None, _) if !game.my_turn() => format!(
                     "{}'s throw, dart {} of {DARTS_PER_TURN}.\n\nFrom {START} to exactly 0 wins.",
                     names[turn],
@@ -1126,7 +1236,9 @@ fn hide_board(
     game.opponent = None;
     game.match_seat = None;
     game.alone_here = false;
-    game.owe_game = None;
+    game.owe_game.clear();
+    game.streamed_to.clear();
+    game.watching = false;
     game.waiting_for_start = false;
     game.their_hand = None;
     for overlay in &overlays {
@@ -1176,6 +1288,8 @@ fn test_hooks(mut game: ResMut<Game>) {
             "names": game.names(),
             "opponent": game.opponent.is_some(),
             "waiting_for_start": game.waiting_for_start,
+            "watching": game.watching,
+            "watchers": game.board_id.as_deref().map_or(0, seats::watching),
             "their_hand": game.their_hand.map(|(at, held)| json!({ "at": [at.x, at.y], "held": held })),
             "locked": pointer_lock::locked(),
             "lock_failed": pointer_lock::failed(),

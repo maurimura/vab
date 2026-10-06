@@ -26,7 +26,7 @@ const DIM: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
 /// (the font is monospaced).
 const IN_THE_BAR: [(&str, &str); 6] = [
     ("Arrows / W A S D", "Walk"),
-    ("E", "Play the cabinet you're next to"),
+    ("E", "Play the cabinet or table you're next to"),
     ("F", "Watch the game being played there"),
     ("Y", "Chat (Enter sends)"),
     ("/name Mauri", "Set your name, in the chat"),
@@ -45,7 +45,7 @@ const KEY_COLUMN: usize = 18;
 /// The same on a touch screen, short enough for a phone held upright.
 const IN_THE_BAR_TOUCH: [(&str, &str); 5] = [
     ("Drag", "Walk"),
-    ("Play", "Sit at the cabinet by you"),
+    ("Play", "The cabinet or table by you"),
     ("Watch", "Watch the game there"),
     ("Chat", "Talk to the bar"),
     ("/name Mauri", "Set your name, in chat"),
