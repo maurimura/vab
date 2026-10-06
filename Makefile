@@ -14,7 +14,7 @@ WASM_BINDGEN := .tools/wasm-bindgen-$(WASM_BINDGEN_VERSION)/bin/wasm-bindgen
 # wasm-opt comes with the pinned emsdk.
 WASM_OPT := emulator/.cache/emsdk/upstream/bin/wasm-opt
 
-.PHONY: client netplay emulator emulator-remote upload-emulator upload-rom dev deploy preview \
+.PHONY: client netplay emulator emulator-remote upload-emulator supermodel supermodel-remote upload-supermodel upload-rom dev deploy preview \
 	editor editor-web editor-dev editor-deploy editor-preview pull-map e2e
 
 $(WASM_BINDGEN):
@@ -56,6 +56,15 @@ emulator:
 emulator-remote:
 	$(MAKE) upload-emulator R2_TARGET=--remote
 
+# The Supermodel (Sega Model 3) core -> supermodel/dist/, then into local R2 (served at
+# /supermodel/*), like the FBNeo cores above. supermodel-remote uploads to production.
+supermodel:
+	./supermodel/build.sh web
+	$(MAKE) upload-supermodel R2_TARGET=--local
+
+supermodel-remote:
+	$(MAKE) upload-supermodel R2_TARGET=--remote
+
 # A ROM set (or its start-up .state) into R2, served at /roms/<file>:
 # make upload-rom ROM=$HOME/Downloads/mk2.zip (local R2, for `make dev BUCKET=local`; add
 # R2_TARGET=--remote for production, and R2_BUCKET=vab-preview for the preview Worker's bucket).
@@ -65,6 +74,12 @@ upload-rom:
 	cd server && npx wrangler r2 object put $(R2_BUCKET)/roms/$(notdir $(ROM)) $(R2_TARGET) \
 		--file $(abspath $(ROM)) \
 		--content-type $(if $(filter %.zip,$(ROM)),application/zip,application/octet-stream)
+
+upload-supermodel:
+	cd server && npx wrangler r2 object put $(R2_BUCKET)/supermodel/supermodel.mjs $(R2_TARGET) \
+		--file ../supermodel/dist/supermodel.mjs --content-type text/javascript && \
+	npx wrangler r2 object put $(R2_BUCKET)/supermodel/supermodel.wasm $(R2_TARGET) \
+		--file ../supermodel/dist/supermodel.wasm --content-type application/wasm
 
 upload-emulator:
 	cd server && for dir in ../emulator/dist/*/; do core=$$(basename $$dir); \

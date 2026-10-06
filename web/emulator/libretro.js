@@ -27,7 +27,9 @@ const OPTIONS = {
   // the savestate, so a rollback could open it on one player's machine only.
   "fbneo-diagnostic-input": "None",
 };
-const PIXEL_FORMAT = { RGB1555: 0, XRGB8888: 1, RGB565: 2 };
+// RGBA8888 is ours, not libretro's: bytes R, G, B, A as the page wants them, so a core that draws
+// with WebGL (Supermodel) hands its frame over without a conversion on either side.
+const PIXEL_FORMAT = { RGB1555: 0, XRGB8888: 1, RGB565: 2, RGBA8888: 100 };
 const DEVICE_JOYPAD = 1;
 
 export class Core {
@@ -66,9 +68,11 @@ export class Core {
   /**
    * @param createModule the core's default export (createFBNeo from fbneo.mjs)
    * @param callbacks onFrame(rgba, width, height), onAudio(Int16Array stereo), onLog(level, text)
+   * @param moduleOptions Emscripten Module settings the core needs, e.g. { canvas } for a core
+   *   that draws with WebGL (Supermodel)
    */
-  static async create(createModule, callbacks) {
-    return new Core(await createModule(), callbacks);
+  static async create(createModule, callbacks, moduleOptions = {}) {
+    return new Core(await createModule(moduleOptions), callbacks);
   }
 
   constructor(module, { onFrame, onAudio, onLog = () => {} }) {
@@ -128,6 +132,15 @@ export class Core {
   /** Runs one emulated frame. */
   run() {
     this.#m._retro_run();
+  }
+
+  /**
+   * Resets the machine, as powering it on. Before loading a state that another machine made:
+   * whatever a core leaves out of its states (Supermodel leaves out a few timers and device
+   * registers) is then at power-on on both, instead of each machine's own.
+   */
+  reset() {
+    this.#m._retro_reset();
   }
 
   /** Snapshot of the whole machine. Only loads into the same core build and game. */
@@ -271,7 +284,9 @@ export class Core {
     for (let y = 0; y < height; y++) {
       const row = data + y * pitch;
       const o = y * width;
-      if (this.#pixelFormat === PIXEL_FORMAT.XRGB8888) {
+      if (this.#pixelFormat === PIXEL_FORMAT.RGBA8888) {
+        rgba.set(heap.subarray(row, row + width * 4), o * 4);
+      } else if (this.#pixelFormat === PIXEL_FORMAT.XRGB8888) {
         const src = new Uint32Array(heap.buffer, row, width);
         for (let x = 0; x < width; x++) {
           const v = src[x];

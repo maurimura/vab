@@ -122,9 +122,9 @@ export class Room {
    * `match` names the link (both sides pass the same), so WebRTC messages left over from an
    * earlier link are ignored.
    */
-  link(partner, offers, match) {
+  link(partner, offers, match, reliable = false) {
     this.#links.get(partner)?.close();
-    const link = new Link(this, partner, offers, match);
+    const link = new Link(this, partner, offers, match, reliable);
     this.#links.set(partner, link);
     for (const data of this.#waitingSignals.get(partner) ?? []) link.signal(data);
     this.#waitingSignals.delete(partner);
@@ -260,7 +260,7 @@ export class Room {
     const from = view.getUint32(0, true);
     const kind = view.getUint8(4);
     if (kind === PACKET) {
-      this.#links.get(from)?.onpacket(message.slice(5));
+      this.#links.get(from)?.receive(message.slice(5));
       return;
     }
     const id = view.getUint32(5, true);
@@ -284,6 +284,8 @@ export class Room {
   }
 }
 
+const PING_LENGTH = 6;
+
 /** Game packets and voice to and from another player at our cabinet. */
 class Link {
   /** Called with each packet (an ArrayBuffer) from the other player. */
@@ -300,16 +302,24 @@ class Link {
   #closed = false;
   #channel;
   #candidates = [];
+  // Reliable+ordered for lockstep games, where a dropped input packet stalls the game; the
+  // default unreliable channel is for rollback, which predicts past a missing packet.
+  #reliable = false;
   /** The audio both ways, and the microphone track we send on it. */
   #audio;
   #microphone = null;
 
-  constructor(room, partner, offers, match) {
+  constructor(room, partner, offers, match, reliable = false) {
     this.#room = room;
     this.#match = match;
     this.partner = partner;
+    this.#reliable = reliable;
     this.#ready = getIceServers().then((iceServers) => this.#connect(iceServers, offers));
   }
+
+  /** Answers awaited to our round-trip pings, by ping number. */
+  #pings = new Map();
+  #pingNumber = 0;
 
   /** True once packets go straight to the other browser. */
   get direct() {
@@ -319,6 +329,58 @@ class Link {
   send(packet) {
     if (this.direct) this.#channel.send(packet);
     else this.#room.relay(this.partner, packet);
+  }
+
+  /** A packet from the other player, direct or through the server: ours, or the game's. */
+  receive(packet) {
+    const bytes = new Uint8Array(packet);
+    if (bytes.length !== PING_LENGTH || bytes[0] !== 0x76 || bytes[1] !== 0x61 || bytes[2] !== 0x62 || bytes[3] !== 0x70) {
+      this.onpacket(packet);
+      return;
+    }
+    if (bytes[5] === 0) {
+      const answer = bytes.slice();
+      answer[5] = 1;
+      this.send(answer.buffer);
+    } else {
+      this.#pings.get(bytes[4])?.();
+    }
+  }
+
+  /**
+   * Times a round trip to the other player, in ms: the second-worst of a few pings, about what
+   * the game's packets will see (the best of them would set an input delay that stalls on every
+   * slower one). Waits a moment for the direct channel to open first, so what's timed is the
+   * path the game will take; undefined if nothing came back.
+   */
+  async roundTrip(pings = 5) {
+    for (let i = 0; i < 20 && !this.direct && !this.#closed; i++) await new Promise((r) => setTimeout(r, 100));
+    const times = [];
+    for (let i = 0; i < pings; i++) {
+      const ms = await this.#ping();
+      if (ms !== undefined) times.push(ms);
+    }
+    times.sort((a, b) => a - b);
+    return times.length ? times[Math.max(0, times.length - 2)] : undefined;
+  }
+
+  // "vabp", the ping's number, then 0 asking or 1 answering. Game packets never start so: the
+  // worker frames them with a session number, GGRS's bytes after it.
+  #ping() {
+    return new Promise((resolve) => {
+      const number = (this.#pingNumber = (this.#pingNumber + 1) & 0xff);
+      const started = performance.now();
+      const timeout = setTimeout(() => {
+        this.#pings.delete(number);
+        resolve(undefined);
+      }, 1000);
+      this.#pings.set(number, () => {
+        clearTimeout(timeout);
+        this.#pings.delete(number);
+        resolve(performance.now() - started);
+      });
+      this.send(Uint8Array.of(0x76, 0x61, 0x62, 0x70, number, 0).buffer);
+    });
   }
 
   /** Sends them our microphone (a MediaStreamTrack), or nothing with null. */
@@ -370,8 +432,9 @@ class Link {
       this.onvoice(this.voice);
     };
     if (offers) {
-      // Unordered and never resent: GGRS resends what matters itself.
-      this.#use(pc.createDataChannel("ggrs", { ordered: false, maxRetransmits: 0 }));
+      // Unordered and never resent for rollback (GGRS resends what matters itself); reliable and
+      // ordered for lockstep, where a lost input would stall the game.
+      this.#use(pc.createDataChannel("ggrs", this.#reliable ? { ordered: true } : { ordered: false, maxRetransmits: 0 }));
       // Audio both ways from the start, so the microphone can come and go without offering
       // again (replaceTrack).
       this.#useAudio(pc.addTransceiver("audio", { direction: "sendrecv" }));
@@ -395,7 +458,7 @@ class Link {
 
   #use(channel) {
     channel.binaryType = "arraybuffer";
-    channel.onmessage = ({ data }) => this.onpacket(data);
+    channel.onmessage = ({ data }) => this.receive(data);
     this.#channel = channel;
   }
 }

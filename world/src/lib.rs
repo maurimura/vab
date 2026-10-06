@@ -92,7 +92,8 @@ pub fn footprint(tile: &str) -> IVec2 {
 pub struct Game {
     /// The ROM set, served at /roms/<rom>.zip.
     pub rom: String,
-    /// The FBNeo core that runs it, served at /fbneo/<core>/fbneo.mjs.
+    /// The core that runs it: an FBNeo core, served at /fbneo/<core>/fbneo.mjs, or "supermodel"
+    /// (Sega Model 3, supermodel/), served at /supermodel/supermodel.mjs.
     pub core: String,
     pub title: String,
     /// A BIOS set loaded next to the ROM, e.g. "neogeo".
@@ -105,6 +106,11 @@ pub struct Game {
     /// How many can play at once, each in their own seat (up to 4).
     #[serde(default = "two")]
     pub players: u32,
+    /// Online, the players' machines run in lockstep with a few frames of input delay instead
+    /// of rolling back: for cores whose save state is too big to take every frame (Supermodel's
+    /// is 32 MB).
+    #[serde(default)]
+    pub lockstep: bool,
     /// The cabinet skins drawn for it (tiles/objects/cabinet_<skin>_<facing>.png), which the
     /// editor gives this game.
     #[serde(default)]

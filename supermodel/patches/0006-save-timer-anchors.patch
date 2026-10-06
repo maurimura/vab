@@ -1,0 +1,28 @@
+diff --git a/Src/CPU/PowerPC/ppc.cpp b/Src/CPU/PowerPC/ppc.cpp
+index 1343e69..826cfb6 100644
+--- a/Src/CPU/PowerPC/ppc.cpp
++++ b/Src/CPU/PowerPC/ppc.cpp
+@@ -981,6 +981,13 @@ void ppc_save_state(CBlockFile *SaveState)
+ 	
+ 	SaveState->Write(ppc.fpr, sizeof(ppc.fpr));
+ 	SaveState->Write(ppc.sr, sizeof(ppc.sr));
++	// vab (supermodel/patches/0006): the timebase and decrementer are read relative to these
++	// anchors (ppc_read_timebase, read_decrementer); without them a loaded state keeps the
++	// loading machine's own, and two machines playing in lockstep from the same state read
++	// different timebases and take the decrementer interrupt at different cycles.
++	SaveState->Write(&ppc.tb_base_icount, sizeof(ppc.tb_base_icount));
++	SaveState->Write(&ppc.dec_base_icount, sizeof(ppc.dec_base_icount));
++	SaveState->Write(&ppc.dec_trigger_cycle, sizeof(ppc.dec_trigger_cycle));
+ }
+ 
+ void ppc_load_state(CBlockFile *SaveState)
+@@ -1060,6 +1067,9 @@ void ppc_load_state(CBlockFile *SaveState)
+ 	
+ 	SaveState->Read(ppc.fpr, sizeof(ppc.fpr));
+ 	SaveState->Read(ppc.sr, sizeof(ppc.sr));
++	SaveState->Read(&ppc.tb_base_icount, sizeof(ppc.tb_base_icount));
++	SaveState->Read(&ppc.dec_base_icount, sizeof(ppc.dec_base_icount));
++	SaveState->Read(&ppc.dec_trigger_cycle, sizeof(ppc.dec_trigger_cycle));
+ }
+ 
+ UINT32 ppc_get_gpr(unsigned num)

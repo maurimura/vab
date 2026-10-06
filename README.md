@@ -217,7 +217,11 @@ of them start a new GGRS session (`netplay/`) from it. Someone leaving works the
 machine guesses the others' input and re-runs frames when the real one arrives; the worker picks
 the rollback limit from how fast the machine runs the game (Mortal Kombat II gets 3 frames and 3
 frames of input delay on an M-series Mac, the rest 8 and 2). GGRS compares a hash of the game's
-RAM every 60 frames and reports any desync.
+RAM every 60 frames and reports any desync. A `lockstep` game (Virtua Striker 2, whose state is
+too big to save every frame) never guesses: it runs a frame once everyone's input for it is in,
+behind an input delay picked from the round trip and then tuned to how late the others' inputs
+actually arrive. The worker runs one frame per slot on a precise clock and sends each input as
+soon as it exists, so both machines run the same slot and swap one input per frame.
 
 Game packets go through the room's WebSocket at first and straight between the browsers over
 WebRTC once that connects (`web/room.js`). Turn-based games (`turns`) use player 1's controls for

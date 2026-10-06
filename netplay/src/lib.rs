@@ -79,6 +79,11 @@ extern "C" {
     /// frames re-run after a rollback, which aren't shown or heard.
     #[wasm_bindgen(method)]
     fn run(this: &Machine, inputs: Vec<u16>, present: bool);
+
+    /// Sends packets to the other players, as `outgoing` returns them. Called from `advance`
+    /// just before a frame runs, so the input GGRS registered for it doesn't wait out the frame.
+    #[wasm_bindgen(method)]
+    fn send(this: &Machine, packets: Array);
 }
 
 #[wasm_bindgen]
@@ -97,7 +102,8 @@ pub struct Session {
 #[wasm_bindgen]
 impl Session {
     /// A session for `players` players where this machine plays handle `local`. Input delay
-    /// and the rollback limit are in frames; `fps` is the game's rate.
+    /// and the rollback limit are in frames; `fps` is the game's rate. A rollback limit of 0
+    /// is lockstep: frames run only once everyone's input for them is in, and nothing is saved.
     #[wasm_bindgen(constructor)]
     pub fn new(
         players: usize,
@@ -114,8 +120,13 @@ impl Session {
             .with_input_delay(input_delay)
             .with_max_prediction_window(max_rollback)
             .with_fps(fps)?
-            .with_desync_detection_mode(DesyncDetection::On {
-                interval: DESYNC_INTERVAL as u32,
+            // Desync checks hash the saves, which lockstep never makes.
+            .with_desync_detection_mode(if max_rollback == 0 {
+                DesyncDetection::Off
+            } else {
+                DesyncDetection::On {
+                    interval: DESYNC_INTERVAL as u32,
+                }
             })
             // Players leave through the room (a new session without them), never through GGRS:
             // dropping a player mid-session can panic in GGRS 0.13 with more than two players.
@@ -141,6 +152,21 @@ impl Session {
             ran: vec![(-1, [0; 4]); KEPT_FRAMES],
             confirmed: -1,
         })
+    }
+
+    /// Changes this machine's input delay, in frames, while playing: the frames in between get
+    /// the last input (raising it) or the next few inputs are skipped (lowering it). The others
+    /// need no notice. A lockstep game picks its delay from how late their inputs arrive.
+    #[wasm_bindgen(js_name = setDelay)]
+    pub fn set_delay(&mut self, delay: usize) -> Result<(), JsError> {
+        self.ggrs.set_frame_delay(self.local, delay)?;
+        Ok(())
+    }
+
+    /// The others' input in hand beyond the frame about to run, in frames: 0 when that frame
+    /// can run but the next can't yet, less while waiting for it. Lockstep pacing watches it.
+    pub fn lookahead(&self) -> i32 {
+        self.ggrs.confirmed_frame() - self.ggrs.current_frame()
     }
 
     /// The frame this machine runs next; frames count from 0 at the start of the session.
@@ -187,7 +213,11 @@ impl Session {
 
     /// Packets for the other players since the last call, as `[player, bytes]` pairs.
     pub fn outgoing(&self) -> Array {
-        std::mem::take(&mut self.wire.borrow_mut().outgoing)
+        Self::drain(&self.wire)
+    }
+
+    fn drain(wire: &RefCell<Wire>) -> Array {
+        std::mem::take(&mut wire.borrow_mut().outgoing)
             .into_iter()
             .map(|(to, bytes)| Array::of2(&(to as u32).into(), &Uint8Array::from(bytes.as_slice())))
             .map(JsValue::from)
@@ -224,6 +254,8 @@ impl Session {
     pub fn advance(&mut self, input: u16, machine: &Machine) -> Result<bool, JsError> {
         self.ggrs.add_local_input(self.local, input)?;
         let requests = match self.ggrs.advance_frame() {
+            // Lockstep waiting for the others' input: nothing to do yet (the input stays queued).
+            Ok(requests) if requests.is_empty() => return Ok(false),
             Ok(requests) => requests,
             Err(GgrsError::PredictionThreshold) => return Ok(false),
             Err(error) => return Err(error.into()),
@@ -253,6 +285,12 @@ impl Session {
                     kept[..inputs.len()].copy_from_slice(&inputs);
                     self.ran[at as usize % KEPT_FRAMES] = (at, kept);
                     at += 1;
+                    // Our input for a frame ahead is already queued: out with it before the
+                    // frame takes its time, so the others don't wait out this frame for it.
+                    let packets = Self::drain(&self.wire);
+                    if packets.length() > 0 {
+                        machine.send(packets);
+                    }
                     machine.run(inputs, Some(i) == shown);
                 }
             }

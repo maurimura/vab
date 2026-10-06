@@ -1577,6 +1577,12 @@
             game: Some("wboy"),
         ),
         (
+            x: -3,
+            y: -3,
+            tile: "objects/cabinet",
+            game: Some("vs298"),
+        ),
+        (
             x: -5,
             y: -1,
             tile: "objects/pool_table",

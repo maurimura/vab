@@ -2,6 +2,11 @@
 resolver = "3"
 members = ["billiards", "client", "darts", "hockey", "shuffleboard", "netplay", "server", "world", "tools/editor"]
 
+# GGRS as published, plus P2PSession::set_frame_delay so a lockstep game can change its input
+# delay while playing (netplay/vendor/ggrs/PATCH.md).
+[patch.crates-io]
+ggrs = { path = "netplay/vendor/ggrs" }
+
 # Profiles follow Bevy's quick-start guide:
 # https://bevy.org/learn/quick-start/getting-started/setup/#compile-with-performance-optimizations
 

@@ -158,6 +158,9 @@
       let myName = "";
       const list = (items) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 
+      /** Where a game's core is: an FBNeo core, or Supermodel for the Sega Model 3 games. */
+      const coreUrl = (core) => (core === "supermodel" ? "/supermodel/supermodel.mjs" : `/fbneo/${core}/fbneo.mjs`);
+
       // Who this player muted: by id while they're here, and by name for next time (a cookie,
       // the latest 50). Whether their own microphone is off is remembered too.
       const muted = { ids: new Set(), names: new Set(JSON.parse(cookie("muted") ?? "[]")) };
@@ -360,7 +363,7 @@
         worker.onmessage = ({ data }) => onmessage(data);
         const sound = new MessageChannel();
         speaker.port.postMessage(sound.port1, [sound.port1]);
-        worker.postMessage({ type: "audio", port: sound.port2 }, [sound.port2]);
+        worker.postMessage({ type: "audio", port: sound.port2, sampleRate: audio.sampleRate }, [sound.port2]);
         return worker;
       }
 
@@ -395,6 +398,8 @@
         #watchers = [];
         #streaming = false;
         #streamedTo = new Set();
+        /** When this machine last handed its game out again after a drift. */
+        #resyncedAt = -Infinity;
 
         constructor(game) {
           this.#game = game;
@@ -472,16 +477,17 @@
 
           // Cores, ROM sets, BIOS sets and start-up states (emulator/snapshot.mjs) come from R2.
           // Alone we start the game; otherwise the others hand theirs over.
-          const { core, rom, bios, turns } = this.#game;
+          const { core, rom, bios, turns, lockstep } = this.#game;
           const alone = this.#seated.size === 1;
           const start = {
             type: "start",
-            core: `/fbneo/${core}/fbneo.mjs`,
+            core: coreUrl(core),
             rom: `/roms/${rom}.zip`,
             files: bios ? [`/roms/${bios}.zip`] : [],
             state: `/roms/${rom}.state`,
             seat,
             turns,
+            lockstep,
             port: packets.port2,
             hold: !alone,
           };
@@ -520,6 +526,20 @@
           this.#stream();
         }
 
+        /**
+         * Our machine and another's drifted apart (the worker compares the game's memory now
+         * and then). If we're the lowest seat playing, everyone starts over from our machine,
+         * as when someone joins; the others wait for that. Not twice within a short while.
+         */
+        #resync() {
+          if (!this.#playing || Math.min(...this.#players.keys()) !== this.seat) return;
+          if (performance.now() - this.#resyncedAt < 15000) return;
+          this.#resyncedAt = performance.now();
+          this.#epoch++;
+          this.#worker.postMessage({ type: "capture", epoch: this.#epoch });
+          this.#stream();
+        }
+
         /** Our worker captured the game: hand it to the others, and go on with them. */
         #captured({ epoch, state }) {
           if (epoch !== this.#epoch) return;
@@ -542,13 +562,25 @@
           this.#goOnline(epoch, bytes);
         }
 
-        #goOnline(epoch, state) {
+        async #goOnline(epoch, state) {
           this.#linkPlayers();
-          const seats = [...this.#players.keys()].sort((a, b) => a - b);
-          this.#worker.postMessage({ type: "online", epoch, seats, state }, state ? [state.buffer] : []);
           this.#playing = true;
-          this.#stream();
+          const seats = [...this.#players.keys()].sort((a, b) => a - b);
           this.#show(`Player ${this.seat + 1}. Connecting to ${this.#others()}...`);
+          // The input delay is picked from the round trip to the others, timed now: a lockstep
+          // game and a heavy rollback core (Supermodel) both cover the ping to stay smooth
+          // (worker.js). Cheap cores ignore it.
+          const roundTrip = await this.#roundTrip();
+          if (this.#epoch !== epoch) return; // the players changed again meanwhile
+          this.#worker.postMessage({ type: "online", epoch, seats, state, roundTrip }, state ? [state.buffer] : []);
+          this.#stream();
+        }
+
+        /** The longest round trip to the other players, in ms, or undefined if none answered. */
+        async #roundTrip() {
+          const times = await Promise.all([...this.#links.values()].map((link) => link.roundTrip()));
+          const known = times.filter((ms) => ms !== undefined);
+          return known.length ? Math.max(...known) : undefined;
         }
 
         #nowPlaying(players) {
@@ -570,7 +602,7 @@
           }
           for (const [seat, id] of others) {
             if (this.#links.has(id)) continue;
-            const link = room.link(id, this.seat < seat, `${this.cabinet}/${Math.min(id, room.id)}/${Math.max(id, room.id)}`);
+            const link = room.link(id, this.seat < seat, `${this.cabinet}/${Math.min(id, room.id)}/${Math.max(id, room.id)}`, this.#game.lockstep);
             link.onpacket = (packet) => {
               const from = [...this.#players].find(([, player]) => player === id)?.[0];
               if (from !== undefined) this.#packets.port1.postMessage([from, packet], [packet]);
@@ -606,14 +638,22 @@
           return seats.length === 1 ? `player ${seats[0]}` : `players ${seats.slice(0, -1).join(", ")} and ${seats.at(-1)}`;
         }
 
-        #netplay({ event, seat, ping, frame }) {
+        #netplay({ event, seat, ping, frame, delay, rollback, fps, stalls }) {
           const me = `Player ${this.seat + 1}`;
           if (event === "synchronized" || event === "resumed") this.#show(`${me}, online with ${this.#others()}`);
           if (event === "interrupted") this.#show(`${me}. Waiting for player ${seat + 1}'s connection...`);
-          if (event === "desync") this.#show(`${me}. Out of step with the others since frame ${frame}.`);
+          if (event === "desync") {
+            const lowest = Math.min(...this.#players.keys());
+            const from = lowest === this.seat ? "this machine" : `player ${lowest + 1}'s machine`;
+            this.#show(`${me}. Out of step with player ${seat + 1} since frame ${frame}: starting over from ${from}...`);
+            this.#resync();
+          }
           if (event === "stats" && !this.#status.includes("Out of step") && !this.#status.includes("Waiting")) {
             const direct = [...this.#links.values()].every((link) => link.direct);
-            this.#show(`${me}, online with ${this.#others()}, ${ping ?? "?"} ms, ${direct ? "direct" : "through the server"}`);
+            // A lockstep game waits for the others' input when it's late (worker.js adds a frame
+            // of delay when that keeps happening); such waits in the last second are shown.
+            const mode = rollback === 0 ? `, ${fps ?? "?"} fps, ${delay} frames of input delay${stalls ? `, ${stalls} wait${stalls === 1 ? "" : "s"}` : ""}` : `, ${fps ?? "?"} fps`;
+            this.#show(`${me}, online with ${this.#others()}, ${ping ?? "?"} ms${mode}, ${direct ? "direct" : "through the server"}`);
           }
         }
 
@@ -643,7 +683,7 @@
           });
           this.#worker.postMessage({
             type: "start",
-            core: `/fbneo/${core}/fbneo.mjs`,
+            core: coreUrl(core),
             rom: `/roms/${rom}.zip`,
             files: bios ? [`/roms/${bios}.zip`] : [],
             turns,
@@ -683,9 +723,9 @@
       }
 
       let play;
-      window.emulatorPlay = async (core, rom, bios, cabinet, turns, players) => {
+      window.emulatorPlay = async (core, rom, bios, cabinet, turns, players, lockstep) => {
         play?.stop();
-        const current = (play = new Play({ core, rom, bios, turns, players, cabinet }));
+        const current = (play = new Play({ core, rom, bios, turns, players, cabinet, lockstep }));
         stayAwake(true);
         game_status("Taking a seat...");
         await joined;
