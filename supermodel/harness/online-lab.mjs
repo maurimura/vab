@@ -30,10 +30,13 @@ const SCRATCH = mkdtempSync(join(tmpdir(), "online-lab-"));
 const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const SETTLE = Number(argv.settle ?? 40);
+/** With --poke=N, browser B flips a word of the game's RAM after its Nth frame, a drift the machines must notice. */
+const POKE = Number(argv.poke ?? 0);
 // The core's wasm exports are minified; the served glue maps them: _retro_run=Module["_retro_run"]=wasmExports["hb"].
 const glue = await (await fetch(`${SITE}/supermodel/supermodel.mjs`)).text();
 const exportName = (fn) => glue.match(new RegExp(`_${fn}=Module\\["_${fn}"\\]=wasmExports\\["(\\w+)"\\]`))?.[1];
-const EXPORTS = { run: exportName("retro_run"), save: exportName("retro_serialize"), load: exportName("retro_unserialize") };
+const EXPORTS = { run: exportName("retro_run"), save: exportName("retro_serialize"), load: exportName("retro_unserialize"),
+  ram: exportName("retro_get_memory_data"), memory: glue.match(/wasmMemory=wasmExports\["(\w+)"\]/)?.[1] };
 console.error("wasm export names:", EXPORTS);
 
 // ---------------------------------------------------------------- probes injected in the page
@@ -79,7 +82,7 @@ const PAGE_PROBE = `(() => {
 // ------------------------------------------------------- probes injected in the emulator worker
 const WORKER_PROBE = `(() => {
   globalThis.addEventListener("message", (e) => { if (e.data && e.data.type === "lab-echo") postMessage({ type: "lab-echo", t: e.data.t }); });
-  const W = globalThis.__lab = { ticks: 0, tickRuns: [0, 0, 0, 0, 0, 0], tickDurs: [], timerLags: [], runs: [], runsAt: [], framePosts: [], frameDups: 0, outs: [], ins: [], pollWaits: [], stats: null, statsLog: [], saves: [], loads: [], stalls: 0 };
+  const W = globalThis.__lab = { events: [], t0: performance.timeOrigin + performance.now(), poke: 0, ticks: 0, tickRuns: [0, 0, 0, 0, 0, 0], tickDurs: [], timerLags: [], runs: [], runsAt: [], framePosts: [], frameDups: 0, outs: [], ins: [], pollWaits: [], stats: null, statsLog: [], saves: [], loads: [], stalls: 0 };
   const abs = () => performance.timeOrigin + performance.now();
   let cur = null;
   let lastHash = -1;
@@ -103,6 +106,7 @@ const WORKER_PROBE = `(() => {
       const r = m.rgba; let h = 0; for (let i = 0; i < r.length; i += 1021) h = (Math.imul(h, 31) + r[i]) | 0;
       if (h === lastHash) W.frameDups++; lastHash = h;
       W.framePosts.push(abs());
+    } else if (m && m.type === "netplay" && m.event !== "stats") { W.events.push(((abs() - W.t0) / 1000).toFixed(1) + "s:" + m.event + (m.frame !== undefined ? "@" + m.frame : ""));
     } else if (m && m.type === "netplay" && m.event === "stats") { W.stats = m; W.statsLog.push({ t: abs(), ping: m.ping, delay: m.delay, rollback: m.rollback, fps: m.fps, stalls: m.stalls, stallMs: m.stallMs, look: m.look, prefills: m.prefills, framesAhead: m.framesAhead }); }
     return oPM.call(this, m, tr);
   };
@@ -130,7 +134,10 @@ const WORKER_PROBE = `(() => {
     W.wrappedExports = (W.wrappedExports || 0) + 1;
     const out = {}; for (const k of Object.keys(ex)) out[k] = ex[k];
     const time = (name, arr, after) => { const f = ex[name]; out[name] = function (...a) { const t0 = performance.now(); try { return f.apply(this, a); } finally { arr.push(performance.now() - t0); after && after(); } }; };
-    time("${EXPORTS.run}", W.runs, () => { W.runsAt.push(abs()); if (cur) cur.runs++; });
+    time("${EXPORTS.run}", W.runs, () => {
+      W.runsAt.push(abs()); if (cur) cur.runs++;
+      if (W.poke && W.runs.length === W.poke) { const ptr = ex["${EXPORTS.ram}"](2); new Uint8Array(ex["${EXPORTS.memory}"].buffer)[ptr + 0x200000] ^= 0xff; W.poked = W.runs.length; }
+    });
     time("${EXPORTS.save}", W.saves); time("${EXPORTS.load}", W.loads);
     wrapped.set(ex, out);
     return out;
@@ -277,6 +284,7 @@ if (MODE === "online") {
   }
   console.error("online:", await A.eval("JSON.stringify(globalThis.__lab.stats)", A.workers[0]), await B.eval("JSON.stringify(globalThis.__lab.stats)", B.workers[0]));
 }
+if (POKE && B) { await B.eval(`globalThis.__lab.poke = globalThis.__lab.runs.length + ${POKE}`, B.workers[0]); console.error(`B will flip a word of RAM after ${POKE} more frames`); }
 await startMatch(A);
 console.error(`settling ${SETTLE}s ...`);
 await sleep(SETTLE * 1000);
@@ -334,6 +342,7 @@ for (const b of browsers) {
     page: { raf: { p50: q(P.rafGaps, 0.5), p95: q(P.rafGaps, 0.95), max: Math.max(...P.rafGaps) }, lag: { p50: q(P.lagGaps, 0.5), p95: q(P.lagGaps, 0.95), max: Math.max(...P.lagGaps) }, longTasks: P.longTasks, longTaskMs: P.longTaskMs },
     ggrs: stats.length ? { ping: { min: Math.min(...stats.map((s) => s.ping)), max: Math.max(...stats.map((s) => s.ping)) }, delay: stats.at(-1).delay, rollback: stats.at(-1).rollback, fpsReported: stats.map((s) => s.fps),
       trajectory: W.statsLog.map((s) => `${s.delay}${s.stalls ? `/${s.stalls}w${s.stallMs}` : ""}${s.look?.length ? `[${s.look.join(",")}]` : ""}${s.prefills ? `p${s.prefills}` : ""}${s.framesAhead ? `a${s.framesAhead}` : ""}`).join(" ") } : null,
+    events: W.events.join(" "), poked: W.poked,
     ggrsAdvance: { ok: okCount, stalled: failCount, stallEpisodes: stalls.length, stallMs: { p50: q(stalls, 0.5), p95: q(stalls, 0.95), max: Math.max(...stalls) }, advanceMs: { p50: q(advMs, 0.5), p95: q(advMs, 0.95), max: Math.max(...advMs) }, outgoingCalls: W.outgoingAt.filter((t) => t >= t0 && t <= t1).length },
     raw: { outs, ins, sends, recvs, runsAt, posts },
   };
@@ -358,6 +367,7 @@ for (const [name, r] of Object.entries(report.browsers)) {
   console.log(`-- ${name} --`);
   console.log(`  emulated ${f1(r.emulatedFps)} fps, shown ${f1(r.shownFps)} fps, duplicate frames ${r.frameDups}` + (r.ggrs ? `, GGRS ping ${r.ggrs.ping.min}-${r.ggrs.ping.max} ms, input delay ${r.ggrs.delay} frames, rollback ${r.ggrs.rollback}, fps reported ${r.ggrs.fpsReported.join(" ")}` : ""));
   if (r.ggrs) console.log(`  per second since the session began, delay[/waits+longest ms]: ${r.ggrs.trajectory}`);
+  if (r.events) console.log(`  netplay events (s since the worker started): ${r.events}${r.poked ? `; RAM flipped after frame ${r.poked}` : ""}`);
   console.log(`  retro_run ms: p50 ${f2(r.run.p50)} p95 ${f2(r.run.p95)} p99 ${f2(r.run.p99)} max ${f2(r.run.max)}`);
   console.log(`  ticks/s ${f1(r.tick.perSec)}; runs per tick [0,1,2,3,4,5+] = ${r.tick.runsPerTick.join(" ")}; tick ms p50 ${f2(r.tick.dur.p50)} p95 ${f2(r.tick.dur.p95)} max ${f2(r.tick.dur.max)}`);
   console.log(`  setTimeout overshoot ms: p50 ${f2(r.timerLag.p50)} p95 ${f2(r.timerLag.p95)} max ${f2(r.timerLag.max)}`);

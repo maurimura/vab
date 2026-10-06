@@ -196,6 +196,8 @@
         #watchers = [];
         #streaming = false;
         #streamedTo = new Set();
+        /** When this machine last handed its game out again after a drift. */
+        #resyncedAt = -Infinity;
 
         constructor(game) {
           this.#game = game;
@@ -316,6 +318,20 @@
           this.#stream();
         }
 
+        /**
+         * Our machine and another's drifted apart (the worker compares the game's memory now
+         * and then). If we're the lowest seat playing, everyone starts over from our machine,
+         * as when someone joins; the others wait for that. Not twice within a short while.
+         */
+        #resync() {
+          if (!this.#playing || Math.min(...this.#players.keys()) !== this.seat) return;
+          if (performance.now() - this.#resyncedAt < 15000) return;
+          this.#resyncedAt = performance.now();
+          this.#epoch++;
+          this.#worker.postMessage({ type: "capture", epoch: this.#epoch });
+          this.#stream();
+        }
+
         /** Our worker captured the game: hand it to the others, and go on with them. */
         #captured({ epoch, state }) {
           if (epoch !== this.#epoch) return;
@@ -417,7 +433,12 @@
           const me = `Player ${this.seat + 1}`;
           if (event === "synchronized" || event === "resumed") this.#show(`${me}, online with ${this.#others()}`);
           if (event === "interrupted") this.#show(`${me}. Waiting for player ${seat + 1}'s connection...`);
-          if (event === "desync") this.#show(`${me}. Out of step with the others since frame ${frame}.`);
+          if (event === "desync") {
+            const lowest = Math.min(...this.#players.keys());
+            const from = lowest === this.seat ? "this machine" : `player ${lowest + 1}'s machine`;
+            this.#show(`${me}. Out of step with player ${seat + 1} since frame ${frame}: starting over from ${from}...`);
+            this.#resync();
+          }
           if (event === "stats" && !this.#status.includes("Out of step") && !this.#status.includes("Waiting")) {
             const direct = [...this.#links.values()].every((link) => link.direct);
             // A lockstep game waits for the others' input when it's late (worker.js adds a frame

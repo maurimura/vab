@@ -50,7 +50,10 @@
 //      { type: "watch-inputs", stream, frame, inputs } a Uint16Array with a mask per controller
 //      port (4) for each frame from `frame` on, a few times a second. `stream` counts up each
 //      time the stream starts over (a new session); inputs go on from that stream's states.
-//      The "stats" netplay event, once a second: ping (ms), delay (frames of input delay),
+//      Online, every 120 frames the machines compare a hash of the game's RAM (the worker's
+//      own packets, marked with epoch 0xffff): a mismatch is the "desync" netplay event
+//      (seat, frame), once per session, and the page then has one machine hand its game to
+//      everyone again. The "stats" netplay event, once a second: ping (ms), delay (frames of input delay),
 //      rollback (frames; 0 in lockstep), fps (frames shown), stalls (waits for the others'
 //      input in that second), stallMs (the longest), look (the others' input in hand at a frame:
 //      [least, median, most] frames), prefills (looks that waited for more) and framesAhead.
@@ -63,6 +66,16 @@ const PORTS = 4;
 const STREAM_EVERY = 100;
 /** Frames a watcher has in hand before playing: a little more than arrive at once. */
 const WATCH_BUFFER = 12;
+/**
+ * Game packets carry their session's epoch; this one marks the worker's own packets instead:
+ * a checkpoint, 'h', the epoch (u16), the frame (u32) and a hash of the game's RAM there (u32).
+ * The machines compare them to notice when they have drifted apart.
+ */
+const CONTROL = 0xffff;
+/** Frames between checkpoints. */
+const HASH_EVERY = 120;
+/** Every this many words of RAM go into a checkpoint's hash: a drift spreads, so a sample catches it within a checkpoint or two. */
+const HASH_STRIDE = 4;
 /** Marks a deflated state: "vabz", then the deflate-raw bytes. */
 const PACKED = Uint8Array.of(0x76, 0x61, 0x62, 0x7a);
 
@@ -334,6 +347,15 @@ class Cabinet {
   #looks = [];
   #prefills = 0;
   /**
+   * Checkpoints: hashes of this machine's RAM by frame, the others' that came before this
+   * machine got there (frame -> seat -> hash), whether a drift was reported this session, and
+   * what happened lately (delay changes, long waits), for the report.
+   */
+  #hashes = new Map();
+  #theirHashes = new Map();
+  #desynced = false;
+  #events = [];
+  /**
    * Lockstep input delay tuning: the last late frame, when the delay may change next, and the
    * last delay that saw late frames (and when), not to go back to for a while.
    */
@@ -356,6 +378,7 @@ class Cabinet {
       const handle = this.#seats?.indexOf(seat) ?? -1;
       const bytes = new Uint8Array(packet);
       const epoch = bytes[0] | (bytes[1] << 8);
+      if (epoch === CONTROL) return this.#control(seat, bytes);
       if (handle < 0 || epoch !== this.#epoch || !this.#session) return;
       this.#session.receive(handle, bytes.subarray(2));
       // Waiting for exactly this, most likely: run the frame now rather than at the next look.
@@ -418,11 +441,13 @@ class Cabinet {
           }
           ran++;
           this.#next += this.#pace(session, lookahead, frameMs);
+          if (session.currentFrame() % HASH_EVERY === 0) this.#checkpoint(session.currentFrame());
           if (this.#stall !== undefined) {
             // The wait is over. Making up the time waited would only run through the inputs
             // in hand and wait again a round trip later, the two machines taking turns: carry
             // on from here instead.
             this.#stalls.push(startedAt - this.#stall);
+            if (startedAt - this.#stall >= frameMs) this.#note(session, `waited ${Math.round(startedAt - this.#stall)} ms`);
             this.#stall = undefined;
             this.#next = startedAt + frameMs;
             break;
@@ -556,6 +581,58 @@ class Cabinet {
     this.#session.setDelay(delay);
     this.#delay = delay;
     this.#tuned.delay = delay;
+    this.#note(this.#session, `input delay ${delay}`);
+  }
+
+  /** Remembers what happened, with the frame, for the report when the machines drift apart. */
+  #note(session, what) {
+    this.#events.push(`${session.currentFrame()}: ${what}`);
+    if (this.#events.length > 40) this.#events.shift();
+  }
+
+  /**
+   * A checkpoint: the machine has just reached `frame`. Its RAM is hashed, compared with what
+   * the others reported for that frame, and reported to them.
+   */
+  #checkpoint(frame) {
+    const hash = hashRam(this.core.systemRam(), HASH_STRIDE);
+    this.#hashes.set(frame, hash);
+    for (const old of this.#hashes.keys()) if (old < frame - HASH_EVERY * 8) this.#hashes.delete(old);
+    for (const [seat, theirs] of this.#theirHashes.get(frame) ?? []) this.#compare(seat, frame, theirs, hash);
+    this.#theirHashes.delete(frame);
+    for (const seat of this.#seats) {
+      if (seat === this.#seat) continue;
+      const packet = new Uint8Array(13);
+      const view = new DataView(packet.buffer);
+      view.setUint16(0, CONTROL, true);
+      packet[2] = 0x68; // 'h'
+      view.setUint16(3, this.#epoch, true);
+      view.setUint32(5, frame, true);
+      view.setUint32(9, hash, true);
+      this.#port.postMessage([seat, packet.buffer], [packet.buffer]);
+    }
+  }
+
+  /** One of the worker's own packets from `seat`: a checkpoint of theirs. */
+  #control(seat, bytes) {
+    if (bytes.length < 13 || bytes[2] !== 0x68 || !this.#session) return;
+    const view = new DataView(bytes.buffer, bytes.byteOffset);
+    if (view.getUint16(3, true) !== this.#epoch) return; // an earlier session's
+    const frame = view.getUint32(5, true);
+    const hash = view.getUint32(9, true);
+    const mine = this.#hashes.get(frame);
+    if (mine !== undefined) return this.#compare(seat, frame, hash, mine);
+    if (frame < this.#session.currentFrame() - HASH_EVERY * 8) return; // too old to check
+    const theirs = this.#theirHashes.get(frame) ?? new Map();
+    theirs.set(seat, hash);
+    this.#theirHashes.set(frame, theirs);
+  }
+
+  #compare(seat, frame, theirs, mine) {
+    if (theirs === mine || this.#desynced) return;
+    this.#desynced = true;
+    console.warn(`Out of step with seat ${seat} at frame ${frame} (their RAM hashes ${theirs.toString(16)}, ours ${mine.toString(16)}); lately: ${this.#events.join("; ") || "nothing of note"}`);
+    postMessage({ type: "netplay", event: "desync", seat, frame });
   }
 
   // GGRS's requests, run on the core.
@@ -627,6 +704,10 @@ class Cabinet {
     this.#quietSince = performance.now();
     this.#retuneAt = 0;
     this.#lateAt = { delay: 0, time: -Infinity };
+    this.#hashes = new Map();
+    this.#theirHashes = new Map();
+    this.#desynced = false;
+    this.#events = [`session from epoch ${this.#epoch}, delay ${delay}`];
     this.#next = performance.now();
     if (this.#stream) this.#startStream();
     this.#alarm.now();
@@ -757,15 +838,18 @@ function onlineDelay(roundTrip, fps) {
   return Math.min(MAX_DELAY, Math.max(MIN_DELAY, frames));
 }
 
-/** FNV-1a over the game's RAM. All machines' hashes match while they're in step. */
-function hashRam(bytes) {
+/**
+ * FNV-1a over the game's RAM, every `stride`-th word of it (all of it by default). All
+ * machines' hashes match while they're in step.
+ */
+function hashRam(bytes, stride = 1) {
   let hash = 0x811c9dc5;
   if (bytes.byteOffset % 4 === 0) {
     const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.length >> 2);
-    for (let i = 0; i < words.length; i++) hash = Math.imul(hash ^ words[i], 0x01000193);
-    for (let i = words.length * 4; i < bytes.length; i++) hash = Math.imul(hash ^ bytes[i], 0x01000193);
+    for (let i = 0; i < words.length; i += stride) hash = Math.imul(hash ^ words[i], 0x01000193);
+    if (stride === 1) for (let i = words.length * 4; i < bytes.length; i++) hash = Math.imul(hash ^ bytes[i], 0x01000193);
   } else {
-    for (let i = 0; i < bytes.length; i++) hash = Math.imul(hash ^ bytes[i], 0x01000193);
+    for (let i = 0; i < bytes.length; i += stride) hash = Math.imul(hash ^ bytes[i], 0x01000193);
   }
   return hash >>> 0;
 }

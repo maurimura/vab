@@ -1,0 +1,251 @@
+diff --git a/Src/CPU/PowerPC/ppc_ops.c b/Src/CPU/PowerPC/ppc_ops.c
+index 5345af4..6137208 100644
+--- a/Src/CPU/PowerPC/ppc_ops.c
++++ b/Src/CPU/PowerPC/ppc_ops.c
+@@ -1680,6 +1680,21 @@ inline INT64 round_toward_negative_infinity(FPR f)
+ }
+ */
+ 
++// vab (supermodel/patches/0005): a result that is a NaN becomes the one quiet NaN the PowerPC
++// itself produces, 0x7FF8000000000000. WebAssembly leaves a NaN's sign and payload to the host
++// (x86 and ARM differ), so two machines playing in lockstep would otherwise drift apart the
++// first time the game computed one and read its bits back.
++static inline double fp_result(double x)
++{
++	if (x != x)
++	{
++		union { UINT64 i; double d; } canonical;
++		canonical.i = 0x7FF8000000000000ULL;
++		return canonical.d;
++	}
++	return x;
++}
++
+ #define SET_VXSNAN(a, b)    if (is_snan_double(a) || is_snan_double(b)) ppc.fpscr |= 0x80000000
+ #define SET_VXSNAN_1(c)     if (is_snan_double(c)) ppc.fpscr |= 0x80000000
+ 
+@@ -1740,7 +1755,7 @@ static void ppc_lfs(UINT32 op)
+ 		ea += REG(a);
+ 
+ 	f.i = READ32(ea);
+-	FPR(t).fd = (double)(f.f);
++	FPR(t).fd = fp_result((double)(f.f));
+ }
+ 
+ static void ppc_lfsu(UINT32 op)
+@@ -1753,7 +1768,7 @@ static void ppc_lfsu(UINT32 op)
+ 	ea += REG(a);
+ 
+ 	f.i = READ32(ea);
+-	FPR(t).fd = (double)(f.f);
++	FPR(t).fd = fp_result((double)(f.f));
+ 
+ 	REG(a) = ea;
+ }
+@@ -1872,7 +1887,7 @@ static void ppc_lfsux(UINT32 op)
+ 	ea += REG(a);
+ 
+ 	f.i = READ32(ea);
+-	FPR(t).fd = (double)(f.f);
++	FPR(t).fd = fp_result((double)(f.f));
+ 
+ 	REG(a) = ea;
+ }
+@@ -1888,7 +1903,7 @@ static void ppc_lfsx(UINT32 op)
+ 		ea += REG(a);
+ 
+ 	f.i = READ32(ea);
+-	FPR(t).fd = (double)(f.f);
++	FPR(t).fd = fp_result((double)(f.f));
+ }
+ 
+ static void ppc_mfsr(UINT32 op)
+@@ -2070,7 +2085,7 @@ static void ppc_faddx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = FPR(a).fd + FPR(b).fd;
++	FPR(t).fd = fp_result(FPR(a).fd + FPR(b).fd);
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2256,7 +2271,7 @@ static void ppc_fdivx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = FPR(a).fd / FPR(b).fd;
++	FPR(t).fd = fp_result(FPR(a).fd / FPR(b).fd);
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2273,7 +2288,7 @@ static void ppc_fmrx(UINT32 op)
+ 
+ 	CHECK_FPU_AVAILABLE();
+ 
+-	FPR(t).fd = FPR(b).fd;
++	FPR(t).fd = fp_result(FPR(b).fd);
+ 
+ 	if( RCBIT ) {
+ 		SET_CR1();
+@@ -2317,7 +2332,7 @@ static void ppc_frspx(UINT32 op)
+ 
+ 	SET_VXSNAN_1(FPR(b));
+ 
+-	FPR(t).fd = (float)FPR(b).fd;
++	FPR(t).fd = fp_result((float)FPR(b).fd);
+ 
+ 	set_fprf(FPR(t));
+ 	if( RCBIT ) {
+@@ -2358,7 +2373,7 @@ static void ppc_fsqrtx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = sqrt(FPR(b).fd);
++	FPR(t).fd = fp_result(sqrt(FPR(b).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2380,7 +2395,7 @@ static void ppc_fsubx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = FPR(a).fd - FPR(b).fd;
++	FPR(t).fd = fp_result(FPR(a).fd - FPR(b).fd);
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2518,7 +2533,7 @@ static void ppc_faddsx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (float)(FPR(a).fd + FPR(b).fd);
++	FPR(t).fd = fp_result((float)(FPR(a).fd + FPR(b).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2540,7 +2555,7 @@ static void ppc_fdivsx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (float)(FPR(a).fd / FPR(b).fd);
++	FPR(t).fd = fp_result((float)(FPR(a).fd / FPR(b).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2562,7 +2577,7 @@ static void ppc_fresx(UINT32 op)
+ 	init_rounding_mode();
+ 
+ 	// On the 603 fres behaves the same as fdivs RT, 1.0, RB
+-	FPR(t).fd = (float)(1.0 / FPR(b).fd);
++	FPR(t).fd = fp_result((float)(1.0 / FPR(b).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2584,7 +2599,7 @@ static void ppc_fsqrtsx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (float)(sqrt(FPR(b).fd));
++	FPR(t).fd = fp_result((float)(sqrt(FPR(b).fd)));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2606,7 +2621,7 @@ static void ppc_fsubsx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (float)(FPR(a).fd - FPR(b).fd);
++	FPR(t).fd = fp_result((float)(FPR(a).fd - FPR(b).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2630,7 +2645,7 @@ static void ppc_fmaddx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = ((FPR(a).fd * FPR(c).fd) + FPR(b).fd);
++	FPR(t).fd = fp_result(((FPR(a).fd * FPR(c).fd) + FPR(b).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2654,7 +2669,7 @@ static void ppc_fmsubx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = ((FPR(a).fd * FPR(c).fd) - FPR(b).fd);
++	FPR(t).fd = fp_result(((FPR(a).fd * FPR(c).fd) - FPR(b).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2676,7 +2691,7 @@ static void ppc_fmulx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (FPR(a).fd * FPR(c).fd);
++	FPR(t).fd = fp_result((FPR(a).fd * FPR(c).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2700,7 +2715,7 @@ static void ppc_fnmaddx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (-((FPR(a).fd * FPR(c).fd) + FPR(b).fd));
++	FPR(t).fd = fp_result((-((FPR(a).fd * FPR(c).fd) + FPR(b).fd)));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2724,7 +2739,7 @@ static void ppc_fnmsubx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (-((FPR(a).fd * FPR(c).fd) - FPR(b).fd));
++	FPR(t).fd = fp_result((-((FPR(a).fd * FPR(c).fd) - FPR(b).fd)));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2764,7 +2779,7 @@ static void ppc_fmaddsx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (float)((FPR(a).fd * FPR(c).fd) + FPR(b).fd);
++	FPR(t).fd = fp_result((float)((FPR(a).fd * FPR(c).fd) + FPR(b).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2788,7 +2803,7 @@ static void ppc_fmsubsx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (float)((FPR(a).fd * FPR(c).fd) - FPR(b).fd);
++	FPR(t).fd = fp_result((float)((FPR(a).fd * FPR(c).fd) - FPR(b).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2809,7 +2824,7 @@ static void ppc_fmulsx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (float)(FPR(a).fd * FPR(c).fd);
++	FPR(t).fd = fp_result((float)(FPR(a).fd * FPR(c).fd));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2833,7 +2848,7 @@ static void ppc_fnmaddsx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (float)(-((FPR(a).fd * FPR(c).fd) + FPR(b).fd));
++	FPR(t).fd = fp_result((float)(-((FPR(a).fd * FPR(c).fd) + FPR(b).fd)));
+ 
+ 	restore_rounding_mode();
+ 
+@@ -2857,7 +2872,7 @@ static void ppc_fnmsubsx(UINT32 op)
+ 
+ 	init_rounding_mode();
+ 
+-	FPR(t).fd = (float)(-((FPR(a).fd * FPR(c).fd) - FPR(b).fd));
++	FPR(t).fd = fp_result((float)(-((FPR(a).fd * FPR(c).fd) - FPR(b).fd)));
+ 
+ 	restore_rounding_mode();
+ 
