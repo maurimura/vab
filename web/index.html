@@ -470,6 +470,12 @@
           this.#worker?.postMessage({ type: "input", input });
         }
 
+        /** How the arrows turn a driving game's wheel (`/wheel` in the chat): our machine's alone. */
+        wheel(ramp) {
+          if (this.#game.wheel) this.#game.wheel = { ...this.#game.wheel, ...ramp };
+          this.#worker?.postMessage({ type: "wheel", ...ramp });
+        }
+
         stop() {
           this.#worker?.terminate();
           clearTimeout(this.#settle);
@@ -511,7 +517,7 @@
           // Cores, ROM sets, BIOS sets, a game's other files and start-up states
           // (emulator/snapshot.mjs) come from R2.
           // Alone we start the game; otherwise the others hand theirs over.
-          const { core, rom, turns, lockstep, gun, linked, options } = this.#game;
+          const { core, rom, turns, lockstep, gun, linked, options, wheel } = this.#game;
           const alone = this.#seated.size === 1;
           const start = {
             type: "start",
@@ -527,6 +533,8 @@
             // A linked game's board for this seat, linked (mame/link-states.mjs).
             linkState: linked ? `/roms/${rom}-link${seat}.state` : undefined,
             options,
+            // A driving game's: the arrows turn a wheel, which goes out in the input.
+            wheel,
             port: packets.port2,
             hold: !alone,
           };
@@ -755,7 +763,7 @@
         /** The controls as Bevy last sent them (a u32), for what was just pressed. */
         #input = 0;
 
-        constructor({ core, rom, bios, files, turns, gun, linked, cabinet, options }) {
+        constructor({ core, rom, bios, files, turns, gun, linked, cabinet, options, wheel }) {
           this.cabinet = cabinet;
           if ("view" in options) this.#view = 0;
           this.#worker = emulatorWorker((data) => {
@@ -772,6 +780,8 @@
             // The streamed board's state says whether it's linked, and on which side.
             linked,
             options,
+            // A driving game's wheel comes in the player's input.
+            wheel,
             hold: true,
           });
         }
@@ -896,6 +906,12 @@
           this.#worker?.postMessage({ type: "input", input });
         }
 
+        /** As Play's: how the arrows turn a driving game's wheel. */
+        wheel(ramp) {
+          if (this.#game.wheel) this.#game.wheel = { ...this.#game.wheel, ...ramp };
+          this.#worker?.postMessage({ type: "wheel", ...ramp });
+        }
+
         /** A watcher wants our cabinet, or no longer does. */
         message(from, { cabinet, watch }) {
           if (cabinet !== this.cabinet || watch === undefined) return;
@@ -941,7 +957,7 @@
           // Our cabinet's link data out to everyone else seated here, theirs in ([seat, packet]).
           const packets = (this.#packets = new MessageChannel());
           packets.port1.onmessage = ({ data: packet }) => this.#send(packet);
-          const { core, rom, options } = this.#game;
+          const { core, rom, options, wheel } = this.#game;
           worker.postMessage(
             {
               type: "start",
@@ -952,6 +968,7 @@
               seat,
               arcade: true,
               options,
+              wheel,
               port: packets.port2,
             },
             [packets.port2],
@@ -1083,14 +1100,14 @@
         constructor(game) {
           this.#game = game;
           this.cabinet = game.cabinet;
-          const { core, rom, options } = game;
+          const { core, rom, options, wheel } = game;
           this.#worker = emulatorWorker((data) => {
             if (data.type === "frame") push_frame(data.rgba, data.width, data.height);
             if (data.type !== "ready") return;
             this.#ready = true;
             if (this.#player !== undefined) this.#ask(true);
           });
-          this.#worker.postMessage({ type: "start", core: coreUrl(core), rom: `/roms/${rom}.zip`, files: romFiles(game), arcade: true, options, hold: true });
+          this.#worker.postMessage({ type: "start", core: coreUrl(core), rom: `/roms/${rom}.zip`, files: romFiles(game), arcade: true, options, wheel, hold: true });
         }
 
         /** Who sits at the cabinet changed: if the player we watch left, another one's cabinet. */
@@ -1171,11 +1188,22 @@
           return {};
         }
       };
+      /**
+       * A driving game's wheel (world::Game's `wheel`: { lock, back, curve, span }), as Bevy
+       * sends it: JSON, or nothing for a game without one.
+       */
+      const gameWheel = (json) => {
+        try {
+          return json ? JSON.parse(json) : undefined;
+        } catch {
+          return undefined;
+        }
+      };
 
       let play;
-      window.emulatorPlay = async (core, rom, bios, files, cabinet, turns, players, lockstep, gun, linked, options, arcade) => {
+      window.emulatorPlay = async (core, rom, bios, files, cabinet, turns, players, lockstep, gun, linked, options, arcade, wheel) => {
         play?.stop();
-        const game = { core, rom, bios, files, turns, players, cabinet, lockstep, gun, linked, options: coreOptions(options) };
+        const game = { core, rom, bios, files, turns, players, cabinet, lockstep, gun, linked, options: coreOptions(options), wheel: gameWheel(wheel) };
         const current = (play = arcade ? new Arcade(game) : new Play(game));
         stayAwake(true);
         game_status("Taking a seat...");
@@ -1184,9 +1212,9 @@
         room.sit(cabinet, players);
         current.watchers(room.watchers.get(cabinet) ?? []);
       };
-      window.emulatorWatch = (core, rom, bios, files, cabinet, turns, gun, linked, options, arcade) => {
+      window.emulatorWatch = (core, rom, bios, files, cabinet, turns, gun, linked, options, arcade, wheel) => {
         play?.stop();
-        const game = { core, rom, bios, files, turns, gun, linked, cabinet, options: coreOptions(options) };
+        const game = { core, rom, bios, files, turns, gun, linked, cabinet, options: coreOptions(options), wheel: gameWheel(wheel) };
         const current = (play = arcade ? new ArcadeWatch(game) : new Watch(game));
         stayAwake(true);
         game_status("Watching. Loading the game...");
@@ -1206,6 +1234,9 @@
       // The player's controls (client/src/emulator.rs): a u32, the RetroPad mask in the low 16
       // bits and, at a lightgun game, where it aims in the high 16 (web/emulator/worker.js).
       window.emulatorInput = (input) => play?.input(input);
+      // `/wheel` in the chat (client/src/emulator.rs): how the arrows turn the wheel of the
+      // driving game being played, JSON { lock, back, curve } (any of them).
+      window.emulatorWheel = (json) => play?.wheel?.(JSON.parse(json));
 
       // Pointer lock, for the air hockey table and the dartboard (client/src/pointer_lock.rs): the
       // paddle or the dart moves with the mouse, and the pointer stays put. Browsers only lock it from a click, so a click on

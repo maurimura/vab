@@ -3,6 +3,7 @@
 // core runs: the Web Worker (worker.js) or Node.
 
 import { controllerRouting, routedButton } from './controller-routing.js';
+import { WHEEL_LOCK, wheelIn } from './wheel.js';
 
 // https://github.com/libretro/RetroArch/blob/master/libretro-common/include/libretro.h
 const ENV = {
@@ -84,7 +85,21 @@ const OPTIONS = {
 // RGBA8888 is ours, not libretro's: bytes R, G, B, A as the page wants them, so a core that draws
 // with WebGL (Supermodel) hands its frame over without a conversion on either side.
 const PIXEL_FORMAT = { RGB1555: 0, XRGB8888: 1, RGB565: 2, RGBA8888: 100 };
-const DEVICE = { JOYPAD: 1, LIGHTGUN: 4, POINTER: 6 };
+const DEVICE = { JOYPAD: 1, LIGHTGUN: 4, ANALOG: 5, POINTER: 6 };
+/** RetroPad ids (libretro.h) a driving game's arrows are named after (see #namePedals). */
+const PAD = { UP: 4, DOWN: 5, LEFT: 6, RIGHT: 7, L2: 12, R2: 13 };
+/** The left stick's X, all of it: -0x7fff full left .. 0x7fff full right. */
+const STICK = 0x7fff;
+/**
+ * A wheel (wheel.js, -127..127) as the left stick's X, spread over `span`, [from, to] of the
+ * stick's 0..0x7fff each way (world::Game's `wheel`): a core may see nothing in the first part of
+ * the stick and be at full lock before its end. Out Run's FBNeo core does both, its frontend's
+ * dead zone and the driver's: its wheel stays straight up to about a third of the stick and is
+ * at full lock from 72% (measured), so the wheel's 1 to 127 go over that span, every step of it
+ * a turn of the game's wheel. MAME reads the whole stick, one to one onto the wheel's range.
+ */
+const wheelAxis = (wheel, [from, to] = [0, STICK]) =>
+  wheel === 0 ? 0 : Math.sign(wheel) * Math.round(from + (Math.abs(wheel) * (to - from)) / WHEEL_LOCK);
 /**
  * A lightgun's buttons (libretro.h RETRO_DEVICE_ID_LIGHTGUN_*) and the RetroPad buttons that
  * press them: the trigger is B (key Z, the left mouse button), Aux A is A (key X, the right
@@ -118,9 +133,16 @@ export class Core {
   /**
    * Each controller port's input: the RetroPad mask in the low 16 bits, bit (1 << id) per held
    * button (ids from libretro.h), and for a lightgun game where it aims in the high 16: x in
-   * bits 16-23 (0 the left edge of the screen, 255 the right), y in bits 24-31 (0 the top).
+   * bits 16-23 (0 the left edge of the screen, 255 the right), y in bits 24-31 (0 the top). At
+   * a driving game (steers) bits 16-23 are its wheel instead, a signed byte (wheel.js).
    */
   inputs = new Uint32Array(4);
+  /**
+   * A driving game's wheel, world::Game's `wheel` (assets/games.ron), or undefined: every port
+   * then steers (steers), and the wheel's `span` says where on the stick the core turns the
+   * game's wheel (wheelAxis). Set it before the game loads, as the other settings here.
+   */
+  wheel;
   /**
    * A lightgun game (Time Crisis II): the core's lightgun (and pointer) reads are answered from
    * each port's aim and buttons. Otherwise they read nothing: MAME also maps a lightgun's
@@ -146,7 +168,19 @@ export class Core {
    * under the RetroPad buttons that press them (GUN_BUTTONS).
    */
   get buttons() {
-    return this.gun ? new Map([...this.#padNames, ...this.#gunNames]) : this.#padNames;
+    if (this.gun) return new Map([...this.#padNames, ...this.#gunNames]);
+    // A driving game's Left and Right turn its wheel, whatever the core calls them (FBNeo's
+    // "Steering (Fake Digital Left)"), so the help card lists them as Daytona USA's are.
+    if (this.wheel) return new Map([...this.#padNames, [PAD.LEFT, "Steer left"], [PAD.RIGHT, "Steer right"]]);
+    return this.#padNames;
+  }
+
+  /**
+   * Whether the game on `port` is steered with a wheel, which the arrows turn (wheel.js) and the
+   * port's input carries in bits 16-23: a driving game's, one with a `wheel`.
+   */
+  steers(port) {
+    return Boolean(this.wheel) && port >= 0 && port < this.inputs.length;
   }
 
   #m;
@@ -161,7 +195,7 @@ export class Core {
   #slotSize = 0;
   #pixelFormat = PIXEL_FORMAT.RGB1555;
   #rotation = 0; // quarter turns counter-clockwise, for vertical games like Pac-Man
-  #routing = { sharedCoin: false, secondStart: undefined };
+  #routing = { sharedCoin: false, secondStart: undefined, pedals: [] };
   /** Player 1's button names from the core's descriptors, for the RetroPad and for a lightgun. */
   #padNames = new Map();
   #gunNames = new Map();
@@ -203,7 +237,7 @@ export class Core {
     m._retro_set_audio_sample(m.addFunction((l, r) => this.#onAudio(Int16Array.of(l, r)), "vii"));
     m._retro_set_audio_sample_batch(m.addFunction((data, frames) => this.#audio(data, frames), "iii"));
     m._retro_set_input_poll(m.addFunction(() => {}, "v"));
-    m._retro_set_input_state(m.addFunction((port, device, _index, id) => this.#inputState(port, device, id), "iiiii"));
+    m._retro_set_input_state(m.addFunction((port, device, index, id) => this.#inputState(port, device, index, id), "iiiii"));
     m._retro_init();
   }
 
@@ -441,6 +475,18 @@ export class Core {
     return this.#linkPtr;
   }
 
+  /**
+   * An FBNeo driving game's Up and Down, by what they do there (controller-routing.js): they take
+   * the pedals' names (Out Run's "Accelerate" and "Brake"), so the help card lists them so.
+   */
+  #namePedals() {
+    const names = this.#padNames;
+    if (this.#routing.pedals[0]) {
+      if (names.has(PAD.R2)) names.set(PAD.UP, names.get(PAD.R2));
+      if (names.has(PAD.L2)) names.set(PAD.DOWN, names.get(PAD.L2));
+    }
+  }
+
   #environment(cmd, data) {
     const m = this.#m;
     switch (cmd) {
@@ -475,6 +521,7 @@ export class Core {
           }
         }
         this.#routing = controllerRouting(descriptors);
+        this.#namePedals();
         return 1;
       }
       case ENV.SET_PIXEL_FORMAT: {
@@ -521,11 +568,17 @@ export class Core {
    * 16 bits of the port's input (controller-routing.js shares an upright's panel). A lightgun
    * game's gun (MAME asks every frame, for every port) is where the port aims, from the high 16
    * bits, with GUN_BUTTONS for its buttons; as a pointer (MAME's "touchscreen" lightgun mode)
-   * the trigger is a press, the pedal a second finger.
+   * the trigger is a press, the pedal a second finger. A driving game's wheel (steers) is the
+   * left stick's X, from bits 16-23 (wheel.js), and its arrows are only that wheel: never the
+   * core's own Left and Right, FBNeo's "fake digital" full lock at once or MAME's key ramp.
    */
-  #inputState(port, device, id) {
+  #inputState(port, device, index, id) {
     if (device === DEVICE.JOYPAD) {
+      if (this.steers(port) && (id === PAD.LEFT || id === PAD.RIGHT)) return 0;
       return id < 16 ? routedButton(this.inputs, port, id, this.#routing, this.turns) : 0;
+    }
+    if (device === DEVICE.ANALOG) {
+      return index === 0 && id === 0 && this.steers(port) ? wheelAxis(wheelIn(this.inputs[port]), this.wheel.span) : 0;
     }
     if (!this.gun || port >= this.inputs.length) return 0;
     const input = this.inputs[port];

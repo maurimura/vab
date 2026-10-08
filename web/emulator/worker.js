@@ -59,10 +59,13 @@
 //
 // Each player's controls for a frame are a u32 (the "input"): the RetroPad mask in the low 16
 // bits, and for a `gun` game where the lightgun aims in the high 16, x in bits 16-23 (0 the
-// left edge of the screen, 255 the right) and y in bits 24-31 (0 the top, 255 the bottom).
+// left edge of the screen, 255 the right) and y in bits 24-31 (0 the top, 255 the bottom). At a
+// driving game (one with a `wheel`: Out Run, Cruis'n USA) bits 16-23 are where the wheel is
+// turned, which this worker works out from the local player's arrows as it samples them
+// (wheel.js); the page only sends buttons.
 //
 // In:  { type: "start", core, rom, files, state, seat, turns, lockstep, gun, linked, linkState,
-//        arcade, options, port, hold }
+//        arcade, options, wheel, port, hold }
 //        Loads the game. `files` (a BIOS, a NAOMI game's disc: romPath in libretro.js) and `state`
 //        are optional: skipped if missing. Plays alone right away, or with `hold` waits for
 //        "online" (joining a game in progress) or "watch-state" (watching; no `seat` or `port`
@@ -77,6 +80,11 @@
 //        game's code as it runs (Flycast's JIT) plays that many frames blind after loading a
 //        game handed over by another machine, then goes back to it, so the session starts with
 //        the code compiled rather than compiling it a hitch at a time while the others wait.
+//        `wheel`, a driving game's (world::Game's: { lock, back, curve, span }), has the arrows
+//        turn a wheel and the core read it (Core.wheel).
+//      { type: "wheel", lock, back, curve } Any of them: the arrows turn the wheel so from the
+//        next frame on (wheel.js; `/wheel` in the chat). Only this machine's ramp: the wheel
+//        goes to the others in the input, so nothing else changes.
 //      { type: "view", view } Watching such a game: shows seat `view`'s screen instead.
 //      { type: "link-seats", seats } An arcade game: who sits at each seat ({ seat: player id },
 //        or null). A seat left empty is off the link before the next frame (Core.linkAbsent);
@@ -98,7 +106,8 @@
 //        that another state of it can be passed over, and an arcade game's state is the
 //        cabinet at `seat` (the core's seat is set before it loads).
 //      { type: "probe", at } For checks: a "probe" message when the machine gets to frame `at`
-//        (playing online or watching), or without `at` after the next frame it runs.
+//        (playing online or watching, or alone while streaming: frames numbered as the watchers'
+//        machines number them), or without `at` after the next frame it runs (frame -1 alone).
 //      { type: "input", input } the local player's controls (a u32, above) |
 //      { type: "audio", port, sampleRate } the speaker's port and rate
 // Out: { type: "ready", state } the game is loaded (`state`: from the start's state) |
@@ -138,6 +147,7 @@
 import { Core, romPath } from "./libretro.js";
 import { LinkedSession, decodeRecords, encodeRecords, markLinked, parseLinkState, unmarkLinked } from "./linked.js";
 import { Resampler } from "./resample.js";
+import { Wheel } from "./wheel.js";
 
 /** Controller ports, as many as libretro.js has. */
 const PORTS = 4;
@@ -276,17 +286,24 @@ onmessage = ({ data: msg }) => {
     pressed |= input & ~localInput & BUTTONS;
     localInput = input;
   } else if (msg.type === "audio") ({ port: audioPort, sampleRate: speakerRate = speakerRate } = msg);
+  else if (msg.type === "wheel") wheel.set(msg);
   else if (msg.type === "start") start(msg);
   // Anything else is for the loaded game; it can arrive while the game still downloads.
   else if (cabinet) cabinet.handle(msg);
   else waiting.push(msg);
 };
 
-/** The local controls for the frame about to run. */
+/** At a driving game, the wheel the local player's arrows turn (wheel.js). */
+const wheel = new Wheel();
+
+/**
+ * The local controls for the frame about to run. At a driving game the wheel, turned a frame's
+ * worth by the arrows held, goes in it (bits 16-23), so whoever runs the frame turns it the same.
+ */
 function sampleInput() {
   const input = (localInput | pressed) >>> 0;
   pressed = 0;
-  return input;
+  return cabinet?.steers ? wheel.turn(input) : input;
 }
 
 // "no-cache" checks with the server every time (a 304 when unchanged), so newly uploaded or
@@ -300,8 +317,11 @@ const downloadIfPresent = (url) => url && download(url).catch(() => undefined);
 
 async function start({
   core: coreUrl, rom: romUrl, files = [], state: stateUrl, seat = 0, turns = false, lockstep = false, gun = false,
-  linked = false, linkState: linkStateUrl, arcade = false, options = {}, port, hold,
+  linked = false, linkState: linkStateUrl, arcade = false, options = {}, wheel: steering, port, hold,
 }) {
+  // Before anything is awaited: a "wheel" that comes while the game downloads then changes these
+  // numbers rather than being undone by them.
+  if (steering) wheel.set(steering);
   const { default: createCore } = await import(coreUrl);
   const [rom, packedState, packedLinkState, ...extras] = await Promise.all([
     download(romUrl),
@@ -329,6 +349,7 @@ async function start({
   const core = cab.core;
   core.netplay = true;
   core.gun = gun;
+  core.wheel = steering;
   files.forEach((url, i) => extras[i] && core.addFile(romPath(url), extras[i]));
   // An arcade game's machine is the seat's cabinet.
   if (arcade) options = { ...options, seat: String(seat) };
@@ -337,8 +358,10 @@ async function start({
     if (key !== "vab_warmup") core.setOption(key, String(value));
   }
   const { fps, sampleRate } = core.loadGame(romUrl.split("/").pop(), rom);
-  // Pacing, input delay and the stats all go by the core's rate, whatever it is (see the top).
+  // Pacing, input delay, the stats and the wheel's turning all go by the core's rate, whatever
+  // it is (see the top).
   cab.fps = fps;
+  wheel.set({}, fps);
   // The speaker runs at one rate; a core at another (Supermodel, 44.1 kHz) is brought to it.
   if (Math.round(sampleRate) !== speakerRate) cab.resampler = new Resampler(sampleRate, speakerRate);
   // A start-up state (emulator/snapshot.mjs) skips the boot screens and adds credits. States
@@ -595,6 +618,14 @@ class Cabinet {
     this.core.setOption("view", String(view));
   }
 
+  /**
+   * Whether the local player steers a wheel (a driving game): on their own controller port, the
+   * seat's, or the first on a linked board or an arcade cabinet.
+   */
+  get steers() {
+    return this.core.steers(this.#linked || this.#arcade ? 0 : this.#seat);
+  }
+
   /** Frames to run per wake-up at most: one for a heavy core, a few to catch up otherwise. */
   #perWake() {
     return this.#runMs > HEAVY_RERUN_MS ? 1 : 4;
@@ -701,8 +732,12 @@ class Cabinet {
         // A linked game's player plays their own board, on its player 1 controls.
         const ports = byPort([sampleInput()], [this.#linked ? 0 : this.#seat]);
         this.#run(ports, true);
-        this.#probe(NEXT_FRAME);
-        this.#stream?.inputs.push(...ports);
+        const stream = this.#stream;
+        stream?.inputs.push(...ports);
+        // Streaming, a check can probe this machine and a watcher's at the same frame: by the
+        // number the watchers' machines give it (#watchInputs).
+        const numbered = stream && stream.frame + stream.inputs.length / PORTS;
+        this.#probe(stream && this.#probes.has(numbered) ? numbered : NEXT_FRAME);
         this.#next += frameMs;
       }
       this.#alarm.at(this.#next);

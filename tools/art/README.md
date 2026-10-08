@@ -298,6 +298,68 @@ the four new ROMs/states and the Psikyo core. Uploads require separate permissio
 no ROM/core/state has been uploaded, committed or deployed by this batch, and no
 cabinet has been placed on the user's map.
 
+### Out Run and Cruis'n USA — driving cabinet art
+
+```sh
+for skin in outrun crusnusa; do
+  python3 tools/art/cabinet_pipeline.py validate "$skin"
+  python3 tools/art/cabinet_pipeline.py build "$skin"
+done
+python3 tools/art/preview_catalog.py outrun crusnusa \
+  --filename=outrun-crusnusa.png --title="OUT RUN + CRUIS'N USA"
+python3 -m unittest discover -s tools/art -p 'test_*.py'
+```
+
+Review `art/previews/outrun-crusnusa.png` or the individual previews. Each skin
+has four **48×56** sprites and seven editable layers per facing. The reusable
+`racing` renderer now supports full-height artwork, taller/ribbed bucket seats
+and a photographed deluxe car shell; approved Daytona exports remain unchanged.
+Footprints are compressed to 70% around the established cell anchor, with height
+unchanged. Geometry is a pixel-scale approximation, not factory dimensions.
+
+- **Out Run**: 1986 Sega **Deluxe Moving Cabinet**, explicitly distinguished from
+  the standard moving seat/upright by Sega's printed flyer. Red car body, two
+  black tires/light hubs, rear spoiler/logo, four exhausts, seat speakers, gray
+  motion base and separate coin pedestal are modeled. One yellow Start,
+  three-spoke steering rim, Low/High lever and two pedals are separate controls;
+  no Daytona view buttons or four-speed gate. Motion is represented by a stationary
+  platform. Hood, outer side, seat-back and spoiler art are photograph extractions.
+  The display is a real **320×224** attract racing capture from the already supplied
+  local ROM and the parallel integration's local FBNeo Out Run core:
+  `node tools/art/capture_screen.mjs emulator/dist/outrun/fbneo.mjs /path/to/outrun.zip art/references/outrun/screen.png - --frames=1200`.
+  No startup state or ROM repacking is required; source/core/ROM hashes are recorded.
+- **Cruis'n USA**: original-design 1994 Midway **single sit-down**, full-height
+  purple/sunset/red-car sides, independent title marquee, black tall bucket,
+  black dashboard/platform. Three red/white/blue view buttons, green Start and
+  orange Radio follow the photographs, with a steering wheel, four-speed lever
+  and two pedals. The chrome control photo corroborates the layout but its finish
+  is not mixed into the selected black panel. Compact twin/shared leader marquee
+  and upright remain research variants. Only the upright photo's actual same-game
+  racing screen is rectified for the display; it is not a claimed emulator capture.
+  The supplied ZIP contains revision 4.1, reflected by recipe `rom: crusnusa41`;
+  the skin stays `crusnusa`. The parent-ROM capture attempt failed validation, so
+  this art change does not repack/repair/download ROMs to obtain a screen.
+
+References: [Out Run deluxe](https://www.arcadeartwork.org/picture.php?/96513),
+[dashboard](https://www.arcadeartwork.org/picture.php?/5479),
+[1986 flyer](https://www.arcadeartwork.org/picture.php?/87272),
+[Cruis'n USA single](https://www.arcadeartwork.org/picture.php?/93302),
+[controls](https://www.arcadeartwork.org/picture.php?/4549) and
+[same-game screen photo](https://www.arcadeartwork.org/picture.php?/93304).
+Original downloads, SHA-256s, measured extractions and uncertainties are retained
+under `art/references/{outrun,crusnusa}/` and `tools/art/recipes/`. One photographed
+outer side is repeated readably; unseen artwork is not invented. The Cruis'n USA
+seat has no fabricated rear decal. Sega/Midway/Nintendo art and photo rights
+remain unresolved; archive hosting is not publisher authorization.
+
+The game integration's entries in `assets/games.ron` now select these skins:
+`outrun` uses `cabinets: ["outrun"]`; `crusnusa41` uses `cabinets: ["crusnusa"]`.
+The editor assigns their games automatically; existing plain-cabinet placements
+remain valid and are not replaced.
+No existing ROM/core/seat configuration, map, emulator code or binaries are
+changed by this art work. Leave floor clearance when placing later. No ROM
+upload, commit or deployment is included; visual approval is still needed.
+
 ### Daytona USA — original Sega sit-down
 
 ```sh

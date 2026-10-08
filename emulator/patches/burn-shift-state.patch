@@ -1,0 +1,13 @@
+diff --git a/src/burn/burn_shift.cpp b/src/burn/burn_shift.cpp
+--- a/src/burn/burn_shift.cpp
++++ b/src/burn/burn_shift.cpp
+@@ -456,6 +456,9 @@ INT32 BurnShiftScan(INT32 nAction)
+ 
+ 	if (nAction & ACB_DRIVER_DATA) {
+ 		SCAN_VAR(bBurnShiftStatus);
++		// A press toggles the gear, against the shifter input of the frame before: part of the
++		// state, or a machine that loads one with the shifter held would toggle the gear again
++		SCAN_VAR(prev_shift);
+ 	}
+ 
+ 	if (nAction & ACB_WRITE) {

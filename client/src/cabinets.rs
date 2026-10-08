@@ -139,6 +139,7 @@ fn play(
     touch: Res<Touch>,
     cabinets: Res<Cabinets>,
     nearby: Res<Nearby>,
+    tuning: Res<emulator::WheelTuning>,
     mut mode: ResMut<NextState<Mode>>,
 ) {
     let sit = keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Play);
@@ -154,16 +155,19 @@ fn play(
         return;
     };
     let watching = what == Use::Watch;
+    // A driving game's wheel turns as tuned with `/wheel`, if it was.
+    let wheel = tuning.wheel(game);
     if watching {
         emulator::watch(*cell, game);
     } else {
-        emulator::play(*cell, game);
+        emulator::play(*cell, game, wheel);
     }
-    let title = game.title.clone();
     commands.insert_resource(emulator::PlayingGame {
-        title,
+        title: game.title.clone(),
+        rom: game.rom.clone(),
         watching,
         gun: game.gun,
+        wheel,
     });
     mode.set(Mode::Playing);
 }

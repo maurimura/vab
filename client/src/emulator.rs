@@ -10,8 +10,14 @@
 //! other (Time Crisis II's pedal). On a touch screen a finger on the game aims and shoots there.
 //! The aim goes out with the buttons, in the high half of the same u32. Two players at its twin
 //! cabinet (`linked`) each aim on their own screen: each browser runs that player's own board.
+//!
+//! At a driving game (`wheel`: Out Run, Cruis'n USA) the arrows turn a steering wheel, in the
+//! worker (web/emulator/wheel.js). `/wheel` in the chat shows how it turns and tries other
+//! numbers (`/wheel lock=0.5 back=0.1 curve=2`), for this player alone and for as long as the
+//! page is open, to find the ones for assets/games.ron.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -19,10 +25,10 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::ui::UiGlobalTransform;
 use bevy::window::{CursorOptions, PrimaryWindow};
 use wasm_bindgen::prelude::*;
-use world::Game;
+use world::{Game, Wheel};
 
 use crate::Mode;
-use crate::chat::{Chat, chat_closed};
+use crate::chat::{Chat, TuneWheel, chat_closed};
 use crate::settings::Settings;
 use crate::touch::{self, Touch, TouchButton};
 
@@ -74,9 +80,9 @@ extern "C" {
     /// `files` are what the core needs next to the ROM besides the BIOS (paths under /roms/, a
     /// NAOMI game's disc), `lockstep` games don't roll back online, `gun` games answer the
     /// core's lightgun from the aim, `linked` games give each player their own board, linked to
-    /// the others' (paced like lockstep), `options` (JSON) are the core's settings, and `arcade`
-    /// games are linked cabinets, each player's browser running only their own, free-running
-    /// (world::Game).
+    /// the others' (paced like lockstep), `options` (JSON) are the core's settings, `arcade`
+    /// games are linked cabinets, each player's browser running only their own, free-running,
+    /// and a driving game's `wheel` (JSON) has the arrows turn a wheel (world::Game).
     #[wasm_bindgen(js_name = emulatorPlay)]
     fn emulator_play(
         core: &str,
@@ -91,6 +97,7 @@ extern "C" {
         linked: bool,
         options: &str,
         arcade: bool,
+        wheel: Option<String>,
     );
     /// Watches the game at `cabinet` ("x,y"), streamed from one of its players (at a `linked`
     /// game, the lowest seat's own board; an `arcade` game's: one player's cabinet at a time).
@@ -106,6 +113,7 @@ extern "C" {
         linked: bool,
         options: &str,
         arcade: bool,
+        wheel: Option<String>,
     );
     #[wasm_bindgen(js_name = emulatorStop)]
     fn emulator_stop();
@@ -114,15 +122,24 @@ extern "C" {
     /// 16-23 (0 the screen's left edge, 255 its right) and y in bits 24-31 (0 the top).
     #[wasm_bindgen(js_name = emulatorInput)]
     fn emulator_input(input: u32);
+    /// How the arrows turn the wheel of the driving game being played, from now on: a
+    /// world::Wheel as JSON, whose `lock`, `back` and `curve` the worker takes (its `span` is
+    /// the game's, the same on every machine).
+    #[wasm_bindgen(js_name = emulatorWheel)]
+    fn emulator_wheel(ramp: &str);
 }
 
 /// The game being played or watched, while `Mode::Playing`.
 #[derive(Resource)]
 pub struct PlayingGame {
     pub title: String,
+    /// Its ROM set, which names it in assets/games.ron.
+    pub rom: String,
     pub watching: bool,
     /// A lightgun game: the player aims (world::Game).
     pub gun: bool,
+    /// A driving game: how the arrows turn its wheel, as the player has it now.
+    pub wheel: Option<Wheel>,
 }
 
 impl PlayingGame {
@@ -130,10 +147,28 @@ impl PlayingGame {
     pub fn aims(&self) -> bool {
         self.gun && !self.watching
     }
+
+    /// The player steers a wheel the arrows turn (not when watching).
+    pub fn steers(&self) -> bool {
+        self.wheel.is_some() && !self.watching
+    }
 }
 
-/// Starts the game at the cabinet in `cell`; switch to `Mode::Playing` to show it.
-pub fn play(cell: IVec2, game: &Game) {
+/// Wheels tuned with `/wheel`, by ROM set: the game's next time too, until the page reloads.
+#[derive(Resource, Default)]
+pub struct WheelTuning(HashMap<String, Wheel>);
+
+impl WheelTuning {
+    /// How the arrows turn `game`'s wheel: as tuned, or as assets/games.ron has it.
+    pub fn wheel(&self, game: &Game) -> Option<Wheel> {
+        let tuned = self.0.get(&game.rom).copied();
+        game.wheel.map(|wheel| tuned.unwrap_or(wheel))
+    }
+}
+
+/// Starts the game at the cabinet in `cell`, its wheel (a driving game's) turning as `wheel`
+/// says; switch to `Mode::Playing` to show it.
+pub fn play(cell: IVec2, game: &Game, wheel: Option<Wheel>) {
     LATEST_FRAME.set(None);
     LATEST_STATUS.set(None);
     let cabinet = cabinet_id(cell);
@@ -151,6 +186,7 @@ pub fn play(cell: IVec2, game: &Game) {
         game.linked,
         &options(game),
         game.arcade,
+        wheel.as_ref().map(to_json),
     );
 }
 
@@ -171,12 +207,18 @@ pub fn watch(cell: IVec2, game: &Game) {
         game.linked,
         &options(game),
         game.arcade,
+        game.wheel.as_ref().map(to_json),
     );
 }
 
 /// The game's settings for its core, as JSON for the page.
 fn options(game: &Game) -> String {
     serde_json::to_string(&game.options).unwrap_or_else(|_| "{}".into())
+}
+
+/// A wheel as JSON for the page.
+fn to_json(wheel: &Wheel) -> String {
+    serde_json::to_string(wheel).unwrap_or_default()
 }
 
 /// How the page and the room name a cabinet: its cell, "x,y".
@@ -190,6 +232,8 @@ impl Plugin for EmulatorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Aim>()
             .init_resource::<Sent>()
+            .init_resource::<WheelTuning>()
+            .add_systems(Update, tune_wheel)
             .add_systems(OnEnter(Mode::Playing), show_screen)
             .add_systems(
                 Update,
@@ -559,6 +603,58 @@ fn send_input(
     if sent.0 != Some(input) && (sent.0.is_some() || input != 0) {
         emulator_input(input);
         sent.0 = Some(input);
+    }
+}
+
+/// `/wheel` in the chat: shows how the arrows turn the wheel of the driving game being played,
+/// and with numbers (`lock=0.5 back=0.1 curve=2`, any of them) turns it so from now on. Only
+/// this player's wheel turns otherwise: it goes to the others in the input, already turned.
+fn tune_wheel(
+    mut asked: MessageReader<TuneWheel>,
+    mode: Res<State<Mode>>,
+    mut game: Option<ResMut<PlayingGame>>,
+    mut tuning: ResMut<WheelTuning>,
+    mut chat: ResMut<Chat>,
+    time: Res<Time>,
+) {
+    for TuneWheel(settings) in asked.read() {
+        let playing = *mode.get() == Mode::Playing;
+        let driving = game.as_deref_mut().filter(|game| playing && !game.watching);
+        let said = match driving.and_then(|game| Some((game.wheel?, game))) {
+            Some((wheel, game)) => tune(game, wheel, settings, &mut tuning),
+            None => "* /wheel tunes the steering of a driving game (Out Run, Cruis'n USA), \
+                     sitting at it."
+                .to_string(),
+        };
+        chat.say(said, time.elapsed_secs());
+    }
+}
+
+/// What `/wheel <settings>` does to the `wheel` of the driving game being played, and says.
+fn tune(game: &mut PlayingGame, wheel: Wheel, settings: &str, tuning: &mut WheelTuning) -> String {
+    if settings.trim().is_empty() {
+        return format!(
+            "* {}'s wheel: {} (seconds to full lock held, seconds back to the middle let go; \
+             curve 1 turns evenly, 2 barely for a tap). /wheel lock=0.5 changes any of them. \
+             For games.ron: {}",
+            game.title,
+            wheel.ramp(),
+            wheel.to_ron()
+        );
+    }
+    match wheel.tuned(settings) {
+        Err(error) => format!("* {error}. E.g. /wheel lock=0.6 back=0.1 curve=2"),
+        Ok(tuned) => {
+            game.wheel = Some(tuned);
+            tuning.0.insert(game.rom.clone(), tuned);
+            emulator_wheel(&to_json(&tuned));
+            format!(
+                "* {}'s wheel now: {} (until the page reloads). For games.ron: {}",
+                game.title,
+                tuned.ramp(),
+                tuned.to_ron()
+            )
+        }
     }
 }
 

@@ -34,7 +34,7 @@ node_modules/
 
 .DS_Store
 
-# MAME (Namco System 12 / System 23) build output and checkout (mame/build.sh)
+# MAME (Namco System 12 / System 23, Midway V-Unit) build output and checkout (mame/build.sh)
 /mame/dist
 /mame/.cache
 

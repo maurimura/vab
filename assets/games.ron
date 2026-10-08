@@ -9,16 +9,21 @@
 // player 1's controls; `lockstep` games play online without rollback (a Sega core's save state is
 // too big to take every frame); `gun` games are played with a lightgun: the mouse or a finger aims,
 // with a crosshair on the screen; `linked` games are a twin cabinet, two boards joined by the
-// game's own link, one per player and browser (Time Crisis II's co-op; both games start over when
-// the second player sits). `arcade` games are linked cabinets, as in an arcade: every player's
-// browser runs only their own cabinet, from a state for their seat (/roms/<rom>.seat<n>.state, n
-// from 0), and the cabinets talk through their link boards, so the game's own rules say who races
-// whom (Daytona USA: up to 8, joining at the circuit select). `options` are settings for the core,
-// made before the game loads (the `_<core>_set` its module exports; an arcade game's also get
-// `seat`, from the player's seat); with a `view` among them one machine has a screen per seat, and
-// each player sees their own. `cabinets` names the cabinet skins drawn for the game
-// (tiles/objects/cabinet_<skin>_*): the editor gives a cabinet in one of them the game. A game
-// without a skin yet stands in a plain cabinet, its game picked in the editor.
+// game's own link, one per player and browser (Time Crisis II's co-op; both games start over
+// when the second player sits). `arcade` games are linked cabinets, as in an arcade: every
+// player's browser runs only their own cabinet, from a state for their seat
+// (/roms/<rom>.seat<n>.state, n from 0), and the cabinets talk through their link boards, so the
+// game's own rules say who races whom (Daytona USA: up to 8, joining at the circuit select).
+// `options` are settings for the core, made before the game loads (the `_<core>_set` its module
+// exports; an arcade game's also get `seat`, from the player's seat); with a `view` among them
+// one machine has a screen per seat, and each player sees their own. `cabinets` names the
+// cabinet skins drawn for the game (tiles/objects/cabinet_<skin>_*): the editor gives a cabinet
+// in one of them the game. A game without a skin yet stands in a plain cabinet, its game picked
+// in the editor. A `wheel` game is driven with a steering wheel the arrows turn: `lock` seconds
+// from the middle to full lock with an arrow held, along a `curve` (1 even, 2 a tap barely turns
+// it), and `back` seconds from full lock to the middle once let go; `span` is where on the core's
+// analog stick (0 to 32767) its wheel turns, all of it unless said (Out Run's FBNeo core has dead
+// zones). `/wheel` in the chat tries other numbers while driving and prints the line for here.
 [
     (rom: "mk2", core: "midway", title: "mkII", cabinets: ["mk2_v2"]),
     (rom: "umk3", core: "midway", title: "Ultimate Mortal Kombat 3", cabinets: ["umk3"]),
@@ -43,4 +48,6 @@
     (rom: "tekken3je1", core: "mame", title: "Tekken 3", lockstep: true, cabinets: ["tekken3"]),
     (rom: "timecrs2", core: "mame", title: "Time Crisis II", players: 2, gun: true, linked: true, cabinets: ["timecrs2"]),
     (rom: "vtennisg", core: "flycast", title: "Virtua Tennis", lockstep: true, files: ["vtennisg/gds-0011.chd"], options: {"vab_warmup": "300"}, cabinets: ["vtennis"]),
+    (rom: "outrun", core: "outrun", title: "Out Run", players: 1, wheel: Some((lock: 0.3, back: 0.3, curve: 1.0, span: (10600, 23500))), cabinets: ["outrun"]),
+    (rom: "crusnusa41", core: "mame", title: "Cruis'n USA", players: 1, wheel: Some((lock: 0.6, back: 0.1, curve: 2.0, span: (5200, 28900))), cabinets: ["crusnusa"]),
 ]

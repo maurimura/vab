@@ -7,17 +7,20 @@
 // Player 1 also streams the game to a watcher (another worker, its stream arriving in order
 // like through the room), and a machine here plays the same stream: every 1.5 s player 1 sends
 // a state as for a new watcher, which must match what that machine got to by playing the
-// stream up to there.
+// stream up to there. With PLAYERS=1 (a one-player game, Out Run) player 1 only plays alone,
+// streaming, for twice as long.
 //
 //   node emulator/netplay-check.mjs <core.mjs> <rom.zip> [state] [file ...]
 //   PLAYERS=4 node emulator/netplay-check.mjs emulator/dist/konami/fbneo.mjs ~/Downloads/ssriders.zip emulator/dist/ssriders.state
+//   PLAYERS=1 WHEEL=1 node emulator/netplay-check.mjs emulator/dist/outrun/fbneo.mjs ~/Downloads/outrun.zip emulator/dist/outrun.state
 //
 // The files after the state go with the ROM set as the page puts them (a BIOS set next to it, a
 // NAOMI game's disc at its path after a `roms/` folder: snapshot.mjs). Env: PLAYERS (2),
 // SECONDS per stage (10), LATENCY one way in ms (40), JITTER ms (10), LOSS fraction (0.02),
-// TURNS=1 for turn-based games, GUN=1 for lightgun games, LOCKSTEP=1 for games played in
-// lockstep (`lockstep` in assets/games.ron), BREAK=1 hands the last player the start-up state
-// instead of the game (must desync). Needs the netplay module built: make netplay.
+// TURNS=1 for turn-based games, GUN=1 for lightgun games, WHEEL=1 for a driving game (its wheel
+// as assets/games.ron has it for the ROM set: the arrows turn it), LOCKSTEP=1 for games played
+// in lockstep (`lockstep` in assets/games.ron), BREAK=1 hands the last player the start-up
+// state instead of the game (must desync). Needs the netplay module built: make netplay.
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -58,6 +61,18 @@ if (!isMainThread) {
   const LOSS = Number(process.env.LOSS ?? 0.02);
   const url = (path) => pathToFileURL(resolve(path)).href;
   const wait = (seconds) => new Promise((done) => setTimeout(done, seconds * 1000));
+  /** A game's `wheel` in assets/games.ron, as the page passes it on: { lock, back, curve, span }. */
+  async function gameWheel(rom) {
+    const games = await readFile(new URL("../assets/games.ron", import.meta.url), "utf8");
+    const line = games.split("\n").find((line) => line.includes(`rom: "${rom}"`)) ?? "";
+    const found = line.match(/wheel: Some\(\(lock: ([\d.]+), back: ([\d.]+), curve: ([\d.]+)(?:, span: \((\d+), (\d+)\))?\)\)/);
+    if (!found) throw new Error(`${rom}: no wheel in assets/games.ron`);
+    const [lock, back, curve, from = 0, to = 32767] = found.slice(1).map((n) => (n === undefined ? n : Number(n)));
+    return { lock, back, curve, span: [from, to] };
+  }
+  // A driving game's wheel: the arrows turn it in the workers, and the machine here reads it
+  // from the stream's inputs as theirs do.
+  const wheel = process.env.WHEEL === "1" ? await gameWheel(basename(romPath, ".zip")) : undefined;
 
   const players = [];
   const seated = () => players.filter((player) => !player.left);
@@ -82,6 +97,7 @@ if (!isMainThread) {
     turns: process.env.TURNS === '1',
     lockstep: LOCKSTEP,
     gun: process.env.GUN === '1',
+    wheel,
     hold: true,
   });
   // In order, each LATENCY ± JITTER ms after the one before at the earliest. One timer at a
@@ -106,9 +122,12 @@ if (!isMainThread) {
     core.netplay = true;
     core.turns = process.env.TURNS === '1';
     core.gun = process.env.GUN === '1';
+    core.wheel = wheel;
     for (const path of filePaths) core.addFile(pathUnderRoms(resolve(path)), await readFile(path));
     core.loadGame(basename(romPath), await readFile(romPath));
-    core.present = false;
+    // Drawn, as a watcher's worker draws every frame it plays: Out Run's sprite chip writes
+    // back to its RAM as it draws.
+    core.present = true;
     return core;
   };
   const check = { core: await boot(), scratch: await boot(), stream: -1, frame: 0, matched: 0, mismatched: 0, states: 0 };
@@ -189,6 +208,7 @@ if (!isMainThread) {
         turns: process.env.TURNS === '1',
         lockstep: LOCKSTEP,
         gun: process.env.GUN === '1',
+        wheel,
         port: inside,
         hold,
       },
@@ -245,15 +265,17 @@ if (!isMainThread) {
     await wait(SECONDS);
     report(`${seat + 1} players:`);
   }
-  const leaving = players[1];
-  leaving.left = true;
-  await leaving.worker.terminate();
-  await handOver();
+  if (PLAYERS > 1) {
+    const leaving = players[1];
+    leaving.left = true;
+    await leaving.worker.terminate();
+    await handOver();
+  }
   const before = seated().map((player) => player.frames);
-  await wait(SECONDS);
-  report("player 2 left:");
+  await wait(PLAYERS > 1 ? SECONDS : SECONDS * 2);
+  report(PLAYERS > 1 ? "player 2 left:" : "1 player:");
   const stuck = seated().some((player, i) => player.frames - before[i] < SECONDS * 30);
-  if (stuck) players[0].errors.push("stopped after player 2 left");
+  if (stuck) players[0].errors.push(PLAYERS > 1 ? "stopped after player 2 left" : "stopped");
   clearInterval(mashing);
   clearInterval(snapshots);
   for (const player of seated()) await player.worker.terminate();
