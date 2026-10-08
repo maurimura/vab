@@ -37,3 +37,7 @@ node_modules/
 # MAME (Namco System 12 / System 23, Midway V-Unit) build output and checkout (mame/build.sh)
 /mame/dist
 /mame/.cache
+
+# Flycast (Sega NAOMI) build output and checkout (flycast/build.sh)
+/flycast/dist
+/flycast/.cache

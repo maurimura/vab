@@ -161,10 +161,16 @@
       /**
        * Where a game's core is: an FBNeo core, or a core built on its own, under its name:
        * Supermodel for the Sega Model 3 games, Daytona USA's Sega Model 2, MAME for the Namco
-       * games (Tekken 3, Time Crisis II).
+       * games (Tekken 3, Time Crisis II), Flycast for the Sega NAOMI ones (Virtua Tennis).
        */
-      const OWN_CORES = ["supermodel", "daytona", "mame"];
+      const OWN_CORES = ["supermodel", "daytona", "mame", "flycast"];
       const coreUrl = (core) => (OWN_CORES.includes(core) ? `/${core}/${core}.mjs` : `/fbneo/${core}/fbneo.mjs`);
+      /**
+       * What a game's core needs next to its ROM set, from R2: its BIOS set, and its own `files`
+       * (world::Game), paths under /roms/ that may have folders (a NAOMI game's disc), which the
+       * worker puts at the same paths in the core's file system.
+       */
+      const romFiles = ({ bios, files = [] }) => [...(bios ? [`/roms/${bios}.zip`] : []), ...files.map((file) => `/roms/${file}`)];
 
       // Who this player muted: by id while they're here, and by name for next time (a cookie,
       // the latest 50). Whether their own microphone is off is remembered too.
@@ -508,15 +514,16 @@
           packets.port1.onmessage = ({ data: [seat, packet] }) =>
             this.#links.get(this.#players.get(seat))?.send(packet);
 
-          // Cores, ROM sets, BIOS sets and start-up states (emulator/snapshot.mjs) come from R2.
+          // Cores, ROM sets, BIOS sets, a game's other files and start-up states
+          // (emulator/snapshot.mjs) come from R2.
           // Alone we start the game; otherwise the others hand theirs over.
-          const { core, rom, bios, turns, lockstep, gun, linked, options, wheel } = this.#game;
+          const { core, rom, turns, lockstep, gun, linked, options, wheel } = this.#game;
           const alone = this.#seated.size === 1;
           const start = {
             type: "start",
             core: coreUrl(core),
             rom: `/roms/${rom}.zip`,
-            files: bios ? [`/roms/${bios}.zip`] : [],
+            files: romFiles(this.#game),
             state: `/roms/${rom}.state`,
             seat,
             turns,
@@ -756,7 +763,7 @@
         /** The controls as Bevy last sent them (a u32), for what was just pressed. */
         #input = 0;
 
-        constructor({ core, rom, bios, turns, gun, linked, cabinet, options, wheel }) {
+        constructor({ core, rom, bios, files, turns, gun, linked, cabinet, options, wheel }) {
           this.cabinet = cabinet;
           if ("view" in options) this.#view = 0;
           this.#worker = emulatorWorker((data) => {
@@ -767,7 +774,7 @@
             type: "start",
             core: coreUrl(core),
             rom: `/roms/${rom}.zip`,
-            files: bios ? [`/roms/${bios}.zip`] : [],
+            files: romFiles({ bios, files }),
             turns,
             gun,
             // The streamed board's state says whether it's linked, and on which side.
@@ -956,6 +963,7 @@
               type: "start",
               core: coreUrl(core),
               rom: `/roms/${rom}.zip`,
+              files: romFiles(this.#game),
               state: `/roms/${rom}.seat${seat}.state`,
               seat,
               arcade: true,
@@ -1099,7 +1107,7 @@
             this.#ready = true;
             if (this.#player !== undefined) this.#ask(true);
           });
-          this.#worker.postMessage({ type: "start", core: coreUrl(core), rom: `/roms/${rom}.zip`, arcade: true, options, wheel, hold: true });
+          this.#worker.postMessage({ type: "start", core: coreUrl(core), rom: `/roms/${rom}.zip`, files: romFiles(game), arcade: true, options, wheel, hold: true });
         }
 
         /** Who sits at the cabinet changed: if the player we watch left, another one's cabinet. */
@@ -1193,9 +1201,9 @@
       };
 
       let play;
-      window.emulatorPlay = async (core, rom, bios, cabinet, turns, players, lockstep, gun, linked, options, arcade, wheel) => {
+      window.emulatorPlay = async (core, rom, bios, files, cabinet, turns, players, lockstep, gun, linked, options, arcade, wheel) => {
         play?.stop();
-        const game = { core, rom, bios, turns, players, cabinet, lockstep, gun, linked, options: coreOptions(options), wheel: gameWheel(wheel) };
+        const game = { core, rom, bios, files, turns, players, cabinet, lockstep, gun, linked, options: coreOptions(options), wheel: gameWheel(wheel) };
         const current = (play = arcade ? new Arcade(game) : new Play(game));
         stayAwake(true);
         game_status("Taking a seat...");
@@ -1204,9 +1212,9 @@
         room.sit(cabinet, players);
         current.watchers(room.watchers.get(cabinet) ?? []);
       };
-      window.emulatorWatch = (core, rom, bios, cabinet, turns, gun, linked, options, arcade, wheel) => {
+      window.emulatorWatch = (core, rom, bios, files, cabinet, turns, gun, linked, options, arcade, wheel) => {
         play?.stop();
-        const game = { core, rom, bios, turns, gun, linked, cabinet, options: coreOptions(options), wheel: gameWheel(wheel) };
+        const game = { core, rom, bios, files, turns, gun, linked, cabinet, options: coreOptions(options), wheel: gameWheel(wheel) };
         const current = (play = arcade ? new ArcadeWatch(game) : new Watch(game));
         stayAwake(true);
         game_status("Watching. Loading the game...");

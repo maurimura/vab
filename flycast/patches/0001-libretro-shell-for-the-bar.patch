@@ -1,0 +1,867 @@
+Arcade bar: Flycast's libretro shell for our frontend (web/emulator/libretro.js), not EmulatorJS.
+
+Applied after retrom-project/flycast-wasm's patches (see build.sh), whose wasm-jit-phase1 patch
+made retro_run an EmulatorJS player: a wall-clock pacer that ran 0, 1 or 2 emulated frames per call
+(owed frames carried with a fractional part, an emulation speed trimmed by +-0.5% to keep its
+AudioWorklet queue filled), a HUD written into the page's DOM and its window._flyLog, and the
+sound pushed from inside the core to an AudioWorklet of its own (shell/libretro/audiostream.cpp,
+EM_JS fly_worklet_push, which needs `window`). The bar's worker paces frames itself, runs exactly
+one per retro_run, replays frames for rollback and plays the sound it is given, so:
+
+- retro_run: the pacer and the HUD are gone; it emulates once (core/emulator.cpp then stops the
+  SH4 at the next vblank: patches/0002) and reports the frame (or a duplicate) as upstream does.
+- audiostream.cpp: no AudioWorklet; the samples go to audio_batch_cb, as upstream.
+- retro_get_system_av_info: the rates the machine really runs at. The frontend reads them once,
+  at load, and paces every frame and resamples all the sound by them: a NAOMI's 31 kHz video
+  makes a vblank every 3344830 SH4 cycles (59.794 Hz, not the NTSC 59.94 reported), and the AICA a
+  sample every 4535 cycles (44101.4 Hz).
+- States, saved and loaded between two retro_runs on the thread that runs the machine: without
+  emu.stop()/emu.start() around them (stopping wrote the NVRAM files and fired the pause/resume
+  events at every save), and with one size for the whole game (a state's size moves with the
+  PowerVR's TA contexts, which made rollback slots allocated once too small): the first size plus
+  room for a whole TA context (8 MB), the unused rest zeroed so a machine always makes the same
+  bytes.
+- Hooks for flycast/shim/vab_flycast.cpp, which does what RetroArch would for a core that draws
+  with OpenGL and our frontend can't (it has no RETRO_ENVIRONMENT_SET_HW_RENDER): the environment
+  callback and the video callback are wrapped by the shim (vab_wrap_environment answers
+  SET_HW_RENDER and the core options; vab_wrap_video reads frames back from WebGL), once the
+  game is loaded vab_game_loaded() makes the context and calls the core's context_reset, and at
+  the start of each retro_run vab_frame_start() collects a frame read back earlier, before this
+  frame's GL commands are queued.
+
+diff --git a/shell/libretro/libretro.cpp b/shell/libretro/libretro.cpp
+--- a/shell/libretro/libretro.cpp
++++ b/shell/libretro/libretro.cpp
+@@ -277,9 +277,22 @@
+ static bool disc_tray_open = false;
+ 
+ static bool set_variable_visibility(void);
++
++#ifdef __EMSCRIPTEN__
++// The arcade bar's shim (flycast/shim/vab_flycast.cpp, patches/0001): it stands between the core
++// and our frontend, which has no OpenGL and no RETRO_ENVIRONMENT_SET_HW_RENDER of its own.
++extern "C" retro_environment_t vab_wrap_environment(retro_environment_t frontend);
++extern "C" retro_video_refresh_t vab_wrap_video(retro_video_refresh_t frontend);
++extern "C" void vab_game_loaded(void);
++extern "C" void vab_frame_start(void);
++static size_t vab_state_size; // retro_serialize_size, once per game
++#endif
+ 
+ void retro_set_video_refresh(retro_video_refresh_t cb)
+ {
++#ifdef __EMSCRIPTEN__
++	cb = vab_wrap_video(cb);
++#endif
+ 	video_cb = cb;
+ }
+ 
+@@ -317,6 +330,9 @@
+ 
+ void retro_set_environment(retro_environment_t cb)
+ {
++#ifdef __EMSCRIPTEN__
++	cb = vab_wrap_environment(cb);
++#endif
+ 	environ_cb = cb;
+ 
+ 	// An annoyance: retro_set_environment() can be called
+@@ -752,6 +768,15 @@
+ 	// 240p NTSC rate
+ 	if (framebufferHeight == 240 && !SPG_CONTROL.isNTSC() && !SPG_CONTROL.isPAL())
+ 		fps = 59.82366;
++#ifdef __EMSCRIPTEN__
++	// Arcade bar: the rates the machine really runs at, since the frontend reads them once, at
++	// load, and paces every frame and resamples all the sound by them. A NAOMI's (and an
++	// Atomiswave's) BIOS sets the video to 31 kHz VGA: a vblank every 3344830 SH4 cycles (measured:
++	// 59.794 Hz, not the 59.94 above), and the AICA makes a sample every 4535 cycles (44101.4 Hz).
++	sample_rate = 200000000.0 / 4535.0;
++	if (settings.platform.isArcade())
++		fps = 200000000.0 / 3344830.0;
++#endif
+ 
+ 	setGameGeometry(avinfo.geometry);
+ 	avinfo.timing.sample_rate = sample_rate;
+@@ -1254,504 +1279,13 @@
+ 	}
+ }
+ 
+-#ifdef __EMSCRIPTEN__
+-// Duration of the previous retro_run's emulation section — the wall-clock
+-// pacer's headroom gate (catch-up frames only when the machine can afford
+-// them).
+-static double fly_last_emu_ms = 0;
+-// Frame debt in vblank units + the (trim-adjusted) target rate. File scope:
+-// the pacer block accrues debt, the render loop repays it with measured
+-// guest time.
+-static double fly_owed = 0;
+-// ★ DRC REPAIR (2026-07-24): repayment must be denominated in UNTRIMMED
+-// native fps. The 2026-07-17 guest-time rework credited debt at the trimmed
+-// rate — with accrual also at the trimmed rate, the trim cancels out of the
+-// steady state (balance = exactly native vblanks/wall-sec, production pinned
+-// to 44100 no matter the trim; measured p=44142 median in locked-60 with the
+-// queue at half-full and the trim pinned at max). Repaying at native rate
+-// restores the designed ±0.5% game-speed steer: queue refills at ~220/s.
+-static double fly_repay_fps = 59.94;
+-static double fly_base_fps = 59.94;
+-#endif
+ 
+ void retro_run()
+ {
+-#if defined(__EMSCRIPTEN__) && !defined(JIT_PROD_BUILD)
+-	// Auto-run SHIL op tests on first retro_run() call (dev builds only).
+-	// GATED OFF: these harnesses (esp. singlestep) compile + execute synthetic
+-	// blocks and run hundreds of programs on the FIRST frame; they do not fully
+-	// restore global JIT/dispatch state, which black-screens boot. Disabled by
+-	// default so games boot normally — run them deliberately via the exported
+-	// _run_*_tests() functions in a controlled capture instead.
+-	static bool g_autorun_boot_tests = false;
+-	{
+-		static bool shil_tests_ran = false;
+-		if (g_autorun_boot_tests && !shil_tests_ran) {
+-			shil_tests_ran = true;
+-			int failures = EM_ASM_INT({ return Module._run_shil_op_tests(); });
+-			EM_ASM({ console.log('[SHIL-TEST] Auto-run complete: ' + $0 + ' failure(s)'); }, failures);
+-			int disp_failures = EM_ASM_INT({ return Module._run_dispatch_tests(); });
+-			EM_ASM({ console.log('[DISP-TEST] Auto-run complete: ' + $0 + ' failure(s)'); }, disp_failures);
+-			int rte_failures = EM_ASM_INT({ return Module._run_rte_tests(); });
+-			EM_ASM({ console.log('[RTE-TEST] Auto-run complete: ' + $0 + ' failure(s)'); }, rte_failures);
+-			int ss_failures = EM_ASM_INT({ return Module._run_singlestep_tests(); });
+-			EM_ASM({ console.log('[SS-TEST] Auto-run complete: ' + $0 + ' failure(s)'); }, ss_failures);
+-		}
+-	}
+-
+-	// Freeze watchdog + progress beacon.
+-	//
+-	// Primary signal: render_called (g_fly_rend_start_render_calls). If
+-	// this stops advancing for 3s+, the game stopped presenting frames —
+-	// that's the user-visible "frozen/halted" state, regardless of whether
+-	// SH4 block dispatch is still happening.
+-	//
+-	// Also emits a periodic progress beacon every 2s with delta stats
+-	// (blocks_rate, render_rate, cycle delta). Catches gradual slowdowns
+-	// that don't trip the hard freeze threshold.
+-	{
+-		static bool freeze_fired = false;
+-		static u32 last_renders = 0;
+-		static u32 last_blocks = 0;
+-		static int  last_cycle = 0;
+-		static double last_render_progress_ms = 0;
+-		static double beacon_last_ms = 0;
+-		static u32 beacon_blocks_base = 0;
+-		static u32 beacon_renders_base = 0;
+-		static double hidden_since_ms = 0;
+-
+-		double now_ms = emscripten_get_now();
+-		int hidden = EM_ASM_INT({
+-			return (typeof document !== 'undefined' && document.hidden) ? 1 : 0;
+-		});
+-		if (hidden) {
+-			if (hidden_since_ms == 0) hidden_since_ms = now_ms;
+-		} else if (hidden_since_ms > 0) {
+-			double skew = now_ms - hidden_since_ms;
+-			last_render_progress_ms += skew;
+-			beacon_last_ms += skew;
+-			hidden_since_ms = 0;
+-		}
+-
+-		Sh4Context& ctx = Sh4cntx;
+-		u32 cur_renders = g_fly_rend_start_render_calls;
+-		u32 cur_blocks  = g_wasm_block_count;
+-		int cur_cycle   = ctx.cycle_counter;
+-
+-		// --- Progress beacon (every 2s, always emitted, even when rendering OK) ---
+-		// Writes to window._flyLog (JS array) instead of console.error, so the
+-		// user can retrieve clean output via `copy(window._flyLog.join('\n'))`
+-		// without drowning in error-level spam from the rest of the engine.
+-		if (!hidden && (beacon_last_ms == 0 || now_ms - beacon_last_ms >= 2000.0)) {
+-			static u32 beacon_asic_base = 0;
+-			static u32 beacon_vbin_base = 0;
+-			static u32 beacon_exc_base = 0;
+-			static u32 beacon_rte_base = 0;
+-			static u64 beacon_sched_base = 0;
+-			if (beacon_last_ms > 0) {
+-				double dt_ms = now_ms - beacon_last_ms;
+-				u32 dblocks = cur_blocks - beacon_blocks_base;
+-				u32 drend   = cur_renders - beacon_renders_base;
+-				u32 dasic   = g_fly_asic_total - beacon_asic_base;
+-				u32 dvbin   = g_fly_asic_vblank_in - beacon_vbin_base;
+-				u32 dexc    = g_fly_exc_total - beacon_exc_base;
+-				u32 drte    = g_fly_rte_count - beacon_rte_base;
+-				u64 sched_now = sh4_sched_now64();
+-				u32 dsched  = (u32)(sched_now - beacon_sched_base);
+-				u32 buf = (u32)retro_audio_buffer_fill();
+-				EM_ASM({
+-					if (!window._flyLog) window._flyLog = [];
+-					window._flyLog.push('[BEACON] dt=' + $0.toFixed(0) + 'ms'
+-						+ ' blk=' + $1 + '/s'
+-						+ ' rend=' + $2 + '/s'
+-						+ ' vbin=' + $3
+-						+ ' asic=' + $4
+-						+ ' exc=' + $5
+-						+ ' rte=' + $6
+-						+ ' sched+=' + $7
+-						+ ' pc=0x' + ($8>>>0).toString(16)
+-						+ ' cc=' + $9
+-						+ ' ipend=0x' + ($10>>>0).toString(16));
+-					if (window._flyLog.length > 500) window._flyLog.shift();
+-				}, dt_ms,
+-				   (u32)(dblocks * 1000.0 / dt_ms),
+-				   (u32)(drend   * 1000.0 / dt_ms),
+-				   dvbin, dasic, dexc, drte, dsched,
+-				   ctx.pc, cur_cycle, ctx.interrupt_pend);
+-				(void)buf;
+-			}
+-			beacon_last_ms = now_ms;
+-			beacon_blocks_base = cur_blocks;
+-			beacon_renders_base = cur_renders;
+-			beacon_asic_base = g_fly_asic_total;
+-			beacon_vbin_base = g_fly_asic_vblank_in;
+-			beacon_exc_base = g_fly_exc_total;
+-			beacon_rte_base = g_fly_rte_count;
+-			beacon_sched_base = sh4_sched_now64();
+-		}
+-
+-		// --- Hard freeze watchdog: render_called stalled for 3s ---
+-		if (!freeze_fired) {
+-			if (cur_renders != last_renders) {
+-				last_renders = cur_renders;
+-				last_render_progress_ms = now_ms;
+-			} else if (last_render_progress_ms > 0 && !hidden
+-			           && (now_ms - last_render_progress_ms) > 3000.0) {
+-				freeze_fired = true;
+-				double stall_ms = now_ms - last_render_progress_ms;
+-				FLY_EVT(FLY_EVT_FREEZE_DETECTED,
+-					(u32)stall_ms, ctx.pc,
+-					*(u32*)&ctx.sr, ctx.interrupt_pend);
+-				EM_ASM({
+-					if (!window._flyLog) window._flyLog = [];
+-					var L = window._flyLog;
+-					L.push('[FREEZE] render_called stalled ' + $0.toFixed(0) + 'ms (blocks_still=' + $10 + ')');
+-					L.push('[FREEZE] ctx.pc=0x' + ($1>>>0).toString(16)
+-						+ ' sr=0x' + ($2>>>0).toString(16)
+-						+ ' interrupt_pend=0x' + ($3>>>0).toString(16));
+-					L.push('[FREEZE] cycle_counter=' + $4
+-						+ ' sh4_sched_next=' + $5
+-						+ ' jdyn=0x' + ($6>>>0).toString(16));
+-					L.push('[FREEZE] gbr=0x' + ($7>>>0).toString(16)
+-						+ ' vbr=0x' + ($8>>>0).toString(16)
+-						+ ' pr=0x' + ($9>>>0).toString(16));
+-					// Surface one console.error line so the user notices it fired.
+-					console.error('[FREEZE] Triggered. Run: copy(window._flyLog.join("\\n"))');
+-				}, stall_ms, ctx.pc, *(u32*)&ctx.sr, ctx.interrupt_pend,
+-				   ctx.cycle_counter, ctx.sh4_sched_next, ctx.jdyn,
+-				   ctx.gbr, ctx.vbr, ctx.pr,
+-				   (u32)(cur_blocks - last_blocks));
+-				EM_ASM({
+-					window._flyLog.push('[FREEZE] render_called=' + $0
+-						+ ' audio_buffer=' + $1);
+-				}, cur_renders, (u32)retro_audio_buffer_fill());
+-
+-				// Interrupt counters
+-				EM_ASM({
+-					window._flyLog.push('[FREEZE] asic_total=' + $0
+-						+ ' vblank_in=' + $1
+-						+ ' vblank_out=' + $2
+-						+ ' hblank=' + $3
+-						+ ' maple=' + $4);
+-				}, g_fly_asic_total, g_fly_asic_vblank_in,
+-				   g_fly_asic_vblank_out, g_fly_asic_hblank, g_fly_asic_maple);
+-				// Scheduler state
+-				EM_ASM({
+-					window._flyLog.push('[FREEZE] sched_now=' + $0);
+-				}, (u32)sh4_sched_now64());
+-
+-				// Exception histogram + last N (epc, expEvn) pairs.
+-				// rte_interp is only interpreter-path RTEs (usually wrong ~0).
+-				// bl_clear is the authoritative "successful exception recovery"
+-				// counter — catches both RTE and direct-SR-write paths.
+-				EM_ASM({
+-					window._flyLog.push('[FREEZE] Do_Exception total=' + $0
+-						+ ' rte_interp=' + $1
+-						+ ' bl_set=' + $2
+-						+ ' bl_clear=' + $3);
+-				}, g_fly_exc_total, g_fly_rte_count,
+-				   g_fly_bl_set_count, g_fly_bl_clear_count);
+-				// Walk the histogram for any non-zero buckets
+-				for (u32 i = 0; i < 1024; i++) {
+-					if (g_fly_exc_count[i] > 0) {
+-						EM_ASM({
+-							window._flyLog.push('[FREEZE]   exc expEvn=0x'
+-								+ ($0>>>0).toString(16) + ' count=' + $1);
+-						}, i, g_fly_exc_count[i]);
+-					}
+-				}
+-				// Dump last 32 (epc, expEvn) pairs + the SH4 opcode word at each epc.
+-				// Reading mem_b directly for RAM addrs (area 3, bit pattern 0x8C or 0xAC).
+-				u32 ehead = g_fly_exc_trace_head;
+-				u32 ecount = ehead < 32 ? ehead : 32;
+-				EM_ASM({
+-					window._flyLog.push('[FREEZE] exception trace (last ' + $0 + '):');
+-				}, ecount);
+-				for (u32 i = 0; i < ecount; i++) {
+-					u32 idx = (ehead - ecount + i) & 31;
+-					u32 epc = g_fly_exc_trace_epc[idx];
+-					u32 op = 0xFFFF;
+-					u32 phys = epc & 0x1FFFFFFF;
+-					if ((phys >> 26) == 3) { // main RAM (area 3)
+-						op = *(u16*)&mem_b[phys & RAM_MASK];
+-					}
+-					EM_ASM({
+-						window._flyLog.push('[FREEZE]   exc#' + $0
+-							+ ' epc=0x' + ($1>>>0).toString(16)
+-							+ ' evn=0x' + ($2>>>0).toString(16)
+-							+ ' op=0x' + ($3>>>0).toString(16).padStart(4,'0'));
+-					}, (u32)(i - ecount), epc, g_fly_exc_trace_evn[idx], op);
+-				}
+-
+-				// First-caller lookup for the last faulting PC (the one
+-				// that kicked off this exception loop).
+-				if (ehead > 0) {
+-					u32 last_epc = g_fly_exc_trace_epc[(ehead - 1) & 31];
+-					fly_dump_new_pcs(last_epc);
+-				}
+-				// PC trace snapshot taken at the very first illegal fault —
+-				// this is the ACTUAL caller chain, not the fault-loop.
+-				fly_dump_first_exc_trace();
+-
+-				// RAM dumps around suspect addresses
+-				auto dump_ram_range = [](const char* label, u32 start, u32 words) {
+-					EM_ASM({
+-						window._flyLog.push('[FREEZE] RAM ' + UTF8ToString($0)
+-							+ ' at 0x' + ($1>>>0).toString(16) + ':');
+-					}, label, 0x8C000000 | start);
+-					for (u32 i = 0; i < words; i++) {
+-						u32 off = start + i * 2;
+-						u16 w = *(u16*)&mem_b[off];
+-						EM_ASM({
+-							window._flyLog.push('[FREEZE]   [0x' + ($0>>>0).toString(16)
+-								+ '] = 0x' + ($1>>>0).toString(16).padStart(4,'0'));
+-						}, 0x8C000000 | off, (u32)w);
+-					}
+-				};
+-				dump_ram_range("boot/bios vectors", 0x000000, 24);
+-				dump_ram_range("around faulting PC", 0x1b89a0, 16);
+-
+-				fly_dump_pc_trace();
+-			}
+-			last_blocks = cur_blocks;
+-			(void)last_cycle; (void)cur_cycle;
+-		}
+-	}
+-#endif
+-#ifdef __EMSCRIPTEN__
+-	// ★ WALL-CLOCK PACER (2026-07-17): run DC frames according to REAL TIME
+-	// at base_fps, decoupled from display Hz. The previous 1-frame-per-rAF
+-	// pacer tied emulation speed to the display (overspeed on >60Hz screens,
+-	// permanent slowdown on janky/dropped rAFs — the latter starving audio).
+-	// Per retro_run: accumulate owed frames with fractional carry; run 0
+-	// (display faster than DC — present dupe), 1 (normal), or 2 (bounded
+-	// catch-up). Anti-spiral (the old unbounded catch-up death): catch-up
+-	// only when the previous run had headroom, and debt beyond 3 frames is
+-	// SHED (tab switch / hard jank) instead of chased.
+-	int fly_frames_to_run = 1;
+-	{
+-		static double prev_time = 0;
+-		static int frame_count = 0;
+-		static double hud_last_update = 0;
+-		static double frame_time_min = 999;
+-		static double frame_time_max = 0;
+-		static double frame_time_sum = 0;
+-
+-		double base_fps = SPG_CONTROL.isPAL() ? 50.0 : 59.94;
+-		fly_repay_fps = base_fps;   // native, BEFORE the trim below
+-		// ★ DYNAMIC RATE TRIM (2026-07-17): the wall clock and the audio
+-		// hardware's crystal tick at slightly different rates, so a fixed-
+-		// rate producer drifts the worklet queue until it runs dry (skipped
+-		// beat fragments) or overfills. Steer emulation speed ±0.5%
+-		// (imperceptible) to hold the queue at ~4096 frames (~93ms).
+-		{
+-			int fly_wq = EM_ASM_INT({
+-				var A = Module._flyAud;
+-				return (A && A.ready) ? (A.stats.avail | 0) : -1;
+-			});
+-			if (fly_wq >= 0) {
+-				// ★ SATURATING DRC (2026-07-24): the proportional form
+-				// asymptotes — +88/s at half-empty but only ~+25/s by 3500,
+-				// so the queue never finishes the climb before the next dip
+-				// (eyes: "reaches mid-3000s, equally often in 2000s").
+-				// Below the near-band spend the full +-0.5% (the cap is the
+-				// inaudibility law and is unchanged); proportional only
+-				// inside the last 512 so it settles without hunting.
+-				double trim;
+-				if (fly_wq < 4096 - 512) {
+-					trim = 0.005;
+-				} else {
+-					double err = ((double)fly_wq - 4096.0) / 4096.0;
+-					trim = -err * 0.04;
+-				}
+-				if (trim > 0.005) trim = 0.005;
+-				if (trim < -0.005) trim = -0.005;
+-				base_fps *= 1.0 + trim;
+-			}
+-		}
+-		fly_base_fps = base_fps;   // render loop repays debt at this rate
+-		double period_ms = 1000.0 / base_fps;
+-		double now = emscripten_get_now();
+-		double elapsed = (prev_time > 0) ? (now - prev_time) : 0;
+-		prev_time = now;
+-
+-		if (elapsed > 0)
+-			fly_owed += elapsed / period_ms;
+-		else
+-			fly_owed = 1;
+-		if (fly_owed > 3)
+-			fly_owed = 1;                       // shed unpayable debt
+-		fly_frames_to_run = (int)fly_owed;
+-		if (fly_frames_to_run > 2)
+-			fly_frames_to_run = 2;
+-		if (fly_frames_to_run == 2 && fly_last_emu_ms > period_ms)
+-			fly_frames_to_run = 1;              // no headroom — never spiral
+-		if (settings.input.fastForwardMode) {
+-			fly_frames_to_run = 1;              // FF: old rAF-paced behavior
+-			fly_owed = 0;
+-		}
+-		// ★ GUEST-TIME ACCOUNTING (2026-07-17): debt is repaid by the guest
+-		// time each render actually consumed (measured via sh4_sched_now64 in
+-		// the render loop below), NOT by render count. A 30fps-native game
+-		// (JGR) advances TWO vblanks per render — counting renders made the
+-		// guest run up to 2x wall clock (measured: audio overproduction
+-		// +3.4%, 707K frames dropped, beat skipping). BIOS/60fps content was
+-		// unaffected, which is why it sounded perfect.
+-
+-		// Track frame-to-frame timing
+-		if (elapsed > 0) {
+-			frame_time_sum += elapsed;
+-			if (elapsed < frame_time_min) frame_time_min = elapsed;
+-			if (elapsed > frame_time_max) frame_time_max = elapsed;
+-		}
+-		frame_count += fly_frames_to_run;       // count EMULATED frames (true DC fps)
+-		// ★ CORE-TIME SPLIT (2026-07-21, render-campaign scoping): accumulate
+-		// the previous tick's core-section duration (emu + in-core GL draw,
+-		// measured as fly_last_emu_ms). HUD shows its avg as `core:` —
+-		// ft − core = browser/EJS/present share; core − emu(ring ~5ms) = GL
+-		// draw inside the core. Decomposes the frame on REAL hardware, which
+-		// headless timing is structurally blind to.
+-		static double fly_core_ms_sum = 0;
+-		static int fly_core_ticks = 0;
+-		if (fly_last_emu_ms > 0) {
+-			fly_core_ms_sum += fly_last_emu_ms;
+-			fly_core_ticks++;
+-		}
+-		// Render-phase accumulators from the renderer (gles.cpp/ta_util.cpp):
+-		// [0]=ta_parse total [1]=sort [2]=GL submit [3]=render count
+-		// [4]=emu.render() total [5]=AICA/ARM7.
+-		// Averaged per RENDER (not per vblank) at each HUD tick, then reset.
+-		extern double g_fly_rp[10];
+-
+-		// HUD: FPS + frame timing (min/avg/max)
+-		if (hud_last_update == 0) hud_last_update = now;
+-		if (now - hud_last_update >= 1000.0) {
+-			double avg_ft = (frame_count > 0) ? (frame_time_sum / frame_count) : 0;
+-			size_t abuf = retro_audio_buffer_fill();
+-			// Audio telemetry: produced frames/s (44100 = perfectly fed),
+-			// cumulative overflow events (ov) and frontend-refused frames (sh).
+-			static u32 aud_prod_last = 0;
+-			u32 aud_prod_rate = g_aud_produced_frames - aud_prod_last;
+-			aud_prod_last = g_aud_produced_frames;
+-#if FLY_RELEASE_BUILD
+-			// RELEASE: the HUD is opt-in via ?hud=1 in the page URL (checked
+-			// once); the hudlog POST block below is compiled out entirely
+-			// (users' servers have no /hudlog endpoint).
+-			static const bool fly_hud_optin = EM_ASM_INT({
+-				return location.search.indexOf('hud=1') >= 0 ? 1 : 0;
+-			}) != 0;
+-			if (fly_hud_optin)
+-#endif
+-			{
+-			EM_ASM({
+-				var el = document.getElementById('fc-hud');
+-				if (!el) {
+-					el = document.createElement('div');
+-					el.id = 'fc-hud';
+-					el.style.cssText = 'position:fixed;top:8px;left:8px;z-index:99999;'
+-						+ 'background:rgba(0,0,0,0.7);color:#fff;font:12px monospace;'
+-						+ 'padding:4px 8px;pointer-events:none;border-radius:3px;';
+-					document.body.appendChild(el);
+-				}
+-				var A = Module._flyAud;
+-				var wq = A ? (A.stats.avail | 0) : -1;
+-				var un = A ? (A.stats.under | 0) : 0;
+-				var dr = A ? ((A.drop | 0) + (A.stats.drop | 0)) : 0;
+-				el.textContent = 'FPS:' + $0 + '/' + $1.toFixed(0)
+-					+ ' p:' + $6 + '/s wq:' + wq + ' un:' + un + ' dr:' + dr
+-					+ ' ov:' + $7
+-					+ ' ft:' + $2.toFixed(0) + '/' + $3.toFixed(0) + '/' + $4.toFixed(0)
+-					+ ' core:' + $9.toFixed(1)
+-					+ ' rp:' + $10.toFixed(1) + '/' + $11.toFixed(1) + '/' + $12.toFixed(1)
+-					+ ' er:' + $13.toFixed(1) + ' aica:' + $14.toFixed(1);
+-				// ★ HUD RECORDER (2026-07-21): every HUD update is also queued
+-				// as a JSON line and flushed to the demo server's /hudlog sink
+-				// every 10 samples — a played session leaves a machine-readable
+-				// timeline (upstream/logs/hudlog-<sess>.jsonl) with no user
+-				// effort. JSON built by string concat + XHR (EM_ASM cannot
+-				// carry JS object literals — preprocessor gotcha).
+-				var W = window;
+-				if (!W._flyHudSess) {
+-					W._flyHudSess = Date.now().toString(36);
+-					W._flyHudBuf = [];
+-				}
+-				// EM_ASM is capped at 16 args ($0-$15) — '$16 is not defined'
+-				// killed the page once. The sample line is built across TWO
+-				// EM_ASM calls: this one leaves the JSON open in _flyHudPart.
+-				W._flyHudPart = '{"t":' + Date.now()
+-					+ ',"fps":' + $0
+-					+ ',"tgt":' + (+$1.toFixed(1))
+-					+ ',"ft_min":' + (+$2.toFixed(1))
+-					+ ',"ft_avg":' + (+$3.toFixed(1))
+-					+ ',"ft_max":' + (+$4.toFixed(1))
+-					+ ',"core":' + (+$9.toFixed(2))
+-					+ ',"rp_parse":' + (+$10.toFixed(2))
+-					+ ',"rp_sort":' + (+$11.toFixed(2))
+-					+ ',"rp_draw":' + (+$12.toFixed(2))
+-					+ ',"rp_er":' + (+$13.toFixed(2))
+-					+ ',"rp_aica":' + (+$14.toFixed(2))
+-					+ ',"owed":' + (+$15.toFixed(2))
+-					+ ',"wq":' + wq + ',"un":' + un + ',"dr":' + dr;
+-			}, frame_count, base_fps, frame_time_min, avg_ft, frame_time_max,
+-			   (int)abuf, aud_prod_rate, g_aud_overflow_events, g_aud_shortfall_frames,
+-			   fly_core_ticks > 0 ? fly_core_ms_sum / fly_core_ticks : 0.0,
+-			   g_fly_rp[3] > 0 ? (g_fly_rp[0] - g_fly_rp[1]) / g_fly_rp[3] : 0.0,
+-			   g_fly_rp[3] > 0 ? g_fly_rp[1] / g_fly_rp[3] : 0.0,
+-			   g_fly_rp[3] > 0 ? g_fly_rp[2] / g_fly_rp[3] : 0.0,
+-			   g_fly_rp[3] > 0 ? g_fly_rp[4] / g_fly_rp[3] : 0.0,
+-			   g_fly_rp[3] > 0 ? g_fly_rp[5] / g_fly_rp[3] : 0.0,
+-			   fly_owed);
+-#if !FLY_RELEASE_BUILD
+-			EM_ASM({
+-				var W = window;
+-				if (!W._flyHudPart) return;
+-				W._flyHudBuf.push(W._flyHudPart
+-					+ ',"vbl":' + (+$0.toFixed(1))
+-					+ ',"mft":' + $1
+-					+ ',"rp_ml":' + (+$4.toFixed(2))
+-					+ ',"p":' + $2 + ',"ov":' + $3 + '}');
+-				W._flyHudPart = null;
+-				if (W._flyHudBuf.length >= 10) {
+-					var pl = '{"session":"' + W._flyHudSess + '","samples":['
+-						+ W._flyHudBuf.join(',') + ']}';
+-					W._flyHudBuf.length = 0;
+-					try {
+-						var x = new XMLHttpRequest();
+-						x.open('POST', '/hudlog', true);
+-						x.send(pl);
+-					} catch (e) {}
+-				}
+-			}, g_fly_rp[6], (int)g_fly_rp[7], aud_prod_rate, g_aud_overflow_events,
+-			   g_fly_rp[6] > 0 ? g_fly_rp[8] / g_fly_rp[6] : 0.0);
+-#endif  // !FLY_RELEASE_BUILD (hudlog POST)
+-			}
+-#ifndef JIT_PROD_BUILD
+-			EM_ASM({
+-				console.log('[PERF] ' + '{"type":"frame_timing","fps":' + $0
+-					+ ',"target_fps":' + (+$1.toFixed(0))
+-					+ ',"ft_min":' + (+$2.toFixed(1))
+-					+ ',"ft_avg":' + (+$3.toFixed(1))
+-					+ ',"ft_max":' + (+$4.toFixed(1))
+-					+ ',"aud_p":' + $5
+-					+ ',"aud_ov":' + $6
+-					+ ',"aud_sh":' + $7
+-					+ ',"frames":' + $0 + '}');
+-			}, frame_count, base_fps, frame_time_min, avg_ft, frame_time_max,
+-			   aud_prod_rate, g_aud_overflow_events, g_aud_shortfall_frames);
+-#endif
+-			frame_count = 0;
+-			frame_time_min = 999;
+-			frame_time_max = 0;
+-			frame_time_sum = 0;
+-			fly_core_ms_sum = 0;
+-			fly_core_ticks = 0;
+-			g_fly_rp[0] = g_fly_rp[1] = g_fly_rp[2] = g_fly_rp[3] = 0;
+-			g_fly_rp[4] = g_fly_rp[5] = g_fly_rp[6] = g_fly_rp[7] = 0;
+-			g_fly_rp[8] = 0;
+-			hud_last_update = now;
+-		}
+-	}
+-#endif
++	// Arcade bar (flycast/patches/0001): no pacing here. The frontend calls retro_run once per
++	// frame and paces itself; each call emulates exactly one vblank (emulator.cpp).
++	// The shim collects the previous frame's read-back now, before this frame's GL commands.
++	vab_frame_start();
+ 
+ 	bool updated = false;
+ 	if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated) && updated)
+@@ -1805,45 +1339,8 @@
+ 		}
+ 		else
+ 		{
+-#ifdef __EMSCRIPTEN__
+-			// Wall-clock pacer: 0 frames presents a dupe, 2 = bounded
+-			// catch-up. Debt is repaid with the GUEST time each render
+-			// consumed (30fps-native games advance 2 vblanks per render).
+-			// SH4 main clock = 200MHz.
+-			double fly_run_t0 = emscripten_get_now();
+-			{
+-				// Pacer-state telemetry [6]=vblanks emulated, [7]=multi-frame
+-				// ticks (the debt-spiral counters; HUD reports per second)
+-				extern double g_fly_rp[10];
+-				if (fly_frames_to_run > 1)
+-					g_fly_rp[7] += 1;
+-				u64 fly_vb_t0 = sh4_sched_now64();
+-				for (int fly_i = 0; fly_i < fly_frames_to_run && (fly_i == 0 || fly_owed >= 1.0); fly_i++) {
+-					// ★ PACER-SPREAD (2026-07-24): one guest-time budget for
+-					// the WHOLE host tick — without this, the catch-up
+-					// iteration can take a second timed-out gulp right after
+-					// the first, rebuilding the 3-vblank freeze the lowered
+-					// render timeout (emulator.cpp vblank) just split up.
+-					if (fly_i > 0 && sh4_sched_now64() - fly_vb_t0 >= 5000000)
+-						break;
+-					startTime = sh4_sched_now64();
+-					{
+-						double fly_er_t0 = emscripten_get_now();
+-						emu.render();
+-						g_fly_rp[4] += emscripten_get_now() - fly_er_t0;
+-					}
+-					fly_owed -= (double)(sh4_sched_now64() - startTime)
+-					            * fly_repay_fps / 200000000.0;
+-				}
+-				g_fly_rp[6] += (double)(sh4_sched_now64() - fly_vb_t0)
+-				               * fly_repay_fps / 200000000.0;
+-			}
+-			if (fly_owed < -2.0) fly_owed = -2.0;  // bounded credit
+-			fly_last_emu_ms = emscripten_get_now() - fly_run_t0;
+-#else
+ 			startTime = sh4_sched_now64();
+ 			emu.render();
+-#endif
+ 		}
+ 	} catch (const FlycastException& e) {
+ 		ERROR_LOG(COMMON, "%s", e.what());
+@@ -2771,6 +2268,9 @@
+ // Loading/unloading games
+ bool retro_load_game(const struct retro_game_info *game)
+ {
++#ifdef __EMSCRIPTEN__
++	vab_state_size = 0;
++#endif
+ #if defined(IOS)
+ 	bool can_jit;
+ 	if (environ_cb(RETRO_ENVIRONMENT_GET_JIT_CAPABLE, &can_jit) && !can_jit) {
+@@ -2992,6 +2492,10 @@
+ 	// System may have changed - have to update hidden core options
+ 	set_variable_visibility();
+ 
++#ifdef __EMSCRIPTEN__
++	// What RetroArch does once the game is in: make the GL context and call context_reset.
++	vab_game_loaded();
++#endif
+ 	return true;
+ }
+ 
+@@ -3025,8 +2529,56 @@
+    if (type == RETRO_MEMORY_SYSTEM_RAM)
+       return RAM_SIZE;
+    return 0;
++}
++
++#ifdef __EMSCRIPTEN__
++// Arcade bar: states for a frontend that saves and loads between two retro_runs, on the thread
++// that runs the machine, and allocates its rollback slots once (web/emulator/libretro.js).
++// - No emu.stop()/emu.start() around them: retro_run is never running then, and stopping
++//   wrote the NVRAM files to disk and fired the pause/resume events on every save.
++// - One size for the whole game: a state's size changes with the PowerVR's TA contexts (a few KB
++//   from frame to frame), so the first size is padded with room for a whole one (8 MB) and the
++//   rest of the buffer is zeroed, so the same machine always makes the same bytes.
++
++size_t retro_serialize_size()
++{
++	if (vab_state_size == 0)
++	{
++		Serializer ser;
++		dc_serialize(ser);
++		vab_state_size = (ser.size() + 8_MB + 1_MB - 1) & ~(size_t)(1_MB - 1);
++	}
++	return vab_state_size;
+ }
+ 
++bool retro_serialize(void *data, size_t size)
++{
++	std::lock_guard<std::mutex> lock(mtx_serialization);
++	try {
++		Serializer ser(data, size);
++		dc_serialize(ser);
++		memset((u8 *)data + ser.size(), 0, size - ser.size());
++		return true;
++	} catch (const Serializer::Exception& e) {
++		ERROR_LOG(SAVESTATE, "Saving state failed: %s", e.what());
++		return false;
++	}
++}
++
++bool retro_unserialize(const void * data, size_t size)
++{
++	std::lock_guard<std::mutex> lock(mtx_serialization);
++	try {
++		Deserializer deser(data, size);
++		emu.loadstate(deser);
++		retro_audio_flush_buffer();
++		return true;
++	} catch (const Deserializer::Exception& e) {
++		ERROR_LOG(SAVESTATE, "Loading state failed: %s", e.what());
++		return false;
++	}
++}
++#else
+ size_t retro_serialize_size()
+ {
+ 	DEBUG_LOG(SAVESTATE, "retro_serialize_size");
+@@ -3102,6 +2654,8 @@
+ 	}
+ }
+ 
++#endif
++
+ // Cheats
+ void retro_cheat_reset()
+ {
+diff --git a/shell/libretro/audiostream.cpp b/shell/libretro/audiostream.cpp
+--- a/shell/libretro/audiostream.cpp
++++ b/shell/libretro/audiostream.cpp
+@@ -134,115 +134,9 @@
+ u32 g_aud_shortfall_frames = 0;  /* frames the frontend refused (discarded) */
+ u32 g_aud_produced_frames = 0;   /* frames handed to audio_batch_cb */
+ 
+-#ifdef __EMSCRIPTEN__
+-#include <emscripten.h>
+-/* ★ AudioWorklet ring-buffer sink (2026-07-17). Replaces the RetroArch
+- * OpenAL path on WASM. Why: the OpenAL→WebAudio shim schedules each ~6ms
+- * chunk as its own AudioBufferSourceNode and clamps late buffers to
+- * currentTime — a click-length seam on EVERY late main-thread frame — and
+- * RetroArch's write side SPIN-WAITS the main thread when the queue is full
+- * (a built-in per-frame stall). The worklet consumes from a ring buffer on
+- * the AUDIO thread: gapless under main-thread jank, non-blocking writes,
+- * underruns become counted silence instead of clicks. Stats (queue depth,
+- * underrun frames, dropped frames) surface in the HUD via Module._flyAud. */
+-EM_JS(int, fly_worklet_push, (const short* ptr, unsigned frames), {
+-	var A = Module._flyAud;
+-	if (A && A.failed)
+-		return 1;   // worklet unavailable — caller falls back to audio_batch_cb
+-	if (!A) {
+-		A = Module._flyAud = { ready: false, failed: false, pend: [], drop: 0, lastVol: -1, stats: { avail: 0, under: 0, drop: 0 } };
+-		var ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 44100 });
+-		A.ctx = ctx;
+-		var src = ""
+-			+ "class FlyAudio extends AudioWorkletProcessor {"
+-			+ "  constructor() { super();"
+-			+ "    this.cap = 32768;"
+-			+ "    this.rbL = new Float32Array(this.cap);"
+-			+ "    this.rbR = new Float32Array(this.cap);"
+-			+ "    this.r = 0; this.w = 0; this.avail = 0;"
+-			+ "    this.under = 0; this.drop = 0; this.tick = 0;"
+-			+ "    this.primed = false;"
+-			+ "    this.port.onmessage = (e) => {"
+-			+ "      var d = e.data; var n = d.length >> 1;"
+-			+ "      if (this.avail + n > this.cap) { this.drop += n; return; }"
+-			+ "      for (var i = 0; i < n; i++) {"
+-			+ "        this.rbL[this.w] = d[2*i] / 32768;"
+-			+ "        this.rbR[this.w] = d[2*i+1] / 32768;"
+-			+ "        this.w = (this.w + 1) % this.cap;"
+-			+ "      }"
+-			+ "      this.avail += n;"
+-			+ "    };"
+-			+ "  }"
+-			+ "  process(inputs, outputs) {"
+-			+ "    var out = outputs[0]; var L = out[0]; var R = out[1] || out[0];"
+-			+ "    if (!this.primed) {"
+-			+ "      if (this.avail >= 2048) { this.primed = true; }"
+-			+ "      else { for (var j = 0; j < L.length; j++) { L[j] = 0; R[j] = 0; } return true; }"
+-			+ "    }"
+-			+ "    for (var i = 0; i < L.length; i++) {"
+-			+ "      if (this.avail > 0) {"
+-			+ "        L[i] = this.rbL[this.r]; R[i] = this.rbR[this.r];"
+-			+ "        this.r = (this.r + 1) % this.cap; this.avail--;"
+-			+ "      } else { L[i] = 0; R[i] = 0; this.under++; this.primed = false; }"
+-			+ "    }"
+-			+ "    if (++this.tick >= 16) {"
+-			+ "      this.tick = 0;"
+-			+ "      this.port.postMessage({ avail: this.avail, under: this.under, drop: this.drop });"
+-			+ "    }"
+-			+ "    return true;"
+-			+ "  }"
+-			+ "}"
+-			+ "registerProcessor('fly-audio', FlyAudio);";
+-		var url = URL.createObjectURL(new Blob([src], { type: "application/javascript" }));
+-		ctx.audioWorklet.addModule(url).then(function() {
+-			var node = new AudioWorkletNode(ctx, "fly-audio", { outputChannelCount: [2] });
+-			// Volume: route through a GainNode driven by the EmulatorJS
+-			// volume/mute state (players expect the slider to work).
+-			A.gain = ctx.createGain();
+-			node.connect(A.gain);
+-			A.gain.connect(ctx.destination);
+-			node.port.onmessage = function(e) { A.stats = e.data; };
+-			A.node = node;
+-			A.ready = true;
+-			for (var i = 0; i < A.pend.length; i++)
+-				node.port.postMessage(A.pend[i], [A.pend[i].buffer]);
+-			A.pend = [];
+-			console.log("[fly-audio] AudioWorklet sink active @" + ctx.sampleRate + "Hz");
+-		}, function(e) {
+-			console.error("[fly-audio] worklet init failed, falling back to audio_batch_cb: " + (e && e.message));
+-			A.failed = true;
+-		});
+-	}
+-	if (A.ctx.state !== "running")
+-		A.ctx.resume();
+-	// Track EmulatorJS volume/mute (guarded — property names may evolve)
+-	if (A.ready) {
+-		var vol = 1;
+-		try {
+-			var E = window.EJS_emulator;
+-			if (E) {
+-				if (E.muted) vol = 0;
+-				else if (typeof E.volume === "number") vol = E.volume;
+-			}
+-		} catch (e) {}
+-		if (A.lastVol !== vol) {
+-			A.gain.gain.value = vol;
+-			A.lastVol = vol;
+-		}
+-	}
+-	var n = frames * 2;
+-	var chunk = new Int16Array(n);
+-	chunk.set(Module.HEAP16.subarray(ptr >> 1, (ptr >> 1) + n));
+-	// Backpressure (stats are ~45ms stale — leave slack): past ~0.56s queued,
+-	// drop instead of growing latency. Non-blocking by construction.
+-	if (A.stats.avail > 24576) { A.drop += frames; return; }
+-	if (A.ready)
+-		A.node.port.postMessage(chunk, [chunk.buffer]);
+-	else if (A.pend.length < 64)
+-		A.pend.push(chunk);
+-	return 0;
+-});
+-#endif
++/* Arcade bar (flycast/patches/0002): no AudioWorklet sink of the core's own. The samples go to
++ * the frontend through audio_batch_cb like any libretro core; the bar's worker resamples and
++ * plays them (web/emulator/worker.js). */
+ 
+ size_t retro_audio_buffer_capacity(void)
+ {
+@@ -326,19 +220,6 @@
+ 
+ 	int16_t *audio_out_buffer_ptr = audio_out_buffer;
+ 	g_aud_produced_frames += (u32)num_frames;
+-#ifdef __EMSCRIPTEN__
+-	/* AudioWorklet sink — RetroArch's OpenAL driver (blocking writes,
+-	 * buffer-source seam scheduling) is bypassed entirely. If the worklet
+-	 * cannot initialize (old Safari, odd embeds) fall back to the legacy
+-	 * audio_batch_cb path permanently: degraded beats mute. */
+-	static bool worklet_failed = false;
+-	if (num_frames > 0 && !worklet_failed) {
+-		if (fly_worklet_push(audio_out_buffer_ptr, (unsigned)num_frames) != 0)
+-			worklet_failed = true;
+-	}
+-	if (!worklet_failed)
+-		return;
+-#endif
+ 	while (num_frames > 0)
+ 	{
+ 		size_t frames_to_write = (num_frames > audio_batch_frames_max) ?

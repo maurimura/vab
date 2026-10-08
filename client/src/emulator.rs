@@ -77,16 +77,18 @@ pub fn game_status(text: String) {
 #[wasm_bindgen]
 extern "C" {
     /// Sits the player at `cabinet` ("x,y") and starts its game, for up to `players` at once;
-    /// `lockstep` games don't roll back online, `gun` games answer the core's lightgun from
-    /// the aim, `linked` games give each player their own board, linked to the others'
-    /// (paced like lockstep), `options` (JSON) are the core's settings, `arcade` games are
-    /// linked cabinets, each player's browser running only their own, free-running, and a
-    /// driving game's `wheel` (JSON) has the arrows turn a wheel (world::Game).
+    /// `files` are what the core needs next to the ROM besides the BIOS (paths under /roms/, a
+    /// NAOMI game's disc), `lockstep` games don't roll back online, `gun` games answer the
+    /// core's lightgun from the aim, `linked` games give each player their own board, linked to
+    /// the others' (paced like lockstep), `options` (JSON) are the core's settings, `arcade`
+    /// games are linked cabinets, each player's browser running only their own, free-running,
+    /// and a driving game's `wheel` (JSON) has the arrows turn a wheel (world::Game).
     #[wasm_bindgen(js_name = emulatorPlay)]
     fn emulator_play(
         core: &str,
         rom: &str,
         bios: Option<String>,
+        files: Vec<String>,
         cabinet: &str,
         turns: bool,
         players: u32,
@@ -104,6 +106,7 @@ extern "C" {
         core: &str,
         rom: &str,
         bios: Option<String>,
+        files: Vec<String>,
         cabinet: &str,
         turns: bool,
         gun: bool,
@@ -174,6 +177,7 @@ pub fn play(cell: IVec2, game: &Game, wheel: Option<Wheel>) {
         &game.core,
         &game.rom,
         bios,
+        game.files.clone(),
         &cabinet,
         game.turns,
         game.players,
@@ -196,6 +200,7 @@ pub fn watch(cell: IVec2, game: &Game) {
         &game.core,
         &game.rom,
         bios,
+        game.files.clone(),
         &cabinet,
         game.turns,
         game.gun,

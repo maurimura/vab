@@ -1,0 +1,57 @@
+Arcade bar: no host clock in the machine.
+
+Players online run the same machine in lockstep or with rollback, and states made on one
+computer are replayed on another: nothing the host says may reach emulation. The AICA's real-time
+clock (which the NAOMI BIOS and games read) starts at a fixed moment, 2001-01-01 00:00:00, instead of
+the host's local time (it then ticks with guest time and is part of the save state); the
+Dreamcast's flash console id, seeded from that clock, follows. Two other host-time reads that the
+NAOMI never reaches get the same treatment for completeness: the Dreamcast VMU's clock and the
+seed of the VF4 card reader's random card id.
+
+diff --git a/core/hw/aica/aica_if.cpp b/core/hw/aica/aica_if.cpp
+--- a/core/hw/aica/aica_if.cpp
++++ b/core/hw/aica/aica_if.cpp
+@@ -40,6 +40,11 @@
+ 	if (config::GGPOEnable)
+ 		// 1/1/70 00:00:00
+ 		return (20 * 365 + 5) * 24 * 60 * 60;
++#ifdef __EMSCRIPTEN__
++	// Arcade bar (flycast/patches/0003): the same moment on every machine, never the host's
++	// clock, so players online keep identical machines. Monday 2001-01-01 00:00:00.
++	return (20 * 365 + 5) * 24 * 60 * 60 + 978307200u;
++#endif
+ 
+ 	// The Dreamcast Epoch time is 1/1/50 00:00 but without support for time zone or DST.
+ 	// We compute the TZ/DST current time offset and add it to the result
+diff --git a/core/hw/maple/maple_jvs.cpp b/core/hw/maple/maple_jvs.cpp
+--- a/core/hw/maple/maple_jvs.cpp
++++ b/core/hw/maple/maple_jvs.cpp
+@@ -2732,7 +2732,11 @@
+ 			};
+ 			memcpy(cardData, VF4_CARD_DATA, sizeof(VF4_CARD_DATA));
+ 			// Generate random bytes used by vf4 vanilla to make the card id
++#ifdef __EMSCRIPTEN__
++			srand(1); // arcade bar (patches/0003): the same card on every machine
++#else
+ 			srand(time(0));
++#endif
+ 			cardData[2] = rand() & 0xff;
+ 			cardData[4] = rand() & 0xff;
+ 			cardData[5] = rand() & 0xff;
+diff --git a/core/hw/maple/maple_devs.cpp b/core/hw/maple/maple_devs.cpp
+--- a/core/hw/maple/maple_devs.cpp
++++ b/core/hw/maple/maple_devs.cpp
+@@ -642,8 +642,13 @@
+ 						w32(MFID_3_Clock);
+ 
+ 						time_t now;
++#ifdef __EMSCRIPTEN__
++						now = 978307200; // arcade bar (patches/0003): 2001-01-01, never the host's clock
++						tm* timenow=gmtime(&now);
++#else
+ 						time(&now);
+ 						tm* timenow=localtime(&now);
++#endif
+ 
+ 						u8* timebuf=dma_buffer_out;
+ 

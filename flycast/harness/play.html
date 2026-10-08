@@ -1,0 +1,107 @@
+<!doctype html>
+<!-- Play Virtua Tennis on the Flycast core in this page: keyboard in, picture and sound out,
+     paced at the game's 59.79 Hz. The core runs on this page's thread (the bar runs it in a
+     worker: index.html does), on an OffscreenCanvas as there; sound goes through the bar's own
+     AudioWorklet (web/emulator/audio.js) and resampler.
+       node flycast/harness/serve.mjs, then open http://localhost:8791/flycast/harness/play.html
+     The boot (NAOMI BIOS, GD-ROM load) takes about 2.8 minutes of game time, black: &fast=1
+     runs it as fast as it goes. &state=<url> starts from a state instead (check.mjs makes them).
+     Player 1: arrows, Z (SHOT1) X (SHOT2), Enter start, Space coin.
+     Player 2: W A S D, G H, 2 start, 6 coin. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Flycast play</title>
+<style>
+  body { margin: 0; background: #000; color: #ccc; font: 14px monospace; display: flex; flex-direction: column; align-items: center; min-height: 100vh }
+  canvas { image-rendering: pixelated; width: min(100vw, calc((100vh - 48px) * 4 / 3)); aspect-ratio: 4 / 3; background: #000 }
+  #hud { padding: 8px; white-space: pre; text-align: center }
+  #start { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #000c; font-size: 22px; cursor: pointer }
+</style>
+</head>
+<body>
+<canvas id="screen" width="640" height="480"></canvas>
+<div id="hud">loading…</div>
+<div id="start">loading…</div>
+<script type="module">
+import { Core } from "/web/emulator/libretro.js";
+import { Resampler } from "/web/emulator/resample.js";
+import createFlycast from "/flycast/dist/flycast.mjs";
+
+const params = new URLSearchParams(location.search);
+const hud = document.getElementById("hud");
+const overlay = document.getElementById("start");
+const screen = document.getElementById("screen").getContext("2d");
+const B = 0, SELECT = 2, START = 3, UP = 4, DOWN = 5, LEFT = 6, RIGHT = 7, A = 8;
+const KEYS = {
+  ArrowUp: [0, UP], ArrowDown: [0, DOWN], ArrowLeft: [0, LEFT], ArrowRight: [0, RIGHT],
+  KeyZ: [0, B], KeyX: [0, A], Enter: [0, START], Space: [0, SELECT],
+  KeyW: [1, UP], KeyS: [1, DOWN], KeyA: [1, LEFT], KeyD: [1, RIGHT],
+  KeyG: [1, B], KeyH: [1, A], Digit2: [1, START], Digit6: [1, SELECT],
+};
+const fail = (what) => { overlay.textContent = `failed: ${what}`; overlay.style.color = "#f66"; };
+addEventListener("error", (e) => fail(e.message));
+addEventListener("unhandledrejection", (e) => fail(e.reason?.message ?? e.reason));
+
+overlay.textContent = "starting the emulator…";
+const module = await createFlycast({ canvas: new OffscreenCanvas(1, 1) });
+const audio = new AudioContext({ sampleRate: 48000 });
+await audio.audioWorklet.addModule("/web/emulator/audio.js");
+const speaker = new AudioWorkletNode(audio, "emulator-audio", { outputChannelCount: [2] });
+speaker.connect(audio.destination);
+const sound = new MessageChannel();
+speaker.port.postMessage(sound.port1, [sound.port1]);
+let resampler;
+let picture;
+const core = new Core(module, {
+  onFrame(rgba, width, height) { picture = new ImageData(rgba, width, height); },
+  onAudio(samples) { if (resampler) samples = resampler.process(samples); sound.port2.postMessage(samples, [samples.buffer]); },
+  onLog(level, text) { if (level >= 2) console.warn(text); },
+});
+const get = async (url) => {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: ${r.status}`);
+  return new Uint8Array(await r.arrayBuffer());
+};
+overlay.textContent = "downloading the ROM set and the disc…";
+const [rom, disc, state] = await Promise.all([get("/roms/vtennisg.zip"), get("/roms/vtennisg/gds-0011.chd"), params.get("state") && get(params.get("state"))]);
+core.addFile("vtennisg/gds-0011.chd", disc);
+const { fps, sampleRate } = core.loadGame("vtennisg.zip", rom);
+resampler = new Resampler(sampleRate, audio.sampleRate);
+if (state) core.unserialize(state);
+const help = "P1: arrows, Z X (shot 1, 2), Enter start, Space coin · P2: W A S D, G H, 2 start, 6 coin";
+hud.textContent = `vtennisg · ${fps.toFixed(2)} Hz\n${help}`;
+overlay.textContent = "click to start";
+
+addEventListener("keydown", (e) => { const k = KEYS[e.code]; if (k) { core.inputs[k[0]] |= 1 << k[1]; e.preventDefault(); } });
+addEventListener("keyup", (e) => { const k = KEYS[e.code]; if (k) { core.inputs[k[0]] &= ~(1 << k[1]); e.preventDefault(); } });
+
+overlay.addEventListener("click", () => {
+  overlay.remove();
+  audio.resume();
+  let fast = params.get("fast") === "1" && !state;
+  let next = performance.now(), frames = 0, work = 0, since = performance.now(), total = 0;
+  const tick = () => {
+    const now = performance.now();
+    if (fast || now >= next) {
+      const start = performance.now();
+      core.run();
+      work += performance.now() - start;
+      frames++;
+      total++;
+      if (fast && total >= 10200) fast = false; // the attract mode starts about there
+      next += 1000 / fps;
+      if (now - next > 100) next = now;
+      if (picture) screen.putImageData(picture, 0, 0);
+    }
+    if (now - since >= 1000) {
+      hud.textContent = `vtennisg · ${frames} fps, ${(work / Math.max(1, frames)).toFixed(1)} ms a frame${fast ? " (fast boot)" : ""}\n${help}`;
+      frames = 0; work = 0; since = now;
+    }
+    setTimeout(tick, fast ? 0 : Math.max(0, next - performance.now() - 1));
+  };
+  tick();
+}, { once: true });
+</script>
+</body>
+</html>

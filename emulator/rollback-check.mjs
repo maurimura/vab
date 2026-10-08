@@ -2,21 +2,24 @@
 // gives the same game as playing straight through, on a separate core instance, and how long
 // the worst case (a rollback on every frame) takes against the frame budget.
 //
-//   node emulator/rollback-check.mjs <core.mjs> <rom.zip> [state] [bios.zip ...]
+//   node emulator/rollback-check.mjs <core.mjs> <rom.zip> [state] [file ...]
 //   node emulator/rollback-check.mjs emulator/dist/midway/fbneo.mjs ~/Downloads/mk2.zip emulator/dist/mk2.state
 //
-// FRAMES (default 1200) and ROLLBACK (default 8) env vars change the run, TURNS=1 is for a
-// turn-based game and GUN=1 for a lightgun game (the core's lightgun follows each player's
-// random aim; at a driving game the same bits turn its wheel). DRAW=1 draws the re-run frames
-// too, which the worker never does: for a game whose drawing changes its machine, as Out Run's
-// sprite chip writes back to sprite RAM as it draws, to check its states on their own. Rerun
-// after rebuilding the cores: determinism is a property of the core build.
+// The files after the state go with the ROM set as the page puts them (a BIOS set next to it, a
+// NAOMI game's disc at its path after a `roms/` folder: snapshot.mjs). FRAMES (default 1200)
+// and ROLLBACK (default 8) env vars change the run, TURNS=1 is for a turn-based game and GUN=1
+// for a lightgun game (the core's lightgun follows each player's random aim; at a driving game
+// the same bits turn its wheel). DRAW=1 draws the re-run frames too, which the worker never
+// does: for a game whose drawing changes its machine, as Out Run's sprite chip writes back to
+// sprite RAM as it draws, to check its states on their own. Rerun after rebuilding the cores:
+// determinism is a property of the core build.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { Core } from "../web/emulator/libretro.js";
+import { Core, romPath as pathUnderRoms } from "../web/emulator/libretro.js";
+import { unpackState } from "./packed-state.mjs";
 
-const [corePath, romPath, statePath, ...biosPaths] = process.argv.slice(2);
+const [corePath, romPath, statePath, ...filePaths] = process.argv.slice(2);
 const FRAMES = Number(process.env.FRAMES ?? 1200);
 const ROLLBACK = Number(process.env.ROLLBACK ?? 8); // frames re-run on every frame
 const CHECK_EVERY = 60; // frames between comparisons of the game's RAM
@@ -29,9 +32,9 @@ async function boot() {
   core.netplay = true;
   core.turns = process.env.TURNS === '1';
   core.gun = process.env.GUN === '1';
-  for (const path of biosPaths) core.addFile(basename(path), readFileSync(path));
+  for (const path of filePaths) core.addFile(pathUnderRoms(resolve(path)), readFileSync(path));
   const { fps } = core.loadGame(basename(romPath), readFileSync(romPath));
-  if (statePath) core.unserialize(readFileSync(statePath));
+  if (statePath) core.unserialize(unpackState(readFileSync(statePath)));
   core.allocSlots(ROLLBACK + 1);
   return { core, fps };
 }

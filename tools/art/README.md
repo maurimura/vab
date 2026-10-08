@@ -520,6 +520,48 @@ hosting is not publisher authorization. Scan/photograph authors, replacement-pri
 status and redistribution permissions remain unknown. Visual approval and rights
 review are still needed before deployment.
 
+### Virtua Tennis — original white NAOMI Universal
+
+```sh
+python3 tools/art/cabinet_pipeline.py validate vtennis
+python3 tools/art/cabinet_pipeline.py build vtennis
+python3 -m unittest discover -s tools/art -p 'test_*.py'
+```
+
+Review `art/previews/vtennis.png`: four **40×60** sprites and seven editable
+layers per facing. The reusable `naomi` renderer shares projection, lighting,
+control geometry and export with the existing pipeline. It models the standing
+white frame, plain dark rails, deep CRT pod, open knee space, low service/cash
+base, projecting white deck, orange lamp and separate green-title billboard.
+Two green/pink ball-top sticks and six raised physical actions follow the flyer;
+the game uses only Shot/Lob. Start remains in the photographed panel.
+
+Selected variant is the original **1999 Virtua Tennis / Sega Professional Tennis**
+in the white standing NAOMI Universal pictured in Sega Amusements Europe's
+[operator flyer](https://www.arcadeartwork.org/picture.php?/88783).
+The title, deck and **actual photographed tennis display** are rectified from that
+scan; this is not a local capture or another game's display. The scan limits
+fine detail; screen aspect is preserved with a 1.15× sprite-only brightness gain.
+The flyer's yellow-looking space below the deck is its background through the
+open frame, not yellow cabinet artwork. Proportions, lower doors and rear vents
+are small-scale geometry approximations. No unseen tennis side print is invented.
+
+[Arcade Otaku's NAOMI Universal documentation/photo](https://wiki.arcadeotaku.com/w/Sega_Naomi_Universal)
+corroborates the shell only: its different game's panel/loading display and
+NAOMI side lettering are not extracted. The separately archived
+[red conversion pedestal](https://www.arcadeartwork.org/picture.php?/98807) and
+[blue conversion deck](https://www.arcadeartwork.org/picture.php?/6300) are
+research-only alternatives, not mixed into the selected white machine.
+Decoded originals, measured corners, SHA-256s, classifications and uncertainties
+are in `art/references/vtennis/` and `tools/art/recipes/vtennis.json`.
+Sega/photograph rights remain unresolved; archive/wiki hosting is not permission.
+
+The existing `vtennisg` GD-ROM entry in `assets/games.ron` selects `vtennis`.
+Its Flycast core, disc path, player count and lockstep settings are unchanged.
+The original game's flyer guides the cabinet, not a claimed GD-ROM-specific
+art kit. No emulator work, ROM download/capture/upload, map placement, commit
+or deployment is included.
+
 ### Metal Slug: online-source trial
 
 `mslug` uses a **40×56**, two-player Neo Geo MVS big-red shell with red sides,

@@ -1,0 +1,286 @@
+Arcade bar: the SH4 JIT gives the same machine on every computer, whatever it compiled when.
+
+Two things in rec_wasm.cpp (retrom-project/flycast-wasm's SH4 -> WebAssembly JIT) made the game
+depend on the host rather than only on the state and the inputs; two machines in lockstep from
+the same state drifted apart within a second (flycast/check.mjs finds them):
+
+- Deferred compiles. Upstream compiles a new block synchronously until the frame has used 24 ms
+  of wall time, then in the background, running the block meanwhile through the SHIL bridge
+  (fly_bridge_execute). The bridge charges the guest other cycles than the compiled block: no
+  idle-loop fast-forward, and cycles an op itself adds are dropped. Which blocks were bridged,
+  decided by the wall clock and by when the browser's compiles landed, changed the game. Here a
+  new block is always compiled on the spot (g_defer_runtime off). flycast_jit_mode(n) brings the
+  deferral back for comparisons (check.mjs-style tests show it diverging).
+- The import "thunk resolution". The first time a block compiled, the JIT called each of its
+  helpers once with dummy arguments: a store-queue flush (which wrote the store queue into RAM
+  at 0x0C000000), an 8/16/32-bit write to SH4 address 0, opcode 0 through the interpreter, and a
+  DIV1 step that rewrote SR.Q and SR.M. A state loaded before that first compile (a start-up
+  state; a player joining) was thereby changed. Our link binds Module._wasm_* straight to the
+  module's exports, so the calls are dropped.
+
+- NaNs. WebAssembly leaves the sign and payload of a NaN result to the host CPU (x86 makes
+  0xFFC00000 where ARM makes 0x7FC00000): players on an Intel and on an Apple Silicon machine
+  would part the first time the game kept the bits of a 0/0. The JIT's FPU arithmetic (fadd,
+  fsub, fmul, fdiv, fsqrt, fmac, fsrra, fipr, ftrv) stores any NaN as the SH4's own quiet NaN,
+  0x7FBFFFFF (wasm_emit.h), and the interpreter, which runs the double-precision ops, does the
+  same through fixNaN/fixNaN64 (sh4_core.h; upstream only in STRICT_MODE). A precaution: no
+  NaN reached the RAM in our Virtua Tennis runs (same RAM with and without it), and it costs
+  nothing measurable.
+
+The multi-block chain modules, also compiled in the background and adopted when they land, are
+kept: check.mjs shows a run where none land and one where they do give the same RAM.
+
+diff --git a/core/rec-wasm/rec_wasm.cpp b/core/rec-wasm/rec_wasm.cpp
+--- a/core/rec-wasm/rec_wasm.cpp
++++ b/core/rec-wasm/rec_wasm.cpp
+@@ -654,7 +654,12 @@
+ // Verdict history: v4 (trap-mediated bridge) broke JGR immediately;
+ // v5 (no int-check) broke JGR after soak. Each build gets user-eyes verdict.
+ #define FLY_DEFER_ON 1
+-static const bool g_defer_runtime = FLY_DEFER_ON;
++// Arcade bar (flycast/patches/0005): deferral is off unless asked for (flycast_jit_mode). A
++// deferred block runs through the SHIL bridge, which charges the guest different cycles than
++// the same block compiled (no idle-loop fast-forward, cycles an op adds are dropped), so
++// which blocks were bridged, decided by the wall clock and by when the browser's compiles land,
++// changed the game: two machines from the same state and inputs drifted apart within a second.
++static bool g_defer_runtime = false;
+ #define FLY_FRAME_BUDGET_MS 24.0
+ static double g_frame_start_ms = 0;   // stamped at mainloop entry
+ #ifndef JIT_PROD_BUILD
+@@ -663,7 +668,20 @@
+ static double g_fly_rp_snap[10];
+ static u64 g_fly_guest_snap = 0;
+ #endif
++// Arcade bar (flycast/patches/0005): how the JIT compiles a block it hasn't got, for the
++// determinism checks (flycast/check.mjs). 0 (the bar's): there and then, synchronously, before
++// running it. 1: upstream's deferral, by the wall clock (blocks past the frame's 24 ms budget
++// compile in the background and run through the SHIL bridge meanwhile). 2 and 3: deferral as if
++// never / always past the budget.
++static int vab_jit_budget_mode = 0;
++extern "C" EMSCRIPTEN_KEEPALIVE void flycast_jit_mode(int mode)
++{
++	vab_jit_budget_mode = mode == 2 ? 1 : mode == 3 ? 2 : 0;
++	g_defer_runtime = mode != 0;
++}
+ static inline bool fly_frame_over_budget() {
++	if (vab_jit_budget_mode == 1) return false;
++	if (vab_jit_budget_mode == 2) return true;
+ 	return emscripten_get_now() - g_frame_start_ms > FLY_FRAME_BUDGET_MS;
+ }
+ static bool g_compile_defer = false;   // set around over-budget rdv calls
+@@ -3728,21 +3746,12 @@
+ 		// so V8 can do direct WASM->WASM cross-module calls.
+ 		if (!Module._jitImportsResolved) {
+ 			// Force thunk resolution — reads from addr 0 (BIOS ROM, harmless)
+-			Module._wasm_mem_read8(0);
+-			Module._wasm_mem_read16(0);
+-			Module._wasm_mem_read32(0);
+-			// Writes to addr 0 (BIOS ROM area, writes are ignored by hardware)
+-			Module._wasm_mem_write8(0, 0);
+-			Module._wasm_mem_write16(0, 0);
+-			Module._wasm_mem_write32(0, 0);
+-			// ifb: opcode 0 is a benign SH4 instruction, pc=0 is safe during init
+-			Module._wasm_exec_ifb(0, 0);
+-			// shil_fb: block_vaddr 0 will miss in blockByVaddr (increments miss counter, harmless)
+-			Module._wasm_exec_shil_fb(0, 0);
+-			Module._wasm_sq_pref(0);
+-			Module._wasm_div32u(0, 0, 0);
+-			Module._wasm_div32s(0, 0, 0);
+-			Module._wasm_div1(0, 0, 0);
++			// Arcade bar (flycast/patches/0005): no calls here. Upstream called every helper once
++			// ("resolve the lazy thunks"), which ran a store-queue flush to RAM, wrote SH4 address 0,
++			// ran opcode 0 and changed SR.Q/M of the live machine the first time a block compiled: a
++			// state loaded before that moment came out changed. Our link binds Module._wasm_* straight
++			// to the module's exports (Module["_wasm_mem_read8"] = wasmExports[...]), so there is
++			// nothing to resolve.
+ 
+ 			// Now Module._fn references are raw WebAssembly.Function objects
+ 			var isWasm = typeof WebAssembly.Function !== 'undefined'
+@@ -3806,18 +3815,12 @@
+ 	var gen = Module._flyGen;
+ 	if (!Module._jitImportsResolved) {
+ 		// Same one-time thunk resolution as the sync path (see above).
+-		Module._wasm_mem_read8(0);
+-		Module._wasm_mem_read16(0);
+-		Module._wasm_mem_read32(0);
+-		Module._wasm_mem_write8(0, 0);
+-		Module._wasm_mem_write16(0, 0);
+-		Module._wasm_mem_write32(0, 0);
+-		Module._wasm_exec_ifb(0, 0);
+-		Module._wasm_exec_shil_fb(0, 0);
+-		Module._wasm_sq_pref(0);
+-		Module._wasm_div32u(0, 0, 0);
+-		Module._wasm_div32s(0, 0, 0);
+-		Module._wasm_div1(0, 0, 0);
++		// Arcade bar (flycast/patches/0005): no calls here. Upstream called every helper once
++		// ("resolve the lazy thunks"), which ran a store-queue flush to RAM, wrote SH4 address 0,
++		// ran opcode 0 and changed SR.Q/M of the live machine the first time a block compiled: a
++		// state loaded before that moment came out changed. Our link binds Module._wasm_* straight
++		// to the module's exports (Module["_wasm_mem_read8"] = wasmExports[...]), so there is
++		// nothing to resolve.
+ 		Module._jitImports = {
+ 			memory: wasmMemory,
+ 			read8:   Module._wasm_mem_read8,
+@@ -3866,18 +3869,12 @@
+ EM_JS(int, wasm_compile_block_batch, (const u8* bytesPtr, u32 len, const u32* pcsPtr, u32 count, u32* outIdxPtr), {
+ 	try {
+ 		if (!Module._jitImportsResolved) {
+-			Module._wasm_mem_read8(0);
+-			Module._wasm_mem_read16(0);
+-			Module._wasm_mem_read32(0);
+-			Module._wasm_mem_write8(0, 0);
+-			Module._wasm_mem_write16(0, 0);
+-			Module._wasm_mem_write32(0, 0);
+-			Module._wasm_exec_ifb(0, 0);
+-			Module._wasm_exec_shil_fb(0, 0);
+-			Module._wasm_sq_pref(0);
+-			Module._wasm_div32u(0, 0, 0);
+-			Module._wasm_div32s(0, 0, 0);
+-			Module._wasm_div1(0, 0, 0);
++			// Arcade bar (flycast/patches/0005): no calls here. Upstream called every helper once
++			// ("resolve the lazy thunks"), which ran a store-queue flush to RAM, wrote SH4 address 0,
++			// ran opcode 0 and changed SR.Q/M of the live machine the first time a block compiled: a
++			// state loaded before that moment came out changed. Our link binds Module._wasm_* straight
++			// to the module's exports (Module["_wasm_mem_read8"] = wasmExports[...]), so there is
++			// nothing to resolve.
+ 			Module._jitImports = {
+ 				memory: wasmMemory,
+ 				read8:   Module._wasm_mem_read8,
+diff --git a/core/rec-wasm/wasm_emit.h b/core/rec-wasm/wasm_emit.h
+--- a/core/rec-wasm/wasm_emit.h
++++ b/core/rec-wasm/wasm_emit.h
+@@ -189,6 +189,28 @@
+ // Store f32 value to rd (assumes value is already on stack)
+ static inline void emitStoreRdF32(WasmModuleBuilder& b, const shil_param& rd) {
+ 	b.op_f32_store(rd.reg_offset());
++}
++
++// Arcade bar (flycast/patches/0005): stores an arithmetic result ([ctx, f32] on the stack) with
++// any NaN made the one quiet NaN the SH4's FPU itself produces, 0x7FBFFFFF. WebAssembly leaves a
++// NaN's sign and payload to the host (x86 makes 0xFFC00000 where ARM makes 0x7FC00000), so two
++// players' machines, one on each, would otherwise differ from the first 0/0 whose bits the game
++// keeps. Uses LOCAL_TMP. fabs/fneg (bit operations) and conversions don't need it.
++static inline void emitStoreF32Canonical(WasmModuleBuilder& b, u32 offset) {
++	b.op_i32_reinterpret_f32();
++	b.op_local_set(LOCAL_TMP);
++	b.op_i32_const((s32)0x7FBFFFFF);
++	b.op_local_get(LOCAL_TMP);
++	b.op_local_get(LOCAL_TMP);
++	b.op_i32_const(0x7FFFFFFF);
++	b.op_i32_and();
++	b.op_i32_const(0x7F800000);
++	b.op_i32_gt_u();            // exponent all ones and a nonzero fraction: a NaN
++	b.op_select();
++	b.op_i32_store(offset);
++}
++static inline void emitStoreRdF32Canonical(WasmModuleBuilder& b, const shil_param& rd) {
++	emitStoreF32Canonical(b, rd.reg_offset());
+ }
+ 
+ // ============================================================
+@@ -1191,7 +1213,7 @@
+ 		emitLoadParamF32(b, op.rs1);
+ 		emitLoadParamF32(b, op.rs2);
+ 		b.op_f32_add();
+-		emitStoreRdF32(b, op.rd);
++		emitStoreRdF32Canonical(b, op.rd);
+ 		return true;
+ 
+ 	case shop_fsub:
+@@ -1199,7 +1221,7 @@
+ 		emitLoadParamF32(b, op.rs1);
+ 		emitLoadParamF32(b, op.rs2);
+ 		b.op_f32_sub();
+-		emitStoreRdF32(b, op.rd);
++		emitStoreRdF32Canonical(b, op.rd);
+ 		return true;
+ 
+ 	case shop_fmul:
+@@ -1207,7 +1229,7 @@
+ 		emitLoadParamF32(b, op.rs1);
+ 		emitLoadParamF32(b, op.rs2);
+ 		b.op_f32_mul();
+-		emitStoreRdF32(b, op.rd);
++		emitStoreRdF32Canonical(b, op.rd);
+ 		return true;
+ 
+ 	case shop_fdiv:
+@@ -1215,7 +1237,7 @@
+ 		emitLoadParamF32(b, op.rs1);
+ 		emitLoadParamF32(b, op.rs2);
+ 		b.op_f32_div();
+-		emitStoreRdF32(b, op.rd);
++		emitStoreRdF32Canonical(b, op.rd);
+ 		return true;
+ 
+ 	case shop_fabs:
+@@ -1236,7 +1258,7 @@
+ 		b.op_local_get(LOCAL_CTX);
+ 		emitLoadParamF32(b, op.rs1);
+ 		b.op_f32_sqrt();
+-		emitStoreRdF32(b, op.rd);
++		emitStoreRdF32Canonical(b, op.rd);
+ 		return true;
+ 
+ 	case shop_fseteq:
+@@ -1307,7 +1329,7 @@
+ 		b.op_f64_mul();                     // (f64)f0 * (f64)fm  — exact
+ 		b.op_f64_add();                     // + (f64)fn — one rounding
+ 		b.op_f32_demote_f64();              // → f32 — one rounding
+-		emitStoreRdF32(b, op.rd);
++		emitStoreRdF32Canonical(b, op.rd);
+ 		return true;
+ 
+ 	case shop_fsrra:
+@@ -1317,7 +1339,7 @@
+ 		emitLoadParamF32(b, op.rs1);
+ 		b.op_f32_sqrt();
+ 		b.op_f32_div();
+-		emitStoreRdF32(b, op.rd);
++		emitStoreRdF32Canonical(b, op.rd);
+ 		return true;
+ 
+ 	case shop_fipr: {
+@@ -1363,7 +1385,7 @@
+ 		b.op_f64_add();
+ 		// Demote f64 result back to f32 and store
+ 		b.op_f32_demote_f64();
+-		emitStoreRdF32(b, op.rd);
++		emitStoreRdF32Canonical(b, op.rd);
+ 		return true;
+ 	}
+ 
+@@ -1443,7 +1465,7 @@
+ 
+ 			// Demote to f32 and store
+ 			b.op_f32_demote_f64();
+-			b.op_f32_store(voff + col * 4);
++			emitStoreF32Canonical(b, voff + col * 4);
+ 		}
+ 		return true;
+ 	}
+diff --git a/core/hw/sh4/sh4_core.h b/core/hw/sh4/sh4_core.h
+--- a/core/hw/sh4/sh4_core.h
++++ b/core/hw/sh4/sh4_core.h
+@@ -25,9 +25,11 @@
+ }
+ 
+ // The SH4 sets the signaling bit to 0 for qNaN (unlike all recent CPUs).
++// Arcade bar (flycast/patches/0005): always, under Emscripten: WebAssembly leaves a NaN's sign
++// and payload to the host CPU, and players' machines must stay bit-identical.
+ static inline f32 fixNaN(f32 f)
+ {
+-#ifdef STRICT_MODE
++#if defined(STRICT_MODE) || defined(__EMSCRIPTEN__)
+ 	u32& hex = *(u32 *)&f;
+ 	if (std::isnan(f))
+ 		hex = 0x7fbfffff;
+@@ -37,7 +39,7 @@
+ 
+ static inline f64 fixNaN64(f64 f)
+ {
+-#ifdef STRICT_MODE
++#if defined(STRICT_MODE) || defined(__EMSCRIPTEN__)
+ 	u64& hex = *(u64 *)&f;
+ 	if (std::isnan(f))
+ 		hex = 0x7ff7ffffffffffffll;

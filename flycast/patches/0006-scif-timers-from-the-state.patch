@@ -1,0 +1,32 @@
+Arcade bar: loading a state doesn't restart the SH4's serial port timer.
+
+SCIFSerialPort::deserialize restored the SCIF's two scheduler entries from the state (V43 and up)
+and then called updateBaudRate(), which requests the transmit timer again from "now": the SH4's
+clock at that point is still the one from before the load (the context and the scheduler base
+come later in the state). Two machines loading the same state had that timer due at different
+cycles, and saving right after loading gave different bytes. Now the baud rate is recomputed
+without rescheduling when the state carried the timers.
+
+diff --git a/core/hw/sh4/modules/serial.cpp b/core/hw/sh4/modules/serial.cpp
+--- a/core/hw/sh4/modules/serial.cpp
++++ b/core/hw/sh4/modules/serial.cpp
+@@ -441,6 +441,19 @@
+ 		transmitting = false;
+ 	}
+ 	SCIF_SCBRR2 &= 0xff;	// work around previous issues with dynarecs
++#ifdef __EMSCRIPTEN__
++	// Arcade bar (flycast/patches/0006): the state brought the serial timers back (V43 and up);
++	// rescheduling here restarted the transmit timer from "now" before the SH4's clock itself was
++	// restored (it comes later in the state), i.e. from the time of whatever ran before the load:
++	// two machines loading the same state then had that timer due at different cycles.
++	if (deser.version() >= Deserializer::V43)
++	{
++		frameSize = 1 + 8 - SCIF_SCSMR2.CHR + SCIF_SCSMR2.PE + 1 + SCIF_SCSMR2.STOP;
++		int bauds = SH4_MAIN_CLOCK / 4 / (SCIF_SCBRR2 + 1) / 32 / (1 << (SCIF_SCSMR2.CKS * 2));
++		cyclesPerBit = SH4_MAIN_CLOCK / bauds;
++		return;
++	}
++#endif
+ 	updateBaudRate();
+ }
+ 

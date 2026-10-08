@@ -95,12 +95,19 @@ pub struct Game {
     pub rom: String,
     /// The core that runs it: an FBNeo core, served at /fbneo/<core>/fbneo.mjs, or a core built
     /// on its own and served at /<core>/<core>.mjs: "supermodel" (Sega Model 3, supermodel/),
-    /// "daytona" (Daytona USA's Sega Model 2, daytona/) or "mame" (MAME, mame/).
+    /// "daytona" (Daytona USA's Sega Model 2, daytona/), "mame" (MAME, mame/) or "flycast" (Sega
+    /// NAOMI, flycast/).
     pub core: String,
     pub title: String,
     /// A BIOS set loaded next to the ROM, e.g. "neogeo".
     #[serde(default)]
     pub bios: Option<String>,
+    /// More files the core needs next to the ROM, as paths under /roms/, folders and all: a
+    /// NAOMI GD-ROM game's disc is "vtennisg/gds-0011.chd", which Flycast looks for in a folder
+    /// named after the ROM set. Each goes into the core's file system at the same path under
+    /// /roms (web/emulator/worker.js).
+    #[serde(default)]
+    pub files: Vec<String>,
     /// Players take turns on player 1's controls (Pac-Man, Wonder Boy), as on an upright
     /// cabinet, so online player 2 plays through them too.
     #[serde(default)]
@@ -381,6 +388,7 @@ mod tests {
             assert_eq!(game.cabinets, [skin]);
             assert!(!game.turns);
             assert_eq!(game.bios.as_deref(), bios);
+            assert!(game.files.is_empty());
         }
         assert!(
             games
@@ -532,6 +540,51 @@ mod tests {
     }
 
     #[test]
+    fn naomi_game_brings_its_disc() {
+        let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
+        let tennis = games.iter().find(|g| g.rom == "vtennisg").unwrap();
+        assert_eq!(tennis.core, "flycast");
+        assert_eq!(tennis.title, "Virtua Tennis");
+        assert_eq!(tennis.players, 2);
+        // Its save state is ~50 MB: no rollback.
+        assert!(tennis.lockstep && !tennis.arcade && !tennis.linked && !tennis.gun);
+        // The BIOS is in the ROM set; the GD-ROM is in a folder named after it, where Flycast
+        // looks for it.
+        assert!(tennis.bios.is_none());
+        assert_eq!(tennis.files, ["vtennisg/gds-0011.chd"]);
+        // Files are paths under /roms/ that stay there, and so far only a NAOMI game has any.
+        for game in &games {
+            assert!(
+                game.files.is_empty() || game.core == "flycast",
+                "{}",
+                game.title
+            );
+            for file in &game.files {
+                assert!(
+                    !file.starts_with('/')
+                        && !file.split('/').any(|part| part.is_empty() || part == ".."),
+                    "{file}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn files_default_to_none_and_read_as_a_list() {
+        let [plain, disc]: [Game; 2] = games_from_ron(
+            r#"[
+                (rom: "mk2", core: "midway", title: "mkII"),
+                (rom: "vtennisg", core: "flycast", title: "Virtua Tennis", files: ["vtennisg/gds-0011.chd", "extra.bin"]),
+            ]"#,
+        )
+        .unwrap()
+        .try_into()
+        .unwrap();
+        assert!(plain.files.is_empty());
+        assert_eq!(disc.files, ["vtennisg/gds-0011.chd", "extra.bin"]);
+    }
+
+    #[test]
     fn cruisn_usa_is_one_player_on_mame() {
         let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
         let cruisn = games.iter().find(|g| g.rom == "crusnusa41").unwrap();
@@ -555,10 +608,11 @@ mod tests {
             })
         );
         assert_eq!(cruisn.cabinets, ["crusnusa"]);
-        // Existing plain-cabinet placements remain valid; art doesn't replace the map.
+        // On the map, in a cabinet (its own skin, or a plain one: art doesn't replace the map).
         let map = Map::from_ron(include_str!("../../assets/maps/bar.ron")).unwrap();
         assert!(map.objects.iter().any(|object| {
-            object.tile == "objects/cabinet" && object.game.as_deref() == Some("crusnusa41")
+            object.tile.starts_with("objects/cabinet")
+                && object.game.as_deref() == Some("crusnusa41")
         }));
     }
 

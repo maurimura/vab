@@ -33,8 +33,10 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             |_req, ctx| async move { ice_servers(&ctx.env).await },
         )
         // FBNeo cores (/fbneo/<core>/fbneo.wasm), the cores built on their own (/supermodel/supermodel.wasm
-        // for the Sega Model 3, /daytona/daytona.wasm for Daytona USA, /mame/mame.wasm for MAME) and ROM
-        // sets (/roms/mk2.zip) live in R2, each with the content type it was uploaded with (Makefile).
+        // for the Sega Model 3, /daytona/daytona.wasm for Daytona USA, /mame/mame.wasm for MAME,
+        // /flycast/flycast.wasm for the Sega NAOMI) and ROM sets (/roms/mk2.zip, or a file in a folder
+        // of its own, /roms/vtennisg/gds-0011.chd) live in R2, each with the content type it was
+        // uploaded with (Makefile).
         .get_async("/fbneo/*file", |req, ctx| serve_from_r2(req, ctx, "fbneo"))
         .get_async("/supermodel/*file", |req, ctx| {
             serve_from_r2(req, ctx, "supermodel")
@@ -42,6 +44,9 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
         .get_async("/mame/*file", |req, ctx| serve_from_r2(req, ctx, "mame"))
         .get_async("/daytona/*file", |req, ctx| {
             serve_from_r2(req, ctx, "daytona")
+        })
+        .get_async("/flycast/*file", |req, ctx| {
+            serve_from_r2(req, ctx, "flycast")
         })
         .get_async("/roms/*file", |req, ctx| serve_from_r2(req, ctx, "roms"))
         // The bar's map: the one last saved from the editor, or the one built with the site.

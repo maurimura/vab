@@ -77,6 +77,8 @@ it renamed) and how its controls are mapped.
 | `netplay/` | Rollback for two players at a cabinet (GGRS), run by the emulator worker | `cargo` + `wasm-bindgen` → `web/netplay/` |
 | `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules, one of them Sega's Out Run board (see [Out Run](#out-run)) | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
 | `supermodel/`, `daytona/` | The Sega cores, each an Emscripten ES module behind the libretro API: Supermodel for the Model 3 (Virtua Striker 2) and Daytona USA's Model 2 (see [Daytona USA](#daytona-usa)) | their `build.sh` → `supermodel/dist/`, `daytona/dist/` |
+| `mame/` | MAME (libretro's fork) with the Namco System 12 and System 23 drivers only, for Tekken 3 and Time Crisis II, as an Emscripten ES module: see [mame/README.md](mame/README.md) | emsdk + MAME's own build (`mame/build.sh`) → `mame/dist/` |
+| `flycast/` | Flycast for the Sega NAOMI (Virtua Tennis), as an Emscripten ES module behind the libretro API: see [flycast/README.md](flycast/README.md) and [Virtua Tennis](#virtua-tennis) | emsdk + Flycast's CMake build (`flycast/build.sh`) → `flycast/dist/` |
 | `mame/` | MAME (libretro's fork) with the Namco System 12 and System 23 and Midway V-Unit drivers only, for Tekken 3, Time Crisis II and Cruis'n USA, as an Emscripten ES module: see [mame/README.md](mame/README.md) | emsdk + MAME's own build (`mame/build.sh`) → `mame/dist/` |
 | `hockey/` | Air hockey physics and the bot, without Bevy, tested natively (`cargo test -p hockey`) | |
 | `darts/` | Darts scoring, a game of 301 and the throwing hand's sway, without Bevy, tested natively (`cargo test -p darts`) | |
@@ -88,7 +90,7 @@ it renamed) and how its controls are mapped.
 | `assets/` | Tile art (`tiles/`) and maps (`maps/`) | |
 | `web/` | Static assets: `index.html`, the room connection (`room.js`), Bevy's `pkg/`, the emulator worker + libretro frontend in `emulator/` | |
 
-Routes: static files from `web/`, `GET /ws/:room` (WebSocket to that room's Durable Object), `GET /ice` (WebRTC servers), `GET /fbneo/<core>/fbneo.{mjs,wasm}` (FBNeo cores), `GET /supermodel/supermodel.{mjs,wasm}`, `GET /daytona/daytona.{mjs,wasm}` and `GET /mame/mame.{mjs,wasm}` (the Sega and MAME cores) and `GET /roms/<file>` (ROM sets), all from R2, and `GET /assets/maps/bar.ron` (the bar's map: the one last saved from the web editor, from R2, or the one in `web/`; `PUT` saves it, from the editor Worker only).
+Routes: static files from `web/`, `GET /ws/:room` (WebSocket to that room's Durable Object), `GET /ice` (WebRTC servers), `GET /fbneo/<core>/fbneo.{mjs,wasm}` (FBNeo cores), `GET /supermodel/supermodel.{mjs,wasm}`, `GET /daytona/daytona.{mjs,wasm}`, `GET /mame/mame.{mjs,wasm}` and `GET /flycast/flycast.{mjs,wasm}` (the Sega, MAME and Flycast cores) and `GET /roms/<path>` (ROM sets, and the files a game needs next to one, folders and all: `/roms/vtennisg/gds-0011.chd`), all from R2, and `GET /assets/maps/bar.ron` (the bar's map: the one last saved from the web editor, from R2, or the one in `web/`; `PUT` saves it, from the editor Worker only).
 
 ## Setup
 
@@ -112,6 +114,8 @@ instead, map included:
 make emulator   # FBNeo cores -> emulator/dist, uploaded to local R2. First run takes a while.
 # Each ROM set and BIOS set (neogeo.zip for Neo Geo games), zipped and named as FBNeo expects:
 make upload-rom ROM=$HOME/Downloads/mk2.zip
+# A game's other `files` (assets/games.ron) at their path under /roms/, e.g. a NAOMI game's disc:
+make upload-rom ROM=$HOME/Downloads/vtennisg/gds-0011.chd KEY=vtennisg/gds-0011.chd
 # Optional start-up state per game: skips boot screens, inserts 9 coins. Redo after rebuilding cores.
 node emulator/snapshot.mjs emulator/dist/midway/fbneo.mjs $HOME/Downloads/mk2.zip emulator/dist/mk2.state
 make upload-rom ROM=emulator/dist/mk2.state
@@ -189,7 +193,9 @@ Cores, ROMs and start-up states live in R2 and go up by hand, when they change:
 cd server && npx wrangler r2 bucket create vab && cd ..   # once
 make emulator-remote                                      # cores
 make supermodel-remote daytona-remote                     # the Sega cores, once built (make supermodel, make daytona)
+make mame-remote flycast-remote                           # MAME and Flycast, likewise (make mame, make flycast)
 make upload-rom R2_TARGET=--remote ROM=$HOME/Downloads/mk2.zip   # each ROM, BIOS and .state
+make upload-rom R2_TARGET=--remote ROM=$HOME/Downloads/vtennisg/gds-0011.chd KEY=vtennisg/gds-0011.chd   # a disc, at its path
 make deploy                                               # or merge to main
 make editor-deploy                                        # the web editor, likewise
 ```
@@ -201,6 +207,7 @@ trying changes on several computers before they reach the site:
 cd server && npx wrangler r2 bucket create vab-preview && cd ..   # once
 make emulator-remote R2_BUCKET=vab-preview
 make upload-rom R2_TARGET=--remote R2_BUCKET=vab-preview ROM=$HOME/Downloads/mk2.zip   # each
+make upload-rom R2_TARGET=--remote R2_BUCKET=vab-preview ROM=$HOME/Downloads/vtennisg/gds-0011.chd KEY=vtennisg/gds-0011.chd
 make preview    # https://vab-preview.<account>.workers.dev
 make editor-preview   # the editor for it, https://vab-editor-preview.<account>.workers.dev
 ```
@@ -246,9 +253,9 @@ of them start a new GGRS session (`netplay/`) from it. Someone leaving works the
 machine guesses the others' input and re-runs frames when the real one arrives; the worker picks
 the rollback limit from how fast the machine runs the game (Mortal Kombat II gets 3 frames and 3
 frames of input delay on an M-series Mac, the rest 8 and 2). GGRS compares a hash of the game's
-RAM every 60 frames and reports any desync. A `lockstep` game (Virtua Striker 2, whose Sega core's
-state is too big to save every frame) never guesses: it runs a frame once
-everyone's input for it is in, behind an input delay picked from the round trip and then tuned
+RAM every 60 frames and reports any desync. A `lockstep` game (Virtua Striker 2 and Virtua
+Tennis, whose Sega cores' states are too big to save every frame) never guesses: it runs a frame
+once everyone's input for it is in, behind an input delay picked from the round trip and then tuned
 to how late the others' inputs actually arrive. The worker runs one frame per slot on a precise
 clock, at the game's own rate, and sends each input as soon as it exists, so both machines run
 the same slot and swap one input per frame.
@@ -447,6 +454,61 @@ apart), and at that game until the page reloads. Its answer ends with the game's
 a time (a tap should nudge the car over, a hold take a bend, letting go straighten it as fast as
 the game wants), then paste the last answer's `wheel: Some(...)` over the game's in
 `assets/games.ron`.
+## Virtua Tennis
+
+Virtua Tennis (Sega NAOMI, 1999; Power Smash in Japan) runs on its own core, `flycast/`
+([flycast/README.md](flycast/README.md)), built and put in the local bucket with `make flycast`
+(`make flycast-remote` for the site's), served from R2 at `/flycast/`. It's a GD-ROM game, MAME's
+`vtennisg`, so it comes as two files: the ROM set, with the NAOMI BIOS and the game's security
+chip, and the disc, a CHD, which Flycast looks for in a folder named after the ROM set. In R2
+they sit as they would on disk, `/roms/vtennisg.zip` and `/roms/vtennisg/gds-0011.chd`:
+
+```sh
+make upload-rom ROM=$HOME/Downloads/vtennisg.zip
+make upload-rom ROM=$HOME/Downloads/vtennisg/gds-0011.chd KEY=vtennisg/gds-0011.chd
+```
+
+(add `R2_TARGET=--remote` for the site, and `R2_BUCKET=vab-preview` for the preview's bucket).
+The disc is the game's `files` in `assets/games.ron`: paths under `/roms/` that the page has the
+worker download along with the ROM set (and its BIOS set, for a game with one), each written at
+the same path in the core's file system, folders made as needed (`romPath` and `Core.addFile` in
+`web/emulator/libretro.js`). It is about 45 MiB, fetched like the ROM sets: a browser that has
+it only asks the server whether it changed.
+
+The frontend sets the core's options (`OPTIONS` in `web/emulator/libretro.js`, keys `reicast_*`,
+Flycast's old name): one thread with the frame drawn within `retro_run`, no frame skipping, the
+NAOMI's own 640x480, nothing the board didn't have, the USA BIOS so the text is English, the disc
+read at its own pace, no network, free play. Two players, each a stick and two shot buttons,
+Coin and Start; the help card names the buttons as the core does.
+
+A NAOMI boots for almost three minutes (the BIOS, then the GD-ROM), and the BIOS's own screens
+stay black in this build, so the cabinet starts from a state saved in the attract mode, made
+with the other games' tool and a longer boot:
+
+```sh
+BOOT=175 node emulator/snapshot.mjs flycast/dist/flycast.mjs $HOME/Downloads/vtennisg.zip flycast/dist/vtennisg.state 0 $HOME/Downloads/vtennisg/gds-0011.chd
+make upload-rom ROM=flycast/dist/vtennisg.state
+```
+
+(no coins: the board is on free play; the disc's path must have a `roms/` folder in it for the
+tool to put it in the set's folder, as `flycast/.cache/roms/vtennisg/gds-0011.chd` has). The
+state is 76 MB, deflated to 20 MB in the file. Remade after `make flycast`, like the others.
+
+A frame costs 10-13 ms in Chrome, between Tekken 3's and Virtua Striker 2's, too much to replay
+for rollback with a state that size, so online it plays in lockstep (`lockstep: true`), as
+Virtua Striker 2 does. Flycast compiles the game's code as it runs (an SH4 to WebAssembly JIT),
+about 2600 blocks over the first seconds with frames of 100-300 ms among them, and in lockstep
+each such hitch is a wait for the other player: the compiled code survives the power-on and
+state load of a handover (flycast/patches/0007), and a joiner, whose machine hasn't run the game
+yet, plays 300 frames blind from the handed-over state and goes back to it before the session
+starts (`vab_warmup` in `assets/games.ron`, `web/emulator/worker.js`), so both machines start
+with the code compiled. `node flycast/lab.mjs` tries the cabinet end to end in headless Chromes
+of its own against `make dev BUCKET=local`: one player alone, from the start-up state into a
+match, then a second at the same cabinet (both in lockstep: 60 fps, 4 frames of input delay on
+one machine), then a watcher; with `--delay=40 --jitter=15` the pages' direct links carry that
+one-way delay, to see the game settle after a join at a chosen ping. The machine's own
+determinism, Chrome against Node and through saves, rollbacks and the JIT's background
+compiles, is `node flycast/check.mjs` ([flycast/README.md](flycast/README.md)).
 
 ## Voice
 
