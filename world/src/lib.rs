@@ -361,7 +361,9 @@ mod tests {
         // One player; whoever presses E next watches.
         assert_eq!(outrun.players, 1);
         assert!(outrun.bios.is_none() && outrun.options.is_empty());
-        assert!(!outrun.turns && !outrun.lockstep && !outrun.gun && !outrun.linked && !outrun.arcade);
+        assert!(
+            !outrun.turns && !outrun.lockstep && !outrun.gun && !outrun.linked && !outrun.arcade
+        );
         // The one-player games: Out Run and Cruis'n USA.
         assert_eq!(games.iter().filter(|g| g.players == 1).count(), 2);
     }
