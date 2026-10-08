@@ -48,3 +48,33 @@ test('a lightgun aim in the high 16 bits never reaches the RetroPad, shared or n
   }
   assert.equal(routedButton(inputs, 0, 15, asteroid, true), 1);
 });
+
+// FBNeo's driving games (Out Run): Accelerate on R2, Brake on L2, the wheel on the left stick.
+const outrun = controllerRouting(
+  [new Map([[2, 'Coin 1'], [3, 'Start 1'], [13, 'Accelerate'], [12, 'Brake'], [0, 'Gear'], [6, 'Steering (Fake Digital Left)'], [7, 'Steering (Fake Digital Right)']])],
+  [new Map([['0/0', 'Steering']])],
+);
+
+test('a driving game takes Up and Down as its pedals, on its own port only', () => {
+  assert.deepEqual(outrun.pedals, [true]);
+  assert.equal(routedButton([bit(4), 0, 0, 0], 0, 13, outrun), 1);
+  assert.equal(routedButton([bit(4), 0, 0, 0], 0, 12, outrun), 0);
+  assert.equal(routedButton([bit(5), 0, 0, 0], 0, 12, outrun), 1);
+  assert.equal(routedButton([bit(5), 0, 0, 0], 0, 13, outrun), 0);
+  assert.equal(routedButton([0, bit(4), 0, 0], 1, 13, outrun), 0);
+  // A game that uses Up and Down keeps them, L2 and R2 or not.
+  const fighter = controllerRouting([new Map([[4, 'Up'], [5, 'Down'], [12, 'L2'], [13, 'R2']])]);
+  assert.deepEqual(fighter.pedals, [false]);
+  assert.equal(routedButton([bit(4), 0, 0, 0], 0, 13, fighter), 0);
+  assert.equal(routedButton([bit(4), 0, 0, 0], 0, 4, fighter), 1);
+});
+
+test("a driving game's arrows turn its wheel, never FBNeo's full-lock Left and Right", () => {
+  assert.deepEqual(outrun.wheel, [true]);
+  for (const id of [6, 7]) assert.equal(routedButton([bit(6) | bit(7), 0, 0, 0], 0, id, outrun), 0);
+  assert.equal(routedButton([bit(0), 0, 0, 0], 0, 0, outrun), 1);
+  // An analog stick without pedals (Terminator 2's gun) is no wheel: its arrows stay arrows.
+  const gun = controllerRouting([new Map([[4, 'Gun Y'], [7, 'Gun X'], [0, 'Button 1']])], [new Map([['0/0', 'Gun X']])]);
+  assert.deepEqual(gun.wheel, [false]);
+  assert.equal(routedButton([bit(7), 0, 0, 0], 0, 7, gun), 1);
+});

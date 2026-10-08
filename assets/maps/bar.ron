@@ -1589,6 +1589,12 @@
             game: Some("daytona"),
         ),
         (
+            x: -1,
+            y: -3,
+            tile: "objects/cabinet",
+            game: Some("outrun"),
+        ),
+        (
             x: 0,
             y: -3,
             tile: "objects/cabinet_tekken3_down_left",

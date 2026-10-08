@@ -7,10 +7,12 @@
 // Player 1 also streams the game to a watcher (another worker, its stream arriving in order
 // like through the room), and a machine here plays the same stream: every 1.5 s player 1 sends
 // a state as for a new watcher, which must match what that machine got to by playing the
-// stream up to there.
+// stream up to there. With PLAYERS=1 (a one-player game, Out Run) player 1 only plays alone,
+// streaming, for twice as long.
 //
 //   node emulator/netplay-check.mjs <core.mjs> <rom.zip> [state] [bios.zip ...]
 //   PLAYERS=4 node emulator/netplay-check.mjs emulator/dist/konami/fbneo.mjs ~/Downloads/ssriders.zip emulator/dist/ssriders.state
+//   PLAYERS=1 node emulator/netplay-check.mjs emulator/dist/outrun/fbneo.mjs ~/Downloads/outrun.zip emulator/dist/outrun.state
 //
 // Env: PLAYERS (2), SECONDS per stage (10), LATENCY one way in ms (40), JITTER ms (10), LOSS
 // fraction (0.02), TURNS=1 for turn-based games, GUN=1 for lightgun games, BREAK=1 hands the
@@ -104,7 +106,9 @@ if (!isMainThread) {
     core.gun = process.env.GUN === '1';
     for (const path of biosPaths) core.addFile(basename(path), await readFile(path));
     core.loadGame(basename(romPath), await readFile(romPath));
-    core.present = false;
+    // Drawn, as a watcher's worker draws every frame it plays: Out Run's sprite chip writes
+    // back to its RAM as it draws.
+    core.present = true;
     return core;
   };
   const check = { core: await boot(), scratch: await boot(), stream: -1, frame: 0, matched: 0, mismatched: 0, states: 0 };
@@ -240,15 +244,17 @@ if (!isMainThread) {
     await wait(SECONDS);
     report(`${seat + 1} players:`);
   }
-  const leaving = players[1];
-  leaving.left = true;
-  await leaving.worker.terminate();
-  await handOver();
+  if (PLAYERS > 1) {
+    const leaving = players[1];
+    leaving.left = true;
+    await leaving.worker.terminate();
+    await handOver();
+  }
   const before = seated().map((player) => player.frames);
-  await wait(SECONDS);
-  report("player 2 left:");
+  await wait(PLAYERS > 1 ? SECONDS : SECONDS * 2);
+  report(PLAYERS > 1 ? "player 2 left:" : "1 player:");
   const stuck = seated().some((player, i) => player.frames - before[i] < SECONDS * 30);
-  if (stuck) players[0].errors.push("stopped after player 2 left");
+  if (stuck) players[0].errors.push(PLAYERS > 1 ? "stopped after player 2 left" : "stopped");
   clearInterval(mashing);
   clearInterval(snapshots);
   for (const player of seated()) await player.worker.terminate();
