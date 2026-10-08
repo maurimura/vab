@@ -54,6 +54,20 @@ for as long as it's down, and the pedal is a button. Its cabinet is the game's t
 players each play their own screen and gun, linked (see [Online play](#online-play)); the next
 to press E watches.
 
+Cruis'n USA (Midway V-Unit, 1994; MAME's `crusnusa41`, v4.1) is one player's: the next to press
+E watches. The arrows drive, as at Daytona USA: Left and Right turn the wheel (it turns for as
+long as one is held, to full lock in under half a second, and comes back to the middle when let
+go: MAME's own handling of a wheel on keys), Up is the gas and Down the brake. Z and X shift down
+and up, which matters with the manual transmission the game offers before each race (the
+automatic is the default); A, S and D are its three views and C the radio. Its menus are "turn
+to select, step to choose": Left and Right, then Up. The game starts from a start-up state with
+12 credits (3 start a game), made by `mame/crusnusa-state.mjs`, which also does the controls
+calibration the game asks for on its first power-on. A frame of a race takes about 9.5 ms in
+Chrome on an M1 Max (14 ms in Node; the budget is 17.3 ms at its 57.9 Hz), and the worker shows
+one every 34.5 ms, the game drawing every other frame. [mame/README.md](mame/README.md) has the
+numbers, the ROM set it needs (our `crusnusa.zip` uploaded as `crusnusa41.zip`, with one PAL in
+it renamed) and how its controls are mapped.
+
 | Path | What | Built with |
 | --- | --- | --- |
 | `client/` | Bevy app, mounted on `<canvas id="bevy">`; its text font (Fira Mono cut to Latin-1, OFL) is in `fonts/` | `cargo` + `wasm-bindgen` → `web/pkg/` |
@@ -61,7 +75,7 @@ to press E watches.
 | `netplay/` | Rollback for two players at a cabinet (GGRS), run by the emulator worker | `cargo` + `wasm-bindgen` → `web/netplay/` |
 | `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
 | `supermodel/`, `daytona/` | The Sega cores, each an Emscripten ES module behind the libretro API: Supermodel for the Model 3 (Virtua Striker 2) and Daytona USA's Model 2 (see [Daytona USA](#daytona-usa)) | their `build.sh` → `supermodel/dist/`, `daytona/dist/` |
-| `mame/` | MAME (libretro's fork) with the Namco System 12 and System 23 drivers only, for Tekken 3 and Time Crisis II, as an Emscripten ES module: see [mame/README.md](mame/README.md) | emsdk + MAME's own build (`mame/build.sh`) → `mame/dist/` |
+| `mame/` | MAME (libretro's fork) with the Namco System 12 and System 23 and Midway V-Unit drivers only, for Tekken 3, Time Crisis II and Cruis'n USA, as an Emscripten ES module: see [mame/README.md](mame/README.md) | emsdk + MAME's own build (`mame/build.sh`) → `mame/dist/` |
 | `hockey/` | Air hockey physics and the bot, without Bevy, tested natively (`cargo test -p hockey`) | |
 | `darts/` | Darts scoring, a game of 301 and the throwing hand's sway, without Bevy, tested natively (`cargo test -p darts`) | |
 | `shuffleboard/` | Table shuffleboard physics and scoring, without Bevy, tested natively (`cargo test -p shuffleboard`) | |
@@ -222,7 +236,7 @@ node emulator/rollback-check.mjs emulator/dist/midway/fbneo.mjs $HOME/Downloads/
 Players take a cabinet's free seats in order: as many as its game takes (`players` in
 `assets/games.ron`, 2 unless said, up to 4 as in Sunset Riders, 8 at Daytona USA's linked
 cabinets, which play another way: see [Daytona USA](#daytona-usa), or 1, when the next to press
-E watches), each on their seat's controls.
+E watches, as at Cruis'n USA), each on their seat's controls.
 The first plays alone right away. Whoever sits down later joins that game as it is: the lowest
 seat among those playing captures its machine and hands it to everyone through the room, and all
 of them start a new GGRS session (`netplay/`) from it. Someone leaving works the same way. Each
@@ -388,6 +402,11 @@ and `mame/linked-lab.mjs` plays it in three headless Chromes against `make dev B
 node mame/link-states.mjs $HOME/Downloads/timecrs2.zip          # -> mame/.cache/roms/timecrs2{,-link0,-link1}.state
 node mame/linked-check.mjs $HOME/Downloads/timecrs2.zip
 ```
+
+`mame/cruisn-lab.mjs` watches a one-player game the same way in two headless Chromes: a player
+drives Cruis'n USA, a second player's E at the full cabinet watches, and the watcher's machine
+is checked against the player's at the same frames (with Cruis'n USA's start-up state made by
+`mame/crusnusa-state.mjs` and uploaded next to its ROM set).
 
 `emulator/netplay-check.mjs` plays a game between workers in Node over a simulated network:
 player 1 alone, the others dropping in one by one, then player 2 leaving. Player 1 streams to a

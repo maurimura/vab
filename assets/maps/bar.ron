@@ -1595,6 +1595,12 @@
             game: Some("tekken3je1"),
         ),
         (
+            x: 2,
+            y: -3,
+            tile: "objects/cabinet",
+            game: Some("crusnusa41"),
+        ),
+        (
             x: 3,
             y: -3,
             tile: "objects/cabinet_timecrs2_down_left",

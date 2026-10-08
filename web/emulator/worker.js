@@ -94,7 +94,8 @@
 //        that another state of it can be passed over, and an arcade game's state is the
 //        cabinet at `seat` (the core's seat is set before it loads).
 //      { type: "probe", at } For checks: a "probe" message when the machine gets to frame `at`
-//        (playing online or watching), or without `at` after the next frame it runs.
+//        (playing online or watching, or alone while streaming: frames numbered as the watchers'
+//        machines number them), or without `at` after the next frame it runs (frame -1 alone).
 //      { type: "input", input } the local player's controls (a u32, above) |
 //      { type: "audio", port, sampleRate } the speaker's port and rate
 // Out: { type: "ready", state } the game is loaded (`state`: from the start's state) |
@@ -694,8 +695,12 @@ class Cabinet {
         // A linked game's player plays their own board, on its player 1 controls.
         const ports = byPort([sampleInput()], [this.#linked ? 0 : this.#seat]);
         this.#run(ports, true);
-        this.#probe(NEXT_FRAME);
-        this.#stream?.inputs.push(...ports);
+        const stream = this.#stream;
+        stream?.inputs.push(...ports);
+        // Streaming, a check can probe this machine and a watcher's at the same frame: by the
+        // number the watchers' machines give it (#watchInputs).
+        const numbered = stream && stream.frame + stream.inputs.length / PORTS;
+        this.#probe(stream && this.#probes.has(numbered) ? numbered : NEXT_FRAME);
         this.#next += frameMs;
       }
       this.#alarm.at(this.#next);

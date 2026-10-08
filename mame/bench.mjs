@@ -4,18 +4,24 @@
 //
 //   node mame/bench.mjs ~/Downloads/tekken3je1.zip
 //   GUN=1 node mame/bench.mjs ~/Downloads/timecrs2.zip   (more files after it: BIOS / device ROMs)
+//   STATE=mame/dist/crusnusa41.state COIN=0 WARMUP=1500 node mame/bench.mjs ~/crusnusa41.zip
 //
 // Env: FRAMES (timed frames, default 600), WARMUP (frames run first, default 1200: System 12
 // boots slowly), CORE (default mame/dist/mame.mjs), SHOT (a .png path for the last frame), GUN=1
 // for a lightgun game (the frontend then answers the core's lightgun: here, aimed at the middle),
 // DRC=1 / DRC=0 the R4650's recompiler on / off (core option mame_drc; unset: the core's default),
 // COIN=frame: 4 coins at that frame of the warm-up, then the trigger every few frames (Time
-// Crisis II: a game starts, so the timed frames are gameplay; with GUN=1).
+// Crisis II: a game starts, so the timed frames are gameplay; with GUN=1). A driving game (the
+// core calls RetroPad Up "Accelerate": Cruis'n USA) is driven instead: Start 60 frames after the
+// coins, taps of the gas to pick the race, the transmission and the car, then the gas held from
+// 700 frames after the coins with a touch of the wheel now and then. STATE=path: a start-up state
+// loaded after power-on, as the worker does (Cruis'n USA's: a fresh machine stops at its controls
+// calibration, mame/crusnusa-state.mjs).
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { loadavg } from "node:os";
 import { basename, resolve } from "node:path";
-import { deflateSync } from "node:zlib";
+import { deflateSync, inflateRawSync } from "node:zlib";
 import { Core } from "../web/emulator/libretro.js";
 import { optionsFromEnv, withOptions } from "./core-options.mjs";
 
@@ -64,6 +70,13 @@ try {
   process.exit(1);
 }
 const loadMs = performance.now() - started;
+if (process.env.STATE) {
+  // Start-up states may be deflated, as the worker packs them ("vabz").
+  const bytes = readFileSync(process.env.STATE);
+  core.reset();
+  core.unserialize(bytes.subarray(0, 4).toString() === "vabz" ? inflateRawSync(bytes.subarray(4)) : bytes);
+  console.log(`from ${process.env.STATE}`);
+}
 console.log(`options: ${JSON.stringify(options)} (mame_drc unset: the core's default)`);
 console.log(`core ${(createMs / 1000).toFixed(2)} s, ${basename(romPath)} loaded in ${(loadMs / 1000).toFixed(2)} s: ` +
   `${av.width}x${av.height} @ ${av.fps.toFixed(3)} Hz, ${av.sampleRate} Hz audio, aspect ${av.aspectRatio.toFixed(3)}`);
@@ -83,13 +96,24 @@ const nonBlack = (f) => {
 
 const COIN = process.env.COIN === undefined ? undefined : Number(process.env.COIN);
 const baseInput = core.inputs[0];
-/** Frame f's input: the coins and the trigger (COIN), otherwise as set above. */
+const driving = core.buttons.get(4) === "Accelerate";
+/** Frame f's input: the coins and the trigger, or a drive (COIN), otherwise as set above. */
 const play = (f) => {
   if (COIN === undefined) return;
   const at = f - COIN;
   let mask = 0;
   if (at >= 0 && at < 40 && at % 10 < 5) mask |= 1 << 2; // SELECT: a coin, 4 times
-  if (at >= 90 && ((at >> 3) & 3) === 0) mask |= 1 << 0; // B: the trigger now and then
+  if (!driving) {
+    if (at >= 90 && ((at >> 3) & 3) === 0) mask |= 1 << 0; // B: the trigger now and then
+  } else if (at >= 60 && at < 70) {
+    mask |= 1 << 3; // Start
+  } else if (at >= 120 && at < 700) {
+    if (at % 60 < 20) mask |= 1 << 4; // taps of the gas: the race, the transmission, the car
+  } else if (at >= 700) {
+    mask |= 1 << 4; // the gas held
+    if (at % 128 < 12) mask |= 1 << 6; // and a touch of the wheel, left
+    else if (at % 128 >= 64 && at % 128 < 76) mask |= 1 << 7; // and right
+  }
   core.inputs[0] = (baseInput | mask) >>> 0;
 };
 started = performance.now();

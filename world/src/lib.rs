@@ -350,7 +350,7 @@ mod tests {
     }
 
     /// Games whose cabinet skin isn't drawn yet: they stand in plain cabinets for now.
-    const SKIN_TO_COME: [&str; 0] = [];
+    const SKIN_TO_COME: [&str; 1] = ["crusnusa41"];
 
     #[test]
     fn mame_catalog_has_tekken_and_the_lightgun_game() {
@@ -369,6 +369,26 @@ mod tests {
         // Only a lightgun game says so, and only the twin cabinet is linked.
         assert_eq!(games.iter().filter(|g| g.gun).count(), 1);
         assert_eq!(games.iter().filter(|g| g.linked).count(), 1);
+    }
+
+    #[test]
+    fn cruisn_usa_is_one_player_on_mame() {
+        let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
+        let cruisn = games.iter().find(|g| g.rom == "crusnusa41").unwrap();
+        assert_eq!(cruisn.core, "mame");
+        assert_eq!(cruisn.title, "Cruis'n USA");
+        // One driver; the next to press E watches.
+        assert_eq!(cruisn.players, 1);
+        assert!(
+            !cruisn.gun && !cruisn.linked && !cruisn.lockstep && !cruisn.turns && !cruisn.arcade
+        );
+        assert!(cruisn.bios.is_none() && cruisn.options.is_empty());
+        // Its skin is still to come: a plain cabinet on the bar's map runs it.
+        assert!(cruisn.cabinets.is_empty());
+        let map = Map::from_ron(include_str!("../../assets/maps/bar.ron")).unwrap();
+        assert!(map.objects.iter().any(|object| {
+            object.tile == "objects/cabinet" && object.game.as_deref() == Some("crusnusa41")
+        }));
     }
 
     #[test]
