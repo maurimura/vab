@@ -32,6 +32,7 @@ use crate::pointer_lock;
 use crate::seats;
 use crate::settings::Settings;
 use crate::touch::{self, Touch, TouchButton};
+use crate::voice::VoicePointer;
 
 /// The image the rink is drawn into, and where the rink's top-left corner is in it.
 const CANVAS: UVec2 = UVec2::new(320, 180);
@@ -645,6 +646,7 @@ fn play(
     chat: Res<Chat>,
     help: Res<Help>,
     settings: Res<Settings>,
+    voice: Res<VoicePointer>,
     time: Res<Time>,
     mut game: ResMut<Game>,
     mut cursor: Query<&mut CursorOptions>,
@@ -686,7 +688,7 @@ fn play(
         }
     }
 
-    let busy = chat.is_open() || help.is_open() || settings.is_open();
+    let busy = chat.is_open() || help.is_open() || settings.is_open() || voice.busy();
     let (node, transform) = *canvas;
     // Physical pixels per canvas pixel; until the canvas has been laid out it has no size.
     let zoom = node.size().x / CANVAS.x as f32;

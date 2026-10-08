@@ -24,21 +24,21 @@ const DIM: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
 
 /// What to press, and what it does. Short enough not to wrap: keys are padded into a column
 /// (the font is monospaced).
-const IN_THE_BAR: [(&str, &str); 6] = [
+const IN_THE_BAR: [(&str, &str); 8] = [
     ("Arrows / W A S D", "Walk"),
     ("E", "Play the cabinet or table you're next to"),
     ("F", "Watch the game being played there"),
+    ("M", "Your microphone, playing with others"),
+    ("Shift+1-8", "Mute player 1-8 (or click them)"),
     ("Y", "Chat (Enter sends)"),
     ("/name Mauri", "Set your name, in the chat"),
     ("/help", "These controls, in the chat"),
 ];
-const AT_A_CABINET: [(&str, &str); 7] = [
+const AT_A_CABINET: [(&str, &str); 5] = [
     ("5", "Insert a coin"),
     ("1", "Start"),
     ("Arrows", "Move"),
     ("Z X C  A S D", "Buttons, listed when a game starts"),
-    ("M", "Your microphone, playing with others"),
-    ("Shift+1-4", "Mute player 1-4 (or click them)"),
     ("Esc", "Stand up"),
 ];
 const KEY_COLUMN: usize = 18;
@@ -378,10 +378,21 @@ fn list_buttons(
                 let join = format!("No Start: coin, then {}", key_name(key));
                 row(card, "", &join, key_width, 13.0);
             }
-            if KEYS
+            // The arrows move, unless the game names all four for something else (Daytona
+            // USA: steer, accelerate, brake): then each gets a row.
+            let arrows: Vec<_> = KEYS
                 .into_iter()
-                .any(|(key, id)| arrow(key) && named(id).is_some())
-            {
+                .filter(|(key, _)| arrow(*key))
+                .filter_map(|(key, id)| Some((key, named(id)?)))
+                .collect();
+            let directions = arrows
+                .iter()
+                .all(|(key, name)| name.eq_ignore_ascii_case(key_name(*key)));
+            if arrows.len() == 4 && !directions {
+                for (key, name) in arrows {
+                    row(card, key_name(key), name, key_width, 13.0);
+                }
+            } else if !arrows.is_empty() {
                 row(card, "Arrows", "Move", key_width, 13.0);
             }
             for (key, id) in KEYS
@@ -418,6 +429,10 @@ fn show_card(
 /// The label on a key the game uses.
 fn key_name(key: KeyCode) -> &'static str {
     match key {
+        KeyCode::ArrowUp => "Up",
+        KeyCode::ArrowDown => "Down",
+        KeyCode::ArrowLeft => "Left",
+        KeyCode::ArrowRight => "Right",
         KeyCode::Digit1 => "1",
         KeyCode::Digit5 => "5",
         KeyCode::KeyA => "A",

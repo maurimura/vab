@@ -37,6 +37,7 @@ use crate::pixels::Pixels;
 use crate::seats;
 use crate::settings::{Knob, NewRack, Settings};
 use crate::touch::{self, Touch, TouchButton};
+use crate::voice::VoicePointer;
 
 /// The image the table is drawn into, and where the felt's corner is in it.
 const CANVAS: UVec2 = UVec2::new(320, 180);
@@ -845,13 +846,14 @@ fn aim(
     chat: Res<Chat>,
     help: Res<Help>,
     settings: Res<Settings>,
+    voice: Res<VoicePointer>,
     time: Res<Time>,
     mut game: ResMut<Game>,
     mut holding: ResMut<Holding>,
     mut last_pointer: Local<Option<Vec2>>,
 ) {
     holding.before = holding.now;
-    holding.blocked = chat.is_open() || help.is_open() || settings.is_open();
+    holding.blocked = chat.is_open() || help.is_open() || settings.is_open() || voice.busy();
     if holding.blocked {
         // As if held all along, so the click or tap that closes a panel doesn't start a shot:
         // only a fresh press after it does.

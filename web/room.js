@@ -1,6 +1,6 @@
 // The page's connection to its bar room (the Room Durable Object in server/src/lib.rs): where
-// the other players are, who sits at or watches which cabinet, links to the others at ours, and
-// the game streamed to whoever watches it.
+// the other players are, who sits at or watches which cabinet, links to the others at ours,
+// voice calls with whoever sits with us, and the game streamed to whoever watches it.
 
 // WebRTC servers from the Worker (/ice): STUN, and TURN when it is set up. Its credentials last
 // a day; fetched again after 12 hours.
@@ -24,6 +24,9 @@ function getIceServers() {
 // - WATCH_INPUTS, [stream: u32][frame: u32] then a u32 input per controller port (4) for each
 //   frame from `frame` on: the RetroPad mask in its low 16 bits, a lightgun's aim in its high
 //   16 (web/emulator/worker.js);
+// - WATCH_FRAMES, an arcade game's cabinet (Daytona USA), for one watcher: [stream: u32]
+//   [frame: u32] then the frames it ran from `frame` on (web/emulator/worker.js says what's in
+//   them);
 // - WATCH_LINK, a linked board's (Time Crisis II, web/emulator/linked.js): [stream: u32] then
 //   for each frame [frame: u32][input: u32][length: u16][the link bytes the board was handed
 //   before the frame], one after another.
@@ -31,10 +34,13 @@ const PACKET = 0;
 const HANDOVER = 1;
 const WATCH_STATE = 2;
 const WATCH_INPUTS = 3;
-const WATCH_LINK = 4;
+const WATCH_FRAMES = 4;
+const WATCH_LINK = 5;
 const PIECE = 256 * 1024; // the room takes messages up to 1 MiB
 /** The address of everyone watching our cabinet. */
 const WATCHERS = 0;
+/** The address of a message for several players, listed after it (server/src/lib.rs). */
+const SEVERAL = 0xffffffff;
 
 export class Room {
   /** This player's id in the room, from its welcome. */
@@ -55,6 +61,9 @@ export class Room {
   #name;
   #links = new Map();
   #waitingSignals = new Map();
+  /** Voice calls by name, and signals for calls not made yet. */
+  #calls = new Map();
+  #waitingCalls = new Map();
   #pieces = new Map();
 
   /**
@@ -62,9 +71,9 @@ export class Room {
    * @param events welcome(name), moved(id, x, y, flip, name), left(id), said(id, name, text),
    *   seats(cabinet, players), full(cabinet), watchers(cabinet, players), message(from, data)
    *   from another player at our cabinet, handover(from, epoch, bytes) a game handed over (see
-   *   handOver), watchState(from, stream, bytes), watchInputs(from, stream, frame, inputs) and
-   *   watchLink(from, stream, records) the game we watch (see watchState, watchInputs and
-   *   watchLink)
+   *   handOver), watchState(from, stream, bytes), watchInputs(from, stream, frame, inputs),
+   *   watchFrames(from, stream, frame, bytes) and watchLink(from, stream, records) the game we
+   *   watch (see watchState, watchInputs, watchFrames and watchLink)
    * @param name this player's name, if they set one before; else the room gives one
    */
   constructor(url, events, name) {
@@ -124,9 +133,8 @@ export class Room {
   }
 
   /**
-   * A link to another player for game packets and voice. Packets go through the room at first
-   * and straight to the other browser (WebRTC) once that connects; voice only goes straight.
-   * One side `offers` WebRTC.
+   * A link to another player for game packets. Packets go through the room at first and
+   * straight to the other browser (WebRTC) once that connects. One side `offers` WebRTC.
    * `match` names the link (both sides pass the same), so WebRTC messages left over from an
    * earlier link are ignored.
    */
@@ -144,6 +152,26 @@ export class Room {
     if (this.#links.get(link.partner) === link) this.#links.delete(link.partner);
   }
 
+  /**
+   * A voice call with another player: audio both ways, straight between the browsers (WebRTC,
+   * through TURN when they can't reach each other). Separate from any game's link, so it lasts
+   * however the game connects. One side `offers`; `match` names the call (both sides pass the
+   * same).
+   */
+  call(partner, offers, match) {
+    this.#calls.get(match)?.close();
+    const call = new Call(this, partner, offers, match);
+    this.#calls.set(match, call);
+    for (const data of this.#waitingCalls.get(match) ?? []) call.signal(data);
+    this.#waitingCalls.delete(match);
+    return call;
+  }
+
+  hangUp(call) {
+    call.close();
+    if (this.#calls.get(call.match) === call) this.#calls.delete(call.match);
+  }
+
   /** Hands a game (a machine's capture) to another player, in pieces through the room. */
   handOver(to, epoch, bytes) {
     this.#sendPieces(to, HANDOVER, epoch, bytes);
@@ -155,6 +183,18 @@ export class Room {
    */
   watchState(to, stream, bytes) {
     this.#sendPieces(to ?? WATCHERS, WATCH_STATE, stream, bytes);
+  }
+
+  /**
+   * An arcade game's frames for one watcher (`to`): what our cabinet ran, as the emulator worker
+   * writes them (a Uint8Array), from `frame` on.
+   */
+  watchFrames(to, stream, frame, bytes) {
+    const header = new DataView(new ArrayBuffer(9));
+    header.setUint8(0, WATCH_FRAMES);
+    header.setUint32(1, stream, true);
+    header.setUint32(5, frame, true);
+    this.#sendBinary(to, new Uint8Array(header.buffer), bytes);
   }
 
   /** Inputs for everyone watching our cabinet: a Uint32Array, an input per port per frame. */
@@ -193,6 +233,20 @@ export class Room {
   /** A game packet (an ArrayBuffer) for another player, through the room. */
   relay(to, packet) {
     this.#sendBinary(to, Uint8Array.of(PACKET), new Uint8Array(packet));
+  }
+
+  /**
+   * A game packet for several players (ids, up to 255), sent through the room once: it arrives
+   * as from a link (Link.onpacket), as `relay`'s do.
+   */
+  relaySeveral(ids, packet) {
+    if (ids.length === 1) return this.relay(ids[0], packet);
+    const header = new Uint8Array(1 + ids.length * 4 + 1);
+    const view = new DataView(header.buffer);
+    header[0] = ids.length;
+    ids.forEach((id, i) => view.setUint32(1 + i * 4, id, true));
+    header[header.length - 1] = PACKET;
+    this.#sendBinary(SEVERAL, header, new Uint8Array(packet));
   }
 
   #sendBinary(to, header, body) {
@@ -261,6 +315,13 @@ export class Room {
         break;
       case "signal": {
         const { from, data } = message;
+        if (data.call) {
+          // WebRTC for a voice call, which may not be made yet on this side.
+          const call = this.#calls.get(data.call);
+          if (call?.partner === from) call.signal(data);
+          else if (!call) this.#waitingCalls.set(data.call, [...(this.#waitingCalls.get(data.call) ?? []), data].slice(-50));
+          break;
+        }
         if (!data.link) {
           events.message(from, data);
           break;
@@ -293,6 +354,10 @@ export class Room {
       this.#events.watchLink(from, id, new Uint8Array(message.slice(9)));
       return;
     }
+    if (kind === WATCH_FRAMES) {
+      this.#events.watchFrames?.(from, id, view.getUint32(9, true), new Uint8Array(message.slice(13)));
+      return;
+    }
     const index = view.getUint16(9, true);
     const count = view.getUint16(11, true);
     const key = `${from}/${kind}/${id}`;
@@ -310,14 +375,10 @@ export class Room {
 
 const PING_LENGTH = 6;
 
-/** Game packets and voice to and from another player at our cabinet. */
+/** Game packets to and from another player at our cabinet. */
 class Link {
   /** Called with each packet (an ArrayBuffer) from the other player. */
   onpacket = () => {};
-  /** Called with the other player's voice, a MediaStream, once it's set up. */
-  onvoice = () => {};
-  /** The other player's voice, once it's set up. */
-  voice;
 
   #room;
   #match;
@@ -329,9 +390,6 @@ class Link {
   // Reliable+ordered for lockstep games, where a dropped input packet stalls the game; the
   // default unreliable channel is for rollback, which predicts past a missing packet.
   #reliable = false;
-  /** The audio both ways, and the microphone track we send on it. */
-  #audio;
-  #microphone = null;
 
   constructor(room, partner, offers, match, reliable = false) {
     this.#room = room;
@@ -407,12 +465,6 @@ class Link {
     });
   }
 
-  /** Sends them our microphone (a MediaStreamTrack), or nothing with null. */
-  microphone(track) {
-    this.#microphone = track;
-    this.#audio?.sender.replaceTrack(track).catch((error) => console.warn("Voice:", error));
-  }
-
   async signal({ link, description, candidate }) {
     if (link !== this.#match) return;
     await this.#ready;
@@ -422,12 +474,6 @@ class Link {
         await this.#pc.setRemoteDescription(description);
         for (const waiting of this.#candidates.splice(0)) await this.#pc.addIceCandidate(waiting);
         if (description.type === "offer") {
-          // Answer their audio with ours. Offers from before voice have none.
-          const audio = this.#pc.getTransceivers().find(({ receiver }) => receiver.track.kind === "audio");
-          if (audio) {
-            audio.direction = "sendrecv";
-            this.#useAudio(audio);
-          }
           await this.#pc.setLocalDescription(await this.#pc.createAnswer());
           this.#signal({ description: this.#pc.localDescription });
         }
@@ -451,17 +497,10 @@ class Link {
     if (this.#closed) return;
     const pc = (this.#pc = new RTCPeerConnection({ iceServers }));
     pc.onicecandidate = ({ candidate }) => candidate && this.#signal({ candidate });
-    pc.ontrack = ({ track, streams }) => {
-      this.voice = streams[0] ?? new MediaStream([track]);
-      this.onvoice(this.voice);
-    };
     if (offers) {
       // Unordered and never resent for rollback (GGRS resends what matters itself); reliable and
       // ordered for lockstep, where a lost input would stall the game.
       this.#use(pc.createDataChannel("ggrs", this.#reliable ? { ordered: true } : { ordered: false, maxRetransmits: 0 }));
-      // Audio both ways from the start, so the microphone can come and go without offering
-      // again (replaceTrack).
-      this.#useAudio(pc.addTransceiver("audio", { direction: "sendrecv" }));
       pc.createOffer()
         .then((offer) => pc.setLocalDescription(offer))
         .then(() => this.#signal({ description: pc.localDescription }))
@@ -475,14 +514,107 @@ class Link {
     this.#room.message(this.partner, { link: this.#match, ...data });
   }
 
-  #useAudio(audio) {
-    this.#audio = audio;
-    if (this.#microphone) this.microphone(this.#microphone);
-  }
-
   #use(channel) {
     channel.binaryType = "arraybuffer";
     channel.onmessage = ({ data }) => this.receive(data);
     this.#channel = channel;
+  }
+}
+
+/** Voice with another player: our microphone to them and theirs to us (Room.call). */
+class Call {
+  /** Called with the other player's voice, a MediaStream, once it arrives. */
+  onvoice = () => {};
+  /** The other player's voice, once it arrives. */
+  voice;
+
+  #room;
+  #pc;
+  #ready;
+  #closed = false;
+  #candidates = [];
+  /** The audio both ways, and the microphone track we send on it. */
+  #audio;
+  #microphone = null;
+
+  constructor(room, partner, offers, match) {
+    this.#room = room;
+    this.partner = partner;
+    this.match = match;
+    this.#ready = getIceServers().then((iceServers) => this.#connect(iceServers, offers));
+  }
+
+  /** connecting, connected, or failed (no way between the browsers, even through TURN). */
+  get state() {
+    const state = this.#pc?.connectionState;
+    if (state === "connected") return "connected";
+    return state === "failed" ? "failed" : "connecting";
+  }
+
+  /** Sends them our microphone (a MediaStreamTrack), or nothing with null. */
+  microphone(track) {
+    this.#microphone = track;
+    if (this.#closed) return;
+    this.#audio?.sender.replaceTrack(track).catch((error) => console.warn("Voice:", error));
+  }
+
+  async signal({ description, candidate }) {
+    await this.#ready;
+    if (this.#closed) return;
+    try {
+      if (description) {
+        await this.#pc.setRemoteDescription(description);
+        for (const waiting of this.#candidates.splice(0)) await this.#pc.addIceCandidate(waiting);
+        if (description.type === "offer") {
+          // Answer their audio with ours.
+          const audio = this.#pc.getTransceivers().find(({ receiver }) => receiver.track.kind === "audio");
+          if (audio) {
+            audio.direction = "sendrecv";
+            this.#useAudio(audio);
+          }
+          await this.#pc.setLocalDescription(await this.#pc.createAnswer());
+          this.#signal({ description: this.#pc.localDescription });
+        }
+      } else if (candidate) {
+        // Candidates can arrive before the offer or answer they belong to.
+        if (this.#pc.remoteDescription) await this.#pc.addIceCandidate(candidate);
+        else this.#candidates.push(candidate);
+      }
+    } catch (error) {
+      console.warn("Voice call:", error);
+    }
+  }
+
+  close() {
+    this.onvoice = () => {};
+    this.#closed = true;
+    this.#pc?.close();
+  }
+
+  #connect(iceServers, offers) {
+    if (this.#closed) return;
+    const pc = (this.#pc = new RTCPeerConnection({ iceServers }));
+    pc.onicecandidate = ({ candidate }) => candidate && this.#signal({ candidate });
+    pc.ontrack = ({ track, streams }) => {
+      this.voice = streams[0] ?? new MediaStream([track]);
+      this.onvoice(this.voice);
+    };
+    if (!offers) return;
+    // Audio both ways from the start, so the microphone can come and go without offering again
+    // (replaceTrack).
+    this.#useAudio(pc.addTransceiver("audio", { direction: "sendrecv" }));
+    pc.createOffer()
+      .then((offer) => pc.setLocalDescription(offer))
+      .then(() => this.#signal({ description: pc.localDescription }))
+      .catch((error) => console.warn("Voice call offer:", error));
+  }
+
+  #signal(data) {
+    this.#room.message(this.partner, { call: this.match, ...data });
+  }
+
+  #useAudio(audio) {
+    this.#audio = audio;
+    if (this.#microphone) this.microphone(this.#microphone);
   }
 }

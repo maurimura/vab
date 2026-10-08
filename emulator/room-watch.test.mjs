@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 // What a watched game's frames look like through the room (web/room.js): a cabinet's inputs
-// (WATCH_INPUTS, a u32 per port per frame) and a linked board's frames (WATCH_LINK, each
-// numbered, with its link bytes), sent by one Room and read back by another, with a stand-in
-// for the WebSocket that just keeps what's sent.
+// (WATCH_INPUTS, a u32 per port per frame), an arcade cabinet's frames (WATCH_FRAMES) and a
+// linked board's frames (WATCH_LINK, each numbered, with its link bytes), sent by one Room and
+// read back by another, with a stand-in for the WebSocket that just keeps what's sent.
 class FakeSocket {
   static OPEN = 1;
   static last;
@@ -62,4 +62,19 @@ test('a cabinet\'s inputs still go as a u32 per port per frame', () => {
   const [[event, from, stream, frame, got]] = watcher.heard;
   assert.deepEqual([event, from, stream, frame], ['watchInputs', 7, 9, 300]);
   assert.deepEqual(Array.from(got), Array.from(inputs));
+});
+
+test('an arcade cabinet\'s frames and a linked board\'s arrive as what they are', () => {
+  const sender = room();
+  const watcher = room();
+  sender.it.watchFrames(5, 11, 600, Uint8Array.of(1, 2, 3));
+  sender.it.watchLink(12, encodeRecords([{ frame: 600, input: 0, bytes: Uint8Array.of(9) }]));
+  const [frames, link] = sender.socket.sent;
+  assert.notEqual(frames[4], link[4]); // their kinds
+  assert.equal(new DataView(frames.buffer).getUint32(0, true), 5); // to that watcher only
+  watcher.socket.onmessage({ data: relayed(frames, 8) });
+  watcher.socket.onmessage({ data: relayed(link, 8) });
+  const [[event, from, stream, frame, bytes], [other]] = watcher.heard;
+  assert.deepEqual([event, from, stream, frame, Array.from(bytes)], ['watchFrames', 8, 11, 600, [1, 2, 3]]);
+  assert.equal(other, 'watchLink');
 });

@@ -256,6 +256,10 @@ impl Session {
     /// another player is too far behind to keep predicting: try again on the next tick.
     pub fn advance(&mut self, input: u32, machine: &Machine) -> Result<bool, JsError> {
         self.ggrs.add_local_input(self.local, input)?;
+        // The frame the machine is at, through rollbacks: the one about to run, unless a load
+        // or save says otherwise. Read before advance_frame, which in lockstep (no saves) has
+        // already counted the frame it asks to run.
+        let mut at = self.ggrs.current_frame();
         let requests = match self.ggrs.advance_frame() {
             // Lockstep waiting for the others' input: nothing to do yet (the input stays queued).
             Ok(requests) if requests.is_empty() => return Ok(false),
@@ -266,8 +270,6 @@ impl Session {
         let shown = requests
             .iter()
             .rposition(|request| matches!(request, GgrsRequest::AdvanceFrame { .. }));
-        // The frame the machine is at, through rollbacks.
-        let mut at = self.ggrs.current_frame();
         for (i, request) in requests.into_iter().enumerate() {
             match request {
                 GgrsRequest::SaveGameState { cell, frame } => {

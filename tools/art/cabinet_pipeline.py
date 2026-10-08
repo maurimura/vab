@@ -19,11 +19,13 @@ import cabinet_mvs
 import cabinet_upright
 import cabinet_wide
 import cabinet_twin
+import cabinet_racing
 
 ROOT = base.ROOT
 RECIPES = ROOT / 'tools/art/recipes'
 RENDERERS = {'simpsons-legacy': build_simpsons, 'mvs': cabinet_mvs,
-             'upright': cabinet_upright, 'wide': cabinet_wide, 'twin-gun': cabinet_twin}
+             'upright': cabinet_upright, 'wide': cabinet_wide, 'twin-gun': cabinet_twin,
+             'racing': cabinet_racing}
 
 
 def load_recipe(name):
@@ -34,26 +36,34 @@ def load_recipe(name):
         raise ValueError('Recipe version/skin mismatch')
     if recipe.get('renderer') not in RENDERERS:
         raise ValueError('Unknown renderer; register reviewed code explicitly')
-    if recipe.get('players') not in range(1, 5):
+    # Linked races have eight catalog seats but one physical driving station.
+    max_players = 8 if recipe.get('linked') and recipe['renderer'] == 'racing' else 4
+    if recipe.get('players') not in range(1, max_players + 1):
         raise ValueError('Invalid player count')
     if recipe.get('buttons_per_player') not in range(1, 7):
         raise ValueError('Invalid physical button count')
     kind = recipe.get('control_kind', 'joystick')
-    if kind not in ('joystick', 'buttons', 'mounted-guns', 'holstered-guns'):
+    if kind not in ('joystick', 'buttons', 'mounted-guns', 'holstered-guns', 'wheel'):
         raise ValueError('Invalid physical control kind')
     if kind == 'holstered-guns':
         if recipe['renderer'] != 'twin-gun' or recipe.get('control_stations') != 2:
             raise ValueError('Holstered guns require the reviewed two-station twin renderer')
         if recipe['buttons_per_player'] != 1 or recipe.get('pedals') != 2:
             raise ValueError('Twin controls require one trigger and one pedal per station')
+    elif kind == 'wheel':
+        if recipe['renderer'] != 'racing' or recipe.get('control_stations') != 1:
+            raise ValueError('Wheel controls require a single-station racing renderer')
     elif recipe['renderer'] == 'twin-gun':
         raise ValueError('Twin renderer requires holstered guns')
-    elif kind != 'joystick' and recipe['renderer'] != 'upright':
-        raise ValueError('Special controls require the reviewed upright renderer')
+    elif recipe['renderer'] == 'racing' or (kind != 'joystick' and recipe['renderer'] != 'upright'):
+        raise ValueError('Special controls require their reviewed renderer')
     if recipe.get('control_stations', recipe['players']) not in range(1, 5):
         raise ValueError('Invalid physical station count')
     if len(recipe.get('size', [])) != 2 or any(type(n) is not int or not 16 <= n <= 128 for n in recipe['size']):
         raise ValueError('Invalid sprite size')
+    scale = recipe.get('footprint_scale', 1.0)
+    if not isinstance(scale, (int, float)) or not .5 <= scale <= 1:
+        raise ValueError('Invalid footprint scale')
     return recipe
 
 
@@ -180,9 +190,13 @@ def prepare(recipe):
     expected_sticks = stations if kind == 'joystick' else 0
     guns = sum(s.part == 'gun' for s in solids)
     expected_guns = stations if kind in ('mounted-guns', 'holstered-guns') else 0
+    wheels = sum(s.part == 'wheel' for s in solids)
+    shifters = sum(s.part == 'shifter' for s in solids)
     pedals = sum(s.part == 'pedal' for s in solids)
+    driving = stations if kind == 'wheel' else 0
+    expected_pedals = 2 * driving if kind == 'wheel' else recipe.get('pedals', 0)
     if (sticks != expected_sticks or balls != sticks or guns != expected_guns
-            or pedals != recipe.get('pedals', 0)
+            or wheels != driving or shifters != driving or pedals != expected_pedals
             or buttons != stations * recipe['buttons_per_player']):
         raise ValueError('Physical controls disagree with the recipe')
     return tex, solids, painter
@@ -211,7 +225,8 @@ def render_recipe(recipe):
     w, h = recipe['size']
     views = []
     for turns in range(4):
-        flat, layers = base.render(solids, tex, turns, painter=painter, width=w, height=h)
+        flat, layers = base.render(solids, tex, turns, painter=painter, width=w, height=h,
+                                   footprint_scale=recipe.get('footprint_scale', 1.0))
         check_view(flat, layers, recipe['size'], turns)
         views.append((flat, layers))
     return views

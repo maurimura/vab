@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "skin": "daytona",
+  "rom": "daytona",
+  "title": "DAYTONA USA / ORIGINAL SEGA SIT-DOWN",
+  "variant": "One station adapted from the original red/yellow Sega Daytona USA twin sit-down cabinet (1994 Model 2), not Daytona 2, 2001 or a deluxe motion cabinet",
+  "renderer": "racing",
+  "size": [48, 56],
+  "footprint_scale": 0.6,
+  "players": 8,
+  "linked": true,
+  "control_stations": 1,
+  "control_kind": "wheel",
+  "buttons_per_player": 5,
+  "game_actions": ["Steering", "Accelerator", "Brake", "Four-speed gear lever", "Start", "View 1", "View 2", "View 3", "View 4"],
+  "dimensions": {"tower_rear": -5, "tower_front": 5, "seat_back": 23, "side_min": 2, "side_max": 14, "tower_height": 29},
+  "wheel": {"center": [9.2, 9, 15.5], "radius": 2.2, "thickness": 0.45, "tilt": 0.35},
+  "shifter": {"position": [10, 4.1, 13.4]},
+  "pedals": [{"position": [7, 8, 4]}, {"position": [7, 11, 4]}],
+  "buttons": [
+    {"position": [8.3, 4.6, 16.9], "color": [247, 211, 48]},
+    {"position": [8.3, 4.6, 16.1], "color": [43, 185, 77]},
+    {"position": [8.3, 4.6, 15.3], "color": [247, 211, 48]},
+    {"position": [8.3, 4.6, 14.5], "color": [36, 137, 216]},
+    {"position": [8.3, 4.6, 13.7], "color": [232, 49, 40]}
+  ],
+  "colors": {"body": [25, 27, 31], "trim": [224, 44, 36], "rubber": [13, 16, 20], "metal": [189, 195, 193], "platform": [43, 46, 50], "vent": [9, 11, 15], "seat": [42, 45, 51], "seat_edge": [73, 77, 82]},
+  "preview_note": "48 x 56 px | one twin station / red-yellow sides / wheel + shifter + pedals / real Daytona display",
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Original-design red/yellow twin cabinet photo: corroborates CRT towers, shared marquee, side logo/checkers, black bucket seats with numbered rear graphics, silver steering spokes, separate shifter/pedals and low red-edged platforms. Supplies measured marquee, upper side and seat-back rectifications.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=daytona",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/daytona.png",
+      "rights": "Sega printed artwork/trademarks; photograph author and redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "07cc3b72f952d9dfc426b1a197e50b8567ca3ebf551cee7ff26ce3dc20e6bf10"
+    },
+    "controls": {
+      "file": "controls.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Photographed dashboard corroborates black steering rim, silver three-spoke wheel, yellow Start above green/yellow/blue/red view buttons and right-hand H-gate shifter. Dashboard metal/gauge texture is rectified independently of the photographed wheel; raised modeled wheel/buttons cover their positions.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=daytona",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/daytona.png",
+      "rights": "Underlying Sega artwork; photo author, cabinet region/restoration status and redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "2fb490c7ca49de9ec5c662f8f4747eebeda583e4f6b91d56846a5af8b89b8dd1"
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "kind": "original-art-scan",
+      "purpose": "Archived Japanese Sega/AM2 operator flyer, used as original-game identity and car/livery corroboration only; not used as invented side artwork or a substitute cabinet variant.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=daytona",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadeflyers168/daytona.png",
+      "rights": "Copyright Sega/AM2; third-party scan provenance and redistribution permission unverified. Archive hosting is not publisher authorization.",
+      "sha256": "832f0cda876a86ec8e607c74a991adb48184ddbd3c206cc3672180fe2be2cad0"
+    },
+    "instructions": {
+      "file": "instructions.png",
+      "kind": "original-design-art-unverified",
+      "purpose": "English 1994 Sega instruction strip numbered 422-0478 corroborates steering to select, accelerator to confirm and automatic/manual transmission. Sharp file may be a restoration/vector recreation, not claimed as authenticated original scan; research only.",
+      "page_url": "https://www.arcadeartwork.org/qsearch.php?q=daytona",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcartmore168/daytona_instructions.png",
+      "rights": "Printed design credits Sega 1994; file creator and restoration/redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "87e71be3e8cce5513f383055290e4967a38b02dc77a02f34fd3fb420e26173ed"
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Native 496x384 Daytona USA Revision A Hornet/oval racing frame captured with the existing local Daytona web core and own isolated headless Chrome. Run daytona/harness/serve.mjs with ROMS pointing at the prepared local ZIP, then node daytona/harness/run.mjs '?rom=daytona&cabinets=1&warmup=600&play&frames=600' art/references/daytona/screen.png --canvas. Original supplied ~/Downloads/daytona.zip uses ten legacy mpr filenames: in a temporary copy only, rename mpr-16772.19, mpr-16771.23, mpr-16537.28, mpr-16536.29, mpr-16523.16, mpr-16518.20, mpr-16524.17, mpr-16519.21, mpr-16525.18 and mpr-16520.22 by prefixing their numeric extensions with ic. Contents unchanged; supplied ZIP never modified. No ROM downloaded or uploaded.",
+      "rom_sha256": "950310a5c09cce78f1035818141dbf6668b8b45b084ce5e02eea23d500c5ef53",
+      "prepared_zip_sha256": "8e3eb1081e9a339e9a0b35fbe42465599175a660b285aa19d08de08834eeda31",
+      "rights": "Game imagery Sega, captured from already supplied local ROM; no redistribution license inferred.",
+      "sha256": "f2db619a63548455ffed6c4208394d86509b01a564cd1c023d146322268fdea6"
+    }
+  },
+  "textures": {
+    "marquee": {"source": "cabinet", "quad": [[105, 34], [397, 14], [420, 90], [84, 113]], "rectified_size": [336, 80], "size": [24, 6]},
+    "left": {"source": "cabinet", "quad": [[22, 101], [79, 126], [77, 310], [13, 303]], "rectified_size": [80, 210], "size": [14, 24]},
+    "right": {"source": "cabinet", "quad": [[22, 101], [79, 126], [77, 310], [13, 303]], "rectified_size": [80, 210], "size": [14, 24]},
+    "seat_back": {"source": "cabinet", "quad": [[258, 308], [354, 280], [329, 442], [233, 470]], "rectified_size": [110, 180], "size": [16, 22]},
+    "dashboard": {"source": "controls", "quad": [[233, 31], [639, 30], [637, 211], [239, 211]], "rectified_size": [400, 180], "size": [22, 8]},
+    "screen": {"source": "screen", "size": [24, 18], "fit": "contain"}
+  },
+  "uncertainties": [
+    "One station is adapted from a photographed twin: the shared wide marquee is scaled over one tower so the game identity is retained. This is not a claim of a factory single-seat variant. Players remains eight linked seats; physical control_stations is one.",
+    "Only one outer side print is documented. The same rectified print is repeated with readable lettering on the opposite side, rather than inventing unseen artwork. Inner twin-divider structure is simplified.",
+    "World-space dimensions, bucket curvature, rear service vents and pedal geometry are estimates at sprite resolution. The footprint is compressed to 60 percent around the existing cell center (height unchanged) to fit the shared bottom-center anchor in all four rotations. The long platform overhangs a one-cell anchor; leave space when placing. No map placement is included.",
+    "Photographs are low resolution and their exact region/restoration status is unknown. The controls photo guides a right-hand shifter; the twin cabinet angle obscures its exact detail. Five raised dashboard buttons represent Start and four views, not five game actions; steering, shifter and two pedals are separate geometry.",
+    "Marquee, side and seat-back art are measured photo rectifications, not publisher masters. Original downloads are retained without resizing. Copyright/photograph redistribution rights remain unresolved; archive access is not permission.",
+    "The English instructions may be restored artwork and are research-only. An Arcade Museum corroboration page returned HTTP 403 and was not bypassed. Original cabinet photograph and Sega flyer are the primary references."
+  ]
+}

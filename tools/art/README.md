@@ -298,6 +298,58 @@ the four new ROMs/states and the Psikyo core. Uploads require separate permissio
 no ROM/core/state has been uploaded, committed or deployed by this batch, and no
 cabinet has been placed on the user's map.
 
+### Daytona USA — original Sega sit-down
+
+```sh
+python3 tools/art/cabinet_pipeline.py validate daytona
+python3 tools/art/cabinet_pipeline.py build daytona
+python3 -m unittest discover -s tools/art -p 'test_*.py'
+```
+
+Review `art/previews/daytona.png`: four **48×56** sprites and seven editable layers
+per facing. The reusable `racing` renderer models a CRT tower, low red-edged
+platform, black bucket seat, hollow steering rim/silver three-spoke assembly,
+right-hand gated shifter, two pedals and five dashboard buttons (yellow Start,
+green/yellow/blue/red views). The catalog retains the existing Daytona core,
+eight linked seats and link options; `control_stations: 1` describes the art,
+not the number of online players. No map placement, ROM upload or deployment.
+
+Selected variant is **one station adapted from the original red/yellow twin**,
+not a claimed factory single-seat cabinet or Daytona 2/deluxe motion hardware.
+The shared photographed marquee is reduced above one tower. One documented
+outer side print is repeated readably; the unseen opposite print is unverified.
+Seat-back numbering/flag lettering comes from the same cabinet photo. The long
+footprint is compressed to 60% around the existing cell center, height unchanged,
+so all views fit the existing bottom-center anchor. Leave room around it when
+placing. Geometry/curvature and rear service details are pixel-scale estimates.
+
+References: [archive search](https://www.arcadeartwork.org/qsearch.php?q=daytona),
+[original-design twin photo](https://www.arcadeartwork.org/galleries/arcadecabs168/daytona.png),
+[dashboard photo](https://www.arcadeartwork.org/galleries/arcadecpanels/daytona.png),
+[Sega/AM2 flyer](https://www.arcadeartwork.org/galleries/arcadeflyers168/daytona.png)
+and [1994 instruction strip](https://www.arcadeartwork.org/galleries/arcartmore168/daytona_instructions.png).
+The sharp instruction file may be restored/recreated and is research-only.
+Photo authors/restoration status and Sega artwork redistribution rights are
+unresolved; archive hosting is not publisher authorization. Original decoded
+files, measured corners, SHA-256s and adaptations are in
+`art/references/daytona/` and `tools/art/recipes/daytona.json`.
+
+The screen is a real **496×384 Daytona Revision A Hornet/oval frame** from the
+already supplied local ROM and existing Daytona web core, not another game's
+screen. The original ZIP uses ten legacy numeric suffixes; only a temporary
+copy was repacked with the required `.icNN` names, with unchanged ROM contents.
+The supplied ZIP was not modified. Exact rename list and both ZIP hashes are
+in the recipe. Reproduce against that prepared local directory:
+
+```sh
+ROMS=/path/to/prepared-local-roms node daytona/harness/serve.mjs
+node daytona/harness/run.mjs '?rom=daytona&cabinets=1&warmup=600&play&frames=600' \
+  art/references/daytona/screen.png --canvas
+```
+
+Update the source hash after recapturing. No ROM was fetched or stored in tracked
+art/assets; online integration and deployment are separate from this cabinet.
+
 ### Virtua Striker 2 '98 — Sega sports upright
 
 ```sh

@@ -173,7 +173,7 @@ async function arrive(name, key, room = ROOM) {
   return b;
 }
 
-const status = async (b) => (await b.state())?.game_status ?? "";
+const status = async (b) => (await b.state())?.status ?? "";
 const t0 = Date.now();
 const at = () => `${((Date.now() - t0) / 1000).toFixed(0).padStart(4)} s`;
 

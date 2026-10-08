@@ -2,6 +2,7 @@
 //! editor (tools/editor), the game client and, as the map format alone (no `bevy` feature),
 //! the Worker that stores the map.
 
+use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
 #[cfg(feature = "bevy")]
@@ -92,9 +93,9 @@ pub fn footprint(tile: &str) -> IVec2 {
 pub struct Game {
     /// The ROM set, served at /roms/<rom>.zip.
     pub rom: String,
-    /// The core that runs it: an FBNeo core, served at /fbneo/<core>/fbneo.mjs, "supermodel"
-    /// (Sega Model 3, supermodel/), served at /supermodel/supermodel.mjs, or "mame" (mame/),
-    /// served at /mame/mame.mjs.
+    /// The core that runs it: an FBNeo core, served at /fbneo/<core>/fbneo.mjs, or a core built
+    /// on its own and served at /<core>/<core>.mjs: "supermodel" (Sega Model 3, supermodel/),
+    /// "daytona" (Daytona USA's Sega Model 2, daytona/) or "mame" (MAME, mame/).
     pub core: String,
     pub title: String,
     /// A BIOS set loaded next to the ROM, e.g. "neogeo".
@@ -104,7 +105,7 @@ pub struct Game {
     /// cabinet, so online player 2 plays through them too.
     #[serde(default)]
     pub turns: bool,
-    /// How many can play at once, each in their own seat (up to 4).
+    /// How many can play at once, each in their own seat (up to 4, or 8 for an `arcade` game).
     #[serde(default = "two")]
     pub players: u32,
     /// Online, the players' machines run in lockstep with a few frames of input delay instead
@@ -122,6 +123,18 @@ pub struct Game {
     /// player sits down, the link being set at power-on.
     #[serde(default)]
     pub linked: bool,
+    /// Linked cabinets, as in an arcade (Daytona USA): every player's browser runs only their
+    /// own cabinet, from a state for their seat (/roms/<rom>.seat<n>.state), and the cabinets'
+    /// link boards talk to each other through the players' browsers, so the game's own rules
+    /// say who plays whom; no rollback, no lockstep, no handover (web/emulator/worker.js).
+    #[serde(default)]
+    pub arcade: bool,
+    /// Settings for the core, made before the game loads (the `_<core>_set` its module
+    /// exports; FBNeo has none), e.g. Daytona USA's one cabinet on a star link. With a `view`
+    /// among them the machine has a screen per seat, and each player's shows their own; an
+    /// `arcade` game's machine also gets `seat`, the player's (web/emulator/worker.js).
+    #[serde(default)]
+    pub options: BTreeMap<String, String>,
     /// The cabinet skins drawn for it (tiles/objects/cabinet_<skin>_<facing>.png), which the
     /// editor gives this game. None yet: it runs on a plain cabinet the editor sets it on.
     #[serde(default)]
@@ -301,6 +314,20 @@ mod tests {
                 .bios
                 .is_none()
         );
+        assert!(mk2.options.is_empty() && !mk2.arcade);
+        let daytona = games.iter().find(|g| g.rom == "daytona").unwrap();
+        assert_eq!(daytona.core, "daytona");
+        assert_eq!(daytona.players, 8);
+        assert!(daytona.arcade && !daytona.lockstep && !daytona.turns);
+        assert_eq!(daytona.options["cabinets"], "1");
+        assert_eq!(daytona.options["link_topology"], "star");
+        assert_eq!(daytona.options["link_pace"], "1");
+        // One cabinet a browser: no screen per seat, and the seat is the worker's to set.
+        assert!(!daytona.options.contains_key("view") && !daytona.options.contains_key("seat"));
+        // Only arcade games take more than 4.
+        for game in &games {
+            assert!(game.players >= 1 && game.players <= if game.arcade { 8 } else { 4 });
+        }
     }
 
     #[test]
@@ -321,6 +348,9 @@ mod tests {
             assert!(game.bios.is_none());
         }
     }
+
+    /// Games whose cabinet skin isn't drawn yet: they stand in plain cabinets for now.
+    const SKIN_TO_COME: [&str; 0] = [];
 
     #[test]
     fn mame_catalog_has_tekken_and_the_lightgun_game() {
@@ -348,6 +378,13 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tiles/objects");
         // A game without a skin yet (Tekken 3, Time Crisis II) runs on a plain cabinet.
         for game in games {
+            let to_come = SKIN_TO_COME.contains(&game.rom.as_str());
+            assert_eq!(
+                game.cabinets.is_empty(),
+                to_come,
+                "{}: a skin, or SKIN_TO_COME, but not both",
+                game.title
+            );
             for skin in game.cabinets {
                 for facing in ["down_right", "down_left", "up_left", "up_right"] {
                     assert!(

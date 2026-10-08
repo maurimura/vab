@@ -1583,13 +1583,19 @@
             game: Some("vs298"),
         ),
         (
-            x: -1,
+            x: -2,
+            y: -3,
+            tile: "objects/cabinet",
+            game: Some("daytona"),
+        ),
+        (
+            x: 0,
             y: -3,
             tile: "objects/cabinet_tekken3_down_left",
             game: Some("tekken3je1"),
         ),
         (
-            x: 2,
+            x: 3,
             y: -3,
             tile: "objects/cabinet_timecrs2_down_left",
             game: Some("timecrs2"),

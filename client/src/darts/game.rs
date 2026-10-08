@@ -37,6 +37,7 @@ use crate::pointer_lock;
 use crate::seats;
 use crate::settings::{NewDartsGame, Settings};
 use crate::touch::{self, Touch, TouchButton};
+use crate::voice::VoicePointer;
 
 /// The image the board is drawn into, the board's middle in it, and how many of its pixels to a
 /// millimetre of the board.
@@ -599,6 +600,7 @@ fn play(
     chat: Res<Chat>,
     help: Res<Help>,
     settings: Res<Settings>,
+    voice: Res<VoicePointer>,
     time: Res<Time>,
     mut game: ResMut<Game>,
     mut cursor: Query<&mut CursorOptions>,
@@ -607,7 +609,7 @@ fn play(
     let seconds = time.delta_secs();
     let now = time.elapsed_secs();
     let hand = settings.darts();
-    let busy = chat.is_open() || help.is_open() || settings.is_open();
+    let busy = chat.is_open() || help.is_open() || settings.is_open() || voice.busy();
     let control = Control::now(&touch);
     let just_locked = control == Control::Locked && !game.was_locked;
     if game.was_locked && control != Control::Locked {

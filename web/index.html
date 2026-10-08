@@ -158,9 +158,13 @@
       let myName = "";
       const list = (items) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 
-      /** Where a game's core is: an FBNeo core, Supermodel for the Sega Model 3 games, or MAME. */
-      const coreUrl = (core) =>
-        core === "supermodel" ? "/supermodel/supermodel.mjs" : core === "mame" ? "/mame/mame.mjs" : `/fbneo/${core}/fbneo.mjs`;
+      /**
+       * Where a game's core is: an FBNeo core, or a core built on its own, under its name:
+       * Supermodel for the Sega Model 3 games, Daytona USA's Sega Model 2, MAME for the Namco
+       * games (Tekken 3, Time Crisis II).
+       */
+      const OWN_CORES = ["supermodel", "daytona", "mame"];
+      const coreUrl = (core) => (OWN_CORES.includes(core) ? `/${core}/${core}.mjs` : `/fbneo/${core}/fbneo.mjs`);
 
       // Who this player muted: by id while they're here, and by name for next time (a cookie,
       // the latest 50). Whether their own microphone is off is remembered too.
@@ -178,9 +182,9 @@
         remember("muted", JSON.stringify([...muted.names].slice(-50)));
       }
       // Called by Bevy (client/src/voice.rs, client/src/chat.rs).
-      window.voiceToggle = (id) => play?.voice?.toggle(id);
-      window.voiceToggleSeat = (seat) => play?.voice?.toggleSeat(seat);
-      window.voiceToggleMic = () => play?.voice?.toggle(room.id);
+      window.voiceToggle = (id) => voice.toggle(id);
+      window.voiceToggleSeat = (seat) => voice.toggleSeat(seat);
+      window.voiceToggleMic = () => voice.toggle(room.id);
       /** Mutes or unmutes someone by name (/mute, /unmute in the chat); returns the name. */
       window.voiceMute = (name, on) => {
         const key = name.toLowerCase();
@@ -190,14 +194,18 @@
       };
 
       /**
-       * Talking with the others at our cabinet over the links the game uses (web/room.js): our
-       * microphone goes to each of them and theirs plays here, unless muted. Bevy's voice panel
-       * (client/src/voice.rs) shows who's there and who's talking, and toggles mutes.
+       * Talking with whoever sits at the same place as this player, a cabinet or a table
+       * (room.seats): a voice call to each of them (Room.call), our microphone going to all and
+       * theirs playing here, unless muted. It follows the seats alone, so every game with seats
+       * has it. Bevy's voice panel (client/src/voice.rs) shows who's there and who's talking, and
+       * toggles mutes.
        */
       class Voice {
-        #cabinet;
+        /** Where we sit with the others, our seat there, and our id when the calls were made. */
+        #place;
         #seat;
-        /** The others: player id -> { id, seat, link, element, analyser, loudUntil }. */
+        #me;
+        /** The others: player id -> { id, seat, call, element, analyser, loudUntil }. */
         #people = new Map();
         /** Whether each other player's microphone is on, as they last said. */
         #theirMics = new Map();
@@ -205,30 +213,47 @@
         #mic;
         /** off (not asked yet), asking, on, or blocked (not allowed, or none). */
         #micState = "off";
-        #timer = setInterval(() => this.#show(), 100);
+        #timer;
         #shown;
-        #stopped = false;
 
-        constructor(cabinet) {
-          this.#cabinet = cabinet;
-        }
-
-        /** Who plays with us: our seat, and each other player's id -> { seat, link }. */
-        players(seat, others) {
-          this.#seat = seat;
-          for (const [id, person] of this.#people) {
-            if (others.get(id)?.link !== person.link) this.#forget(id);
+        /** Who sits where changed: talks with whoever sits with us now, and no one else. */
+        seated() {
+          const [place, players] = [...room.seats].find(([, players]) => players.includes(room.id)) ?? [];
+          const others = new Map(
+            (players ?? []).flatMap((id, seat) => (id === null || id === room.id ? [] : [[id, seat]])),
+          );
+          // Somewhere else now, or back with a new id after a lost connection: new calls.
+          if (place !== this.#place || room.id !== this.#me) {
+            for (const id of [...this.#people.keys()]) this.#forget(id);
+            this.#place = place;
+            this.#me = room.id;
           }
-          for (const [id, { seat, link }] of others) {
+          this.#seat = players?.indexOf(room.id);
+          for (const id of [...this.#people.keys()]) if (!others.has(id)) this.#forget(id);
+          for (const [id, seat] of others) {
             const person = this.#people.get(id);
             if (person) person.seat = seat;
-            else this.#meet(id, seat, link);
+            else this.#meet(id, seat);
           }
-          if (others.size && this.#micState === "off") this.#askForMic();
+          if (others.size) {
+            if (this.#micState === "off") this.#askForMic();
+            this.#timer ??= setInterval(() => this.#show(), 100);
+            return;
+          }
+          // Nobody to talk to: the microphone goes off until there is (the browser stops
+          // showing that it's in use).
+          clearInterval(this.#timer);
+          this.#timer = undefined;
+          this.#mic?.track.stop();
+          this.#mic = undefined;
+          if (this.#micState !== "blocked") this.#micState = "off";
+          this.#shown = "";
+          voice_people("");
         }
 
         /** Mutes or unmutes another player, or with our own id turns our microphone off or on. */
         toggle(id) {
+          if (!this.#people.size) return;
           if (id !== room.id) {
             if (this.#people.has(id)) setMuted(id, names.get(id) ?? "", !isMuted(id));
             return;
@@ -251,20 +276,13 @@
           this.#theirMics.set(from, mic);
         }
 
-        stop() {
-          this.#stopped = true;
-          clearInterval(this.#timer);
-          for (const id of [...this.#people.keys()]) this.#forget(id);
-          this.#mic?.track.stop();
-          voice_people("");
-        }
-
-        #meet(id, seat, link) {
-          const person = { id, seat, link, loudUntil: 0 };
+        #meet(id, seat) {
+          const match = `voice/${this.#place}/${Math.min(id, room.id)}/${Math.max(id, room.id)}`;
+          const call = room.call(id, room.id < id, match);
+          const person = { id, seat, call, loudUntil: 0 };
           this.#people.set(id, person);
-          link.microphone(this.#mic?.track ?? null);
-          link.onvoice = (stream) => this.#hear(person, stream);
-          if (link.voice) this.#hear(person, link.voice);
+          call.microphone(this.#mic?.track ?? null);
+          call.onvoice = (stream) => this.#hear(person, stream);
           this.#tell(id);
         }
 
@@ -282,8 +300,7 @@
           const person = this.#people.get(id);
           this.#people.delete(id);
           if (!person) return;
-          person.link.onvoice = () => {};
-          person.link.microphone(null);
+          room.hangUp(person.call);
           person.element?.pause();
         }
 
@@ -294,11 +311,16 @@
               audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
             });
             const [track] = stream.getAudioTracks();
-            if (this.#stopped) return track.stop();
+            // Everyone left while the browser asked.
+            if (!this.#people.size) {
+              track.stop();
+              this.#micState = "off";
+              return;
+            }
             track.enabled = !micOff;
             this.#mic = { stream, track, analyser: this.#analyser(stream), loudUntil: 0 };
             this.#micState = "on";
-            for (const { link } of this.#people.values()) link.microphone(track);
+            for (const { call } of this.#people.values()) call.microphone(track);
           } catch (error) {
             console.warn("Microphone:", error);
             this.#micState = "blocked";
@@ -307,7 +329,7 @@
         }
 
         #tell(id) {
-          room.message(id, { cabinet: this.#cabinet, voice: { mic: this.#micState === "on" && !micOff } });
+          room.message(id, { voice: { mic: this.#micState === "on" && !micOff } });
         }
 
         #analyser(stream) {
@@ -330,25 +352,23 @@
         /**
          * Tells Bevy who's here, as lines of "id, seat, name, flags" (tab-separated, in seat
          * order), when anything changed. Flags: y you, t talking, m muted by you, o microphone
-         * off, b microphone blocked, n no voice (the browsers can't reach each other directly;
-         * the game goes through the room, voice can't). Nothing while there's nobody to talk to.
+         * off, b microphone blocked, c connecting, n no voice (no way between the browsers, even
+         * through TURN).
          */
         #show() {
           const now = performance.now();
           const people = [...this.#people.values()].map((person) => {
-            const { id, seat, element } = person;
+            const { id, seat, element, call } = person;
             const mute = isMuted(id);
             if (element) element.muted = mute; // names may have come in since
             const flags =
               (mute ? "m" : this.#talking(person, now) ? "t" : "") +
               (this.#theirMics.get(id) === false ? "o" : "") +
-              (person.link.direct ? "" : "n");
+              ({ connecting: "c", failed: "n" }[call.state] ?? "");
             return { id, seat, name: names.get(id) ?? `Player ${seat + 1}`, flags };
           });
-          if (people.length) {
-            const mic = { blocked: "b", on: micOff ? "o" : this.#talking(this.#mic, now) ? "t" : "" }[this.#micState] ?? "";
-            people.push({ id: room.id, seat: this.#seat, name: myName, flags: `y${mic}` });
-          }
+          const mic = { blocked: "b", on: micOff ? "o" : this.#talking(this.#mic, now) ? "t" : "" }[this.#micState] ?? "";
+          people.push({ id: room.id, seat: this.#seat, name: myName, flags: `y${mic}` });
           const shown = people
             .sort((a, b) => a.seat - b.seat)
             .map(({ id, seat, name, flags }) => `${id}\t${seat}\t${name}\t${flags}`)
@@ -357,6 +377,7 @@
           this.#shown = shown;
         }
       }
+      const voice = new Voice();
 
       /** An emulator worker for a cabinet's game, its sound going to the speaker. */
       function emulatorWorker(onmessage) {
@@ -382,8 +403,6 @@
        */
       class Play {
         seat;
-        /** Talking with the others playing here. */
-        voice;
         #game;
         #worker;
         #packets;
@@ -414,7 +433,6 @@
           this.cabinet = game.cabinet;
           /** A lightgun game: the right mouse button is part of the game (client/src/emulator.rs). */
           this.gun = game.gun;
-          this.voice = new Voice(game.cabinet);
         }
 
         /** Who sits at our cabinet changed. */
@@ -450,17 +468,15 @@
           this.#worker?.terminate();
           clearTimeout(this.#settle);
           clearTimeout(this.#joinTimeout);
-          this.voice.stop();
           for (const link of this.#links.values()) room.unlink(link);
         }
 
         /**
-         * Another player at our cabinet said whether their microphone is on, or handed us a
-         * game: its players (and its bytes, below).
+         * Another player at our cabinet handed us a game: its players (and its bytes, below), or
+         * at a linked game told us both boards start over linked.
          */
-        message(from, { cabinet, epoch, players, linked, voice }) {
+        message(from, { cabinet, epoch, players, linked }) {
           if (cabinet !== this.cabinet) return;
-          if (voice) return this.voice.heard(from, voice);
           this.#handovers.set(epoch, { ...this.#handovers.get(epoch), players: new Map(players), linked });
           this.#join(epoch);
         }
@@ -488,7 +504,7 @@
 
           // Cores, ROM sets, BIOS sets and start-up states (emulator/snapshot.mjs) come from R2.
           // Alone we start the game; otherwise the others hand theirs over.
-          const { core, rom, bios, turns, lockstep, gun, linked } = this.#game;
+          const { core, rom, bios, turns, lockstep, gun, linked, options } = this.#game;
           const alone = this.#seated.size === 1;
           const start = {
             type: "start",
@@ -503,6 +519,7 @@
             linked,
             // A linked game's board for this seat, linked (mame/link-states.mjs).
             linkState: linked ? `/roms/${rom}-link${seat}.state` : undefined,
+            options,
             port: packets.port2,
             hold: !alone,
           };
@@ -644,7 +661,6 @@
             };
             this.#links.set(id, link);
           }
-          this.voice.players(this.seat, new Map([...others].map(([seat, id]) => [id, { seat, link: this.#links.get(id) }])));
         }
 
         /**
@@ -723,9 +739,18 @@
         /** The stream our worker plays ("player/stream"), from the last state that came. */
         #source;
         #seated = [];
+        /**
+         * Whose screen shows, on a machine with one per seat (a `view` option, Daytona USA's
+         * two linked cabinets): player 1's to start with; Left and Right go round the seats.
+         * Undefined otherwise.
+         */
+        #view;
+        /** The controls as Bevy last sent them (a u32), for what was just pressed. */
+        #input = 0;
 
-        constructor({ core, rom, bios, turns, gun, linked, cabinet }) {
+        constructor({ core, rom, bios, turns, gun, linked, cabinet, options }) {
           this.cabinet = cabinet;
+          if ("view" in options) this.#view = 0;
           this.#worker = emulatorWorker((data) => {
             if (data.type === "frame") push_frame(data.rgba, data.width, data.height);
             if (data.type === "ready") joined.then(() => play === this && room.watch(this.cabinet));
@@ -739,6 +764,7 @@
             gun,
             // The streamed board's state says whether it's linked, and on which side.
             linked,
+            options,
             hold: true,
           });
         }
@@ -767,7 +793,17 @@
           this.#worker.postMessage({ type: "watch-link", records }, [records.buffer]);
         }
 
-        input() {}
+        /** A watcher's hands are off the game; on a machine with a screen per seat, Left and Right pick whose. */
+        input(input) {
+          const pressed = input & ~this.#input;
+          this.#input = input;
+          const seats = Math.max(1, this.#seated.length);
+          const step = (pressed & LEFT ? -1 : 0) + (pressed & RIGHT ? 1 : 0);
+          if (this.#view === undefined || !step || seats < 2) return;
+          this.#view = (this.#view + step + seats) % seats;
+          this.#worker.postMessage({ type: "view", view: this.#view });
+          this.#show();
+        }
 
         stop() {
           this.#worker.terminate();
@@ -777,14 +813,362 @@
           const playing = this.#seated.flatMap((id, seat) => (id === null ? [] : [names.get(id) ?? `player ${seat + 1}`]));
           if (!playing.length) return game_status(`Nobody is playing right now. ${leave} to go back.`);
           if (!this.#source) return game_status("Watching. Waiting for the game...");
-          game_status(`Watching ${list(playing)}. ${leave} to go back.`);
+          const screen = this.#view === undefined || this.#seated.length < 2 ? "" : `, player ${this.#view + 1}'s screen (Left and Right for another)`;
+          game_status(`Watching ${list(playing)}${screen}. ${leave} to go back.`);
         }
       }
 
+      /**
+       * Playing an arcade game (world::Game's `arcade`, Daytona USA): linked cabinets, as in an
+       * arcade. Our browser runs only our own cabinet, from our seat's state, from the moment we
+       * sit until we stand up (web/emulator/worker.js); nobody hands anything over or waits for
+       * anyone. The cabinets' link data goes to every other player seated here over a link of
+       * its own (web/room.js: straight between the browsers once WebRTC connects, the lower seat
+       * offering; through the room until then, or when it can't), so 8 players are 28 links,
+       * 7 each (voice, as wherever players sit together, follows the seats: Voice). The game's
+       * own rules say who races
+       * whom: Start opens a circuit select that the others can join within its countdown.
+       * Watchers ask one of us for our cabinet, and that player's machine streams it to them.
+       */
+      class Arcade {
+        seat;
+        #game;
+        #worker;
+        #packets;
+        /** The player's controls, as Bevy last sent them (a u32; an arcade game has no gun). */
+        #input = 0;
+        /** Seat -> player id as the room has it, and the other way round. */
+        #seated = new Map();
+        #seatOf = new Map();
+        /** A link to each other player seated here, by player id, and our id when they were made. */
+        #links = new Map();
+        #linkedAs;
+        /** Round trips to them, timed every few seconds (ms), by player id. */
+        #roundTrips = new Map();
+        #timer;
+        /** Who watches the cabinet (the room's list), who asked for ours, and who has our stream. */
+        #watchers = [];
+        #viewers = new Set();
+        #streaming = false;
+        #streamedTo = new Set();
+        /** The worker's last word on the cabinet: loaded (and from the seat's state), its stats. */
+        #ready;
+        #stats;
+        /** Until when the status says our race was called off (performance.now() ms). */
+        #cancelledUntil = 0;
+
+        constructor(game) {
+          this.#game = game;
+          this.cabinet = game.cabinet;
+        }
+
+        /** Who sits at our cabinet changed. */
+        seated(players) {
+          this.#seated = new Map(players.flatMap((id, seat) => (id === null ? [] : [[seat, id]])));
+          this.#seatOf = new Map([...this.#seated].map(([seat, id]) => [id, seat]));
+          const seat = players.indexOf(room.id);
+          if (seat < 0) return; // not seated (yet)
+          // Back after a lost connection, at another seat: that's another cabinet.
+          if (this.#worker && seat !== this.seat) this.#stopCabinet();
+          if (!this.#worker) this.#start(seat);
+          this.#linkPlayers();
+          this.#worker.postMessage({ type: "link-seats", seats: Object.fromEntries(this.#seated) });
+          this.#show();
+        }
+
+        /** Who watches our cabinet changed: those who left stop getting our stream. */
+        watchers(players) {
+          this.#watchers = players;
+          for (const id of this.#viewers) if (!players.includes(id)) this.#viewers.delete(id);
+          this.#stream();
+          this.#show();
+        }
+
+        input(input) {
+          this.#input = input;
+          this.#worker?.postMessage({ type: "input", input });
+        }
+
+        /** A watcher wants our cabinet, or no longer does. */
+        message(from, { cabinet, watch }) {
+          if (cabinet !== this.cabinet || watch === undefined) return;
+          if (watch) this.#viewers.add(from);
+          else this.#viewers.delete(from);
+          this.#stream();
+          this.#show();
+        }
+
+        stop() {
+          this.#stopCabinet();
+        }
+
+        #stopCabinet() {
+          this.#worker?.terminate();
+          this.#worker = undefined;
+          clearInterval(this.#timer);
+          for (const link of this.#links.values()) room.unlink(link);
+          this.#links.clear();
+          this.#roundTrips.clear();
+          this.#streaming = false;
+          this.#ready = this.#stats = undefined;
+        }
+
+        #start(seat) {
+          this.seat = seat;
+          const worker = (this.#worker = emulatorWorker((data) => {
+            if (data.type === "frame") push_frame(data.rgba, data.width, data.height);
+            if (data.type === "buttons") game_buttons(data.buttons.map(([id, name]) => `${id}\t${name}`).join("\n"));
+            if (data.type === "ready") this.#ready = data;
+            if (data.type === "arcade") this.#stats = data;
+            // Someone left our race before it began, which the game would wait for forever: the
+            // worker put the cabinet back in the attract mode (CabinetLink in worker.js).
+            if (data.type === "arcade-cancelled") this.#cancelledUntil = performance.now() + 10000;
+            if (data.type === "ready" || data.type === "arcade" || data.type === "arcade-cancelled") this.#show();
+            if (data.type === "watch-state") {
+              for (const id of data.to === undefined ? this.#viewers : [data.to]) room.watchState(id, data.stream, data.bytes);
+            }
+            if (data.type === "watch-frames") {
+              for (const id of this.#viewers) room.watchFrames(id, data.stream, data.frame, data.bytes);
+            }
+          }));
+          // Our cabinet's link data out to everyone else seated here, theirs in ([seat, packet]).
+          const packets = (this.#packets = new MessageChannel());
+          packets.port1.onmessage = ({ data: packet }) => this.#send(packet);
+          const { core, rom, options } = this.#game;
+          worker.postMessage(
+            {
+              type: "start",
+              core: coreUrl(core),
+              rom: `/roms/${rom}.zip`,
+              state: `/roms/${rom}.seat${seat}.state`,
+              seat,
+              arcade: true,
+              options,
+              port: packets.port2,
+            },
+            [packets.port2],
+          );
+          worker.postMessage({ type: "input", input: this.#input });
+          this.#timer = setInterval(() => this.#timeLinks(), 5000);
+          this.#stream();
+        }
+
+        /** Our block of link data to each other player: straight where we can, once through the room for the rest. */
+        #send(packet) {
+          const relayed = [];
+          for (const [id, link] of this.#links) {
+            if (link.direct) link.send(packet);
+            else relayed.push(id);
+          }
+          if (relayed.length) room.relaySeveral(relayed, packet);
+        }
+
+        /** A link to each other player seated here: the lower seat offers WebRTC. */
+        #linkPlayers() {
+          // Back after a lost connection, with a new id: links name both ids, so they start over.
+          if (this.#linkedAs !== room.id) {
+            for (const link of this.#links.values()) room.unlink(link);
+            this.#links.clear();
+            this.#linkedAs = room.id;
+          }
+          const others = new Map([...this.#seated].filter(([, id]) => id !== room.id));
+          const ids = new Set(others.values());
+          for (const [id, link] of this.#links) {
+            if (ids.has(id)) continue;
+            room.unlink(link);
+            this.#links.delete(id);
+            this.#roundTrips.delete(id);
+          }
+          for (const [seat, id] of others) {
+            if (this.#links.has(id)) continue;
+            const link = room.link(id, this.seat < seat, `${this.cabinet}/${Math.min(id, room.id)}/${Math.max(id, room.id)}`);
+            link.onpacket = (packet) => {
+              const from = this.#seatOf.get(id);
+              if (from !== undefined) this.#packets.port1.postMessage([from, packet], [packet]);
+            };
+            this.#links.set(id, link);
+          }
+        }
+
+        /** Times the round trip to each other player, for the status line. */
+        async #timeLinks() {
+          const links = [...this.#links];
+          const times = await Promise.all(links.map(([, link]) => link.roundTrip(3)));
+          links.forEach(([id], i) => times[i] !== undefined && this.#links.has(id) && this.#roundTrips.set(id, times[i]));
+          this.#show();
+        }
+
+        /**
+         * Streams our cabinet to the watchers who asked for it: a state to each newcomer (the
+         * worker sends one to all when it starts), then what it runs, frame by frame.
+         */
+        #stream() {
+          if (!this.#worker) return;
+          const on = this.#viewers.size > 0;
+          if (on !== this.#streaming) {
+            this.#streaming = on;
+            this.#streamedTo = new Set(this.#viewers);
+            this.#worker.postMessage({ type: "stream", on });
+            return;
+          }
+          if (!on) return;
+          for (const id of this.#viewers) {
+            if (!this.#streamedTo.has(id)) this.#worker.postMessage({ type: "snapshot", to: id });
+          }
+          this.#streamedTo = new Set(this.#viewers);
+        }
+
+        /**
+         * The status line: our seat, how many cabinets are on the link (the core's count, or
+         * who's seated until it says), how far the farthest is (half the slowest round trip),
+         * and whether the link data goes through the room.
+         */
+        #show() {
+          const me = `Player ${this.seat + 1}`;
+          const watching = this.#watchers.length ? ` (${this.#watchers.length} watching)` : "";
+          if (!this.#ready) return game_status(`${me}. Starting the cabinet...`);
+          // The cabinet's link board, as the core says (none, off, waiting, up or lost).
+          const board = this.#stats?.link?.link?.[0]?.state ?? "up";
+          if (!this.#ready.state || board !== "up") return game_status(`${me}. This cabinet couldn't join the link: it plays alone.${watching}`);
+          if (performance.now() < this.#cancelledUntil) return game_status(`${me}. Race cancelled: a player left before the start. Start to race again.${watching}`);
+          const others = this.#seated.size - 1;
+          if (others < 1) return game_status(`${me}, the only cabinet on the link: Start to race. Whoever sits down can join in during the circuit select.${watching}`);
+          const linked = linkedCabinets(this.#stats?.link) ?? this.#seated.size;
+          const times = [...this.#roundTrips.values()];
+          const hop = times.length ? `, ${Math.max(1, Math.round(Math.max(...times) / 2))} ms` : "";
+          const relayed = [...this.#links.values()].some((link) => !link.direct) ? ", through the server" : "";
+          const fps = this.#stats && this.#stats.fps < 50 ? `, ${this.#stats.fps} fps` : "";
+          game_status(`${me}, ${linked} cabinets linked${hop}${relayed}${fps}${watching}`);
+        }
+      }
+
+      /**
+       * How many cabinets the core says are on its link (Core.linkStatus), counting ours, or
+       * undefined when it doesn't say.
+       */
+      function linkedCabinets(status) {
+        const seats = status?.star?.seats;
+        if (!Array.isArray(seats)) return undefined;
+        return seats.filter(({ state }) => state === "self" || state === "present").length;
+      }
+
+      /**
+       * Watching an arcade game: one player's cabinet at a time, the lowest seat's to start with;
+       * Left and Right go round the others. We ask that player for it, their machine streams it
+       * here, and our worker runs it a little behind them, the link data going in as it did on
+       * theirs (web/emulator/worker.js). Another player's cabinet is their state and stream on
+       * the same machine, its seat set again.
+       */
+      class ArcadeWatch {
+        #game;
+        #worker;
+        /** Our worker has loaded the game, ready for a stream. */
+        #ready = false;
+        /** The seat we watch, the player there we asked, and the stream we play ("player/stream"). */
+        #seat;
+        #player;
+        #source;
+        #seated = [];
+        /** The controls as Bevy last sent them (a u32), for what was just pressed. */
+        #input = 0;
+
+        constructor(game) {
+          this.#game = game;
+          this.cabinet = game.cabinet;
+          const { core, rom, options } = game;
+          this.#worker = emulatorWorker((data) => {
+            if (data.type === "frame") push_frame(data.rgba, data.width, data.height);
+            if (data.type !== "ready") return;
+            this.#ready = true;
+            if (this.#player !== undefined) this.#ask(true);
+          });
+          this.#worker.postMessage({ type: "start", core: coreUrl(core), rom: `/roms/${rom}.zip`, arcade: true, options, hold: true });
+        }
+
+        /** Who sits at the cabinet changed: if the player we watch left, another one's cabinet. */
+        seated(players) {
+          this.#seated = players;
+          const at = this.#seat === undefined ? null : players[this.#seat] ?? null;
+          if (at !== this.#player || at === null) {
+            // Someone new at the seat we watch, or the next seat's player, or nobody.
+            const taken = players.flatMap((id, seat) => (id === null ? [] : [seat]));
+            this.#watch(at !== null ? this.#seat : taken.find((seat) => seat > (this.#seat ?? -1)) ?? taken[0]);
+          }
+          this.#show();
+        }
+
+        watchState(from, stream, bytes) {
+          if (from !== this.#player) return;
+          this.#source = `${from}/${stream}`;
+          // The seat's cabinet, and the stream by its name, as Watch's (worker.js).
+          this.#worker.postMessage({ type: "watch-state", bytes, stream: this.#source, seat: this.#seat }, [bytes.buffer]);
+          this.#show();
+        }
+
+        watchFrames(from, stream, frame, bytes) {
+          if (`${from}/${stream}` !== this.#source) return;
+          this.#worker.postMessage({ type: "watch-frames", frame, bytes }, [bytes.buffer]);
+        }
+
+        /** A watcher's hands are off the game; Left and Right pick another player's cabinet. */
+        input(input) {
+          const pressed = input & ~this.#input;
+          this.#input = input;
+          const step = (pressed & LEFT ? -1 : 0) + (pressed & RIGHT ? 1 : 0);
+          const taken = this.#seated.flatMap((id, seat) => (id === null ? [] : [seat]));
+          if (!step || taken.length < 2) return;
+          const at = Math.max(0, taken.indexOf(this.#seat));
+          this.#watch(taken[(at + step + taken.length) % taken.length]);
+          this.#show();
+        }
+
+        stop() {
+          this.#watch(undefined);
+          this.#worker.terminate();
+        }
+
+        /** Watches the cabinet at `seat` (or none): asks the player there for it. */
+        #watch(seat) {
+          const player = seat === undefined ? undefined : this.#seated[seat] ?? undefined;
+          if (player === this.#player && seat === this.#seat) return;
+          if (this.#player !== undefined) this.#ask(false);
+          this.#seat = seat;
+          this.#player = player;
+          this.#source = undefined;
+          if (player !== undefined && this.#ready) this.#ask(true);
+        }
+
+        #ask(watch) {
+          room.message(this.#player, { cabinet: this.cabinet, watch });
+        }
+
+        #show() {
+          const playing = this.#seated.flatMap((id, seat) => (id === null ? [] : [names.get(id) ?? `player ${seat + 1}`]));
+          if (!playing.length) return game_status(`Nobody is playing right now. ${leave} to go back.`);
+          const whose = names.get(this.#player) ?? `player ${this.#seat + 1}`;
+          if (!this.#source) return game_status(`Watching ${whose}'s cabinet. Waiting for the game...`);
+          const others = playing.length > 1 ? ` (${playing.length} playing: Left and Right for another)` : "";
+          game_status(`Watching ${whose}'s cabinet, player ${this.#seat + 1}${others}. ${leave} to go back.`);
+        }
+      }
+
+      /** The RetroPad's Left and Right (libretro.h), as Bevy sends them (client/src/emulator.rs). */
+      const LEFT = 1 << 6;
+      const RIGHT = 1 << 7;
+      /** A game's settings for its core (world::Game's `options`), as Bevy sends them: JSON. */
+      const coreOptions = (json) => {
+        try {
+          return JSON.parse(json || "{}");
+        } catch {
+          return {};
+        }
+      };
+
       let play;
-      window.emulatorPlay = async (core, rom, bios, cabinet, turns, players, lockstep, gun, linked) => {
+      window.emulatorPlay = async (core, rom, bios, cabinet, turns, players, lockstep, gun, linked, options, arcade) => {
         play?.stop();
-        const current = (play = new Play({ core, rom, bios, turns, players, cabinet, lockstep, gun, linked }));
+        const game = { core, rom, bios, turns, players, cabinet, lockstep, gun, linked, options: coreOptions(options) };
+        const current = (play = arcade ? new Arcade(game) : new Play(game));
         stayAwake(true);
         game_status("Taking a seat...");
         await joined;
@@ -792,12 +1176,18 @@
         room.sit(cabinet, players);
         current.watchers(room.watchers.get(cabinet) ?? []);
       };
-      window.emulatorWatch = (core, rom, bios, cabinet, turns, gun, linked) => {
+      window.emulatorWatch = (core, rom, bios, cabinet, turns, gun, linked, options, arcade) => {
         play?.stop();
-        const current = (play = new Watch({ core, rom, bios, turns, gun, linked, cabinet }));
+        const game = { core, rom, bios, turns, gun, linked, cabinet, options: coreOptions(options) };
+        const current = (play = arcade ? new ArcadeWatch(game) : new Watch(game));
         stayAwake(true);
         game_status("Watching. Loading the game...");
-        joined.then(() => play === current && current.seated(room.seats.get(cabinet) ?? []));
+        joined.then(() => {
+          if (play !== current) return;
+          // An arcade game's watcher asks a player for their cabinet itself (ArcadeWatch).
+          if (arcade) room.watch(cabinet);
+          current.seated(room.seats.get(cabinet) ?? []);
+        });
       };
       window.emulatorStop = () => {
         play?.stop();
@@ -920,6 +1310,7 @@
           players_reset();
           own_name(name);
           myName = name;
+          voice.seated();
         },
         moved(id, x, y, flip, name) {
           const renamed = names.has(id) && names.get(id) !== name;
@@ -933,6 +1324,7 @@
         },
         said: (id, name, text) => chat_said(name, text),
         seats(cabinet, players) {
+          voice.seated();
           cabinet_seats(cabinet, players.filter((id) => id !== null).length);
           if (isTable(cabinet)) tableSeats(cabinet, players);
           if (play?.cabinet === cabinet) play.seated(players);
@@ -945,11 +1337,15 @@
           if (isTable(cabinet)) table_watchers(cabinet, Uint32Array.from(players));
           if (play?.cabinet === cabinet) play.watchers?.(players);
         },
-        message: (from, data) =>
-          data.table ? table_message(data.table, from, JSON.stringify(data)) : play?.message?.(from, data),
+        message(from, data) {
+          if (data.voice) voice.heard(from, data.voice);
+          else if (data.table) table_message(data.table, from, JSON.stringify(data));
+          else play?.message?.(from, data);
+        },
         handover: (from, epoch, bytes) => play?.handover?.(from, epoch, bytes),
         watchState: (from, stream, bytes) => play?.watchState?.(from, stream, bytes),
         watchInputs: (from, stream, frame, inputs) => play?.watchInputs?.(from, stream, frame, inputs),
+        watchFrames: (from, stream, frame, bytes) => play?.watchFrames?.(from, stream, frame, bytes),
         watchLink: (from, stream, records) => play?.watchLink?.(from, stream, records),
       }, cookie("name"));
       // First visit: the controls.

@@ -1,31 +1,40 @@
-//! Talking with the others at your cabinet. The page runs the microphones over the players'
-//! WebRTC links (web/index.html); here a panel under the status line lists everyone at the
-//! cabinet while there's someone to talk to, like a voice channel: a dot in their color, ringed
-//! green while they talk, and whether they're muted or have their microphone off. Clicking
-//! someone mutes or unmutes them (yourself: your microphone), as does Shift with their player
-//! number; M turns your microphone off or on. Muting is only on your side: the others still
-//! hear each other.
+//! Talking with the others where you sit: a cabinet or a table, any game with seats. The page
+//! calls each of them (Voice in web/index.html); here a panel in the top-left corner lists
+//! everyone there while there's someone to talk to, like a voice channel: a dot in their color,
+//! ringed green while they talk, and whether they're muted or have their microphone off.
+//! Clicking or tapping someone mutes or unmutes them (yourself: your microphone), as does Shift
+//! with their player number; M turns your microphone off or on. Muting is only on your side: the
+//! others still hear each other. A click or tap on the panel is the panel's, never the game's
+//! (`VoicePointer`, and the rows are touch buttons).
 
 use std::cell::RefCell;
 
+use bevy::input::InputSystems;
 use bevy::prelude::*;
+use bevy::ui::UiSystems;
 use wasm_bindgen::prelude::*;
 
 use crate::Mode;
 use crate::chat::chat_closed;
+use crate::help::help_closed;
 use crate::room::tint;
 use crate::settings::settings_closed;
+use crate::touch::{Touch, TouchButton};
 
 const TALKING: Color = Color::srgb(0.25, 0.85, 0.4);
 const MUTED: Color = Color::srgb(0.95, 0.4, 0.4);
 const DIM: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
 const HOVERED: Color = Color::srgba(1.0, 1.0, 1.0, 0.12);
-/// Shift with one of these mutes player 1-4.
-const SEAT_KEYS: [KeyCode; 4] = [
+/// Shift with one of these mutes player 1-8 (8 at an arcade game's linked cabinets).
+const SEAT_KEYS: [KeyCode; 8] = [
     KeyCode::Digit1,
     KeyCode::Digit2,
     KeyCode::Digit3,
     KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
 ];
 
 /// Someone at the cabinet, as the page says.
@@ -48,8 +57,8 @@ thread_local! {
 
 /// Called by index.html when who's at the cabinet, who's talking or who's muted changes: a line
 /// per person, "id\tseat\tname\tflags" in seat order. Flags: y you, t talking, m muted by you,
-/// o microphone off, b microphone blocked, n no voice (no direct connection to them). Empty
-/// while there's nobody to talk to.
+/// o microphone off, b microphone blocked, c connecting, n no voice (no way to reach them).
+/// Empty while there's nobody to talk to.
 #[wasm_bindgen]
 pub fn voice_people(lines: String) {
     let people = lines
@@ -84,17 +93,39 @@ pub struct VoicePlugin;
 
 impl Plugin for VoicePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(Mode::Playing), spawn_panel)
+        app.init_resource::<VoicePointer>()
+            .add_systems(Startup, spawn_panel)
+            .add_systems(
+                PreUpdate,
+                track_pointer.after(UiSystems::Focus).after(InputSystems),
+            )
             .add_systems(
                 Update,
                 (
                     show_people,
+                    place_panel,
                     click,
-                    press_keys.run_if(chat_closed).run_if(settings_closed),
-                )
-                    .run_if(in_state(Mode::Playing)),
-            )
-            .add_systems(OnExit(Mode::Playing), despawn_panel);
+                    press_keys
+                        .run_if(talking_with_someone)
+                        .run_if(chat_closed)
+                        .run_if(settings_closed)
+                        .run_if(help_closed),
+                ),
+            );
+    }
+}
+
+/// Whether the mouse is on the voice panel, or was pressed there and is still held: a press
+/// that's the panel's, which games leave alone (they count it as busy).
+#[derive(Resource, Default)]
+pub struct VoicePointer {
+    over: bool,
+    claimed: bool,
+}
+
+impl VoicePointer {
+    pub fn busy(&self) -> bool {
+        self.over || self.claimed
     }
 }
 
@@ -110,7 +141,7 @@ fn spawn_panel(mut commands: Commands) {
         Panel,
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(36.0),
+            top: Val::Px(8.0),
             left: Val::Px(8.0),
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(2.0),
@@ -118,18 +149,23 @@ fn spawn_panel(mut commands: Commands) {
             ..default()
         },
         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.75)),
-        // Over the game screen.
+        // Over a game or a table.
         GlobalZIndex(2),
         Visibility::Hidden,
     ));
 }
 
-fn despawn_panel(mut commands: Commands, panel: Single<Entity, With<Panel>>) {
-    commands.entity(*panel).despawn();
+/// Run condition: the panel lists someone, so its keys are on.
+fn talking_with_someone(panel: Single<&Visibility, With<Panel>>) -> bool {
+    **panel != Visibility::Hidden
 }
 
 /// Lists everyone again whenever the page says something changed.
-fn show_people(mut commands: Commands, panel: Single<(Entity, &mut Visibility), With<Panel>>) {
+fn show_people(
+    mut commands: Commands,
+    touch: Res<Touch>,
+    panel: Single<(Entity, &mut Visibility), With<Panel>>,
+) {
     let Some(people) = PEOPLE.take() else {
         return;
     };
@@ -141,6 +177,18 @@ fn show_people(mut commands: Commands, panel: Single<(Entity, &mut Visibility), 
     } else {
         Visibility::Inherited
     };
+    let last = people
+        .iter()
+        .map(|person| person.seat + 1)
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let keys = format!("Click or Shift+1-{last} mutes, M your mic");
+    let how = if touch.is_on() {
+        "Tap someone to mute them, yourself for your mic"
+    } else {
+        keys.as_str()
+    };
     commands
         .entity(panel)
         .despawn_children()
@@ -148,8 +196,36 @@ fn show_people(mut commands: Commands, panel: Single<(Entity, &mut Visibility), 
             for person in &people {
                 spawn_row(panel, person);
             }
-            panel.spawn(text("Click or Shift+1-4 mutes, M your mic", 11.0, DIM));
+            panel.spawn(text(how, 11.0, DIM));
         });
+}
+
+/// Under a cabinet game's status line (emulator.rs), in the corner at the tables.
+fn place_panel(mode: Res<State<Mode>>, mut panel: Single<&mut Node, With<Panel>>) {
+    let top = Val::Px(if *mode.get() == Mode::Playing {
+        36.0
+    } else {
+        8.0
+    });
+    if panel.top != top {
+        panel.top = top;
+    }
+}
+
+fn track_pointer(
+    rows: Query<&Interaction, With<Row>>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    mut pointer: ResMut<VoicePointer>,
+) {
+    pointer.over = rows
+        .iter()
+        .any(|interaction| *interaction != Interaction::None);
+    if mouse.just_pressed(MouseButton::Left) {
+        pointer.claimed = pointer.over;
+    }
+    if !mouse.pressed(MouseButton::Left) {
+        pointer.claimed = false;
+    }
 }
 
 /// For browser tests (testing.rs): who's in the panel, with their flags.
@@ -186,6 +262,8 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, person: &Person) {
         Some(("muted", MUTED))
     } else if person.has('n') {
         Some(("no voice", DIM))
+    } else if person.has('c') {
+        Some(("connecting", DIM))
     } else if person.has('o') {
         Some(("mic off", DIM))
     } else {
@@ -196,6 +274,8 @@ fn spawn_row(panel: &mut ChildSpawnerCommands, person: &Person) {
         .spawn((
             Button,
             Row(person.id),
+            // A finger on it is the panel's, not the stick's or a table's (touch.rs).
+            TouchButton::Voice,
             Node {
                 align_items: AlignItems::Center,
                 column_gap: Val::Px(6.0),

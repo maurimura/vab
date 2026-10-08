@@ -72,7 +72,9 @@ pub fn game_status(text: String) {
 extern "C" {
     /// Sits the player at `cabinet` ("x,y") and starts its game, for up to `players` at once;
     /// `lockstep` games don't roll back online, `gun` games answer the core's lightgun from
-    /// the aim, and `linked` games give each player their own board, linked to the others'
+    /// the aim, `linked` games give each player their own board, linked to the others'
+    /// (paced like lockstep), `options` (JSON) are the core's settings, and `arcade` games are
+    /// linked cabinets, each player's browser running only their own, free-running
     /// (world::Game).
     #[wasm_bindgen(js_name = emulatorPlay)]
     fn emulator_play(
@@ -85,9 +87,11 @@ extern "C" {
         lockstep: bool,
         gun: bool,
         linked: bool,
+        options: &str,
+        arcade: bool,
     );
     /// Watches the game at `cabinet` ("x,y"), streamed from one of its players (at a `linked`
-    /// game, the lowest seat's own board).
+    /// game, the lowest seat's own board; an `arcade` game's: one player's cabinet at a time).
     #[wasm_bindgen(js_name = emulatorWatch)]
     fn emulator_watch(
         core: &str,
@@ -97,6 +101,8 @@ extern "C" {
         turns: bool,
         gun: bool,
         linked: bool,
+        options: &str,
+        arcade: bool,
     );
     #[wasm_bindgen(js_name = emulatorStop)]
     fn emulator_stop();
@@ -139,6 +145,8 @@ pub fn play(cell: IVec2, game: &Game) {
         game.lockstep,
         game.gun,
         game.linked,
+        &options(game),
+        game.arcade,
     );
 }
 
@@ -156,7 +164,14 @@ pub fn watch(cell: IVec2, game: &Game) {
         game.turns,
         game.gun,
         game.linked,
+        &options(game),
+        game.arcade,
     );
+}
+
+/// The game's settings for its core, as JSON for the page.
+fn options(game: &Game) -> String {
+    serde_json::to_string(&game.options).unwrap_or_else(|_| "{}".into())
 }
 
 /// How the page and the room name a cabinet: its cell, "x,y".
@@ -427,7 +442,7 @@ fn show_status(mut status: Single<&mut Text, With<Status>>) {
     if let Some(text) = LATEST_STATUS.take() {
         // For browser tests (testing.rs): the line as shown.
         #[cfg(feature = "test-hooks")]
-        crate::testing::report("game_status", serde_json::Value::String(text.clone()));
+        crate::testing::report("status", serde_json::Value::String(text.clone()));
         status.0 = text;
     }
 }
