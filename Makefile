@@ -14,7 +14,8 @@ WASM_BINDGEN := .tools/wasm-bindgen-$(WASM_BINDGEN_VERSION)/bin/wasm-bindgen
 # wasm-opt comes with the pinned emsdk.
 WASM_OPT := emulator/.cache/emsdk/upstream/bin/wasm-opt
 
-.PHONY: client netplay emulator emulator-remote upload-emulator supermodel supermodel-remote upload-supermodel upload-rom dev deploy preview \
+.PHONY: client netplay emulator emulator-remote upload-emulator supermodel supermodel-remote upload-supermodel \
+	mame mame-remote upload-mame upload-rom dev deploy preview \
 	editor editor-web editor-dev editor-deploy editor-preview pull-map e2e
 
 $(WASM_BINDGEN):
@@ -65,6 +66,15 @@ supermodel:
 supermodel-remote:
 	$(MAKE) upload-supermodel R2_TARGET=--remote
 
+# The MAME core (Namco System 12 and System 23: Tekken 3, Time Crisis II) -> mame/dist/, then
+# into local R2 (served at /mame/*), like Supermodel above. mame-remote uploads to production.
+mame:
+	./mame/build.sh
+	$(MAKE) upload-mame R2_TARGET=--local
+
+mame-remote:
+	$(MAKE) upload-mame R2_TARGET=--remote
+
 # A ROM set (or its start-up .state) into R2, served at /roms/<file>:
 # make upload-rom ROM=$HOME/Downloads/mk2.zip (local R2, for `make dev BUCKET=local`; add
 # R2_TARGET=--remote for production, and R2_BUCKET=vab-preview for the preview Worker's bucket).
@@ -80,6 +90,12 @@ upload-supermodel:
 		--file ../supermodel/dist/supermodel.mjs --content-type text/javascript && \
 	npx wrangler r2 object put $(R2_BUCKET)/supermodel/supermodel.wasm $(R2_TARGET) \
 		--file ../supermodel/dist/supermodel.wasm --content-type application/wasm
+
+upload-mame:
+	cd server && npx wrangler r2 object put $(R2_BUCKET)/mame/mame.mjs $(R2_TARGET) \
+		--file ../mame/dist/mame.mjs --content-type text/javascript && \
+	npx wrangler r2 object put $(R2_BUCKET)/mame/mame.wasm $(R2_TARGET) \
+		--file ../mame/dist/mame.wasm --content-type application/wasm
 
 upload-emulator:
 	cd server && for dir in ../emulator/dist/*/; do core=$$(basename $$dir); \

@@ -1,0 +1,288 @@
+Complete save states for Namco System 12 (Tekken 3), for rollback netplay and lockstep
+handovers: a machine that loads a state, once or several times in a row, goes on exactly as the
+one that saved it, and its state right after the load is the saver's, byte for byte. Plus Tekken
+3's clock, which read 2 Feb. 2030.
+
+- device_execute_interface: a CPU's pending input line events (the queue set_input_line fills and
+  a synchronize() timer empties) weren't in states, and a load drops the scheduler's temporary
+  timers, that one too, but kept the queue. A machine that loaded twice without running a frame in
+  between (bench.mjs's replay does; so does any second load before the next retro_run) was left
+  with an event no timer would apply, and every later change of that line queued behind it:
+  Tekken 3's R3000 went its own way within the first frame (a random word at 0x8021F838 in RAM,
+  registers, DMA timing). The queue is saved now and its timer armed again after a load. This is
+  MAME's core: every CPU's states grow by 67 lines x 132 bytes (System 23 included).
+- psxirq: its post_load set the CPU's interrupt line again, though the line is in the state (the
+  CPU's input state and CAUSE): that queued the event above, and a timer the saving machine never
+  had, on every load.
+- psxcpu: the COM_DELAY register (0x1f801020) wasn't saved (found reading the code).
+- PSX CPU, GTE, DMA, MDEC and GPU: registers and buffers no reset clears (R3000 and GTE
+  registers, the scratchpad, DMA channel registers, the MDEC's tables, the GPU's packet) started
+  with whatever the heap held where the device was built. They are in states, so a loaded state
+  overwrote them, but two machines booted apart were different from the start, and Tekken 3 reads
+  some of them: two Node runs whose only difference was the script's file name (so the length of
+  a string in the environment, so where everything landed) were apart by frame 1200. Zero now.
+- scheduler: presave numbers the active timers (their order when a state is loaded); an inactive
+  one kept the number it had when last saved active, so two identical machines' states differed
+  by when each had last saved (Tekken 3's EEPROM write timer, under rollback). Inactive ones are 0.
+- H8 SCI: m_clock_step started as whatever the heap held (it is saved, and only read once a
+  clock runs, which sets it): zero, so two machines' states match from power-on.
+- MIPS III (System 23's R4650, found checking Time Crisis II): the interpreter's FPU condition
+  flags (m_cf; the recompiler keeps them in FCR31) weren't saved. A machine that loaded a state
+  had its own, which CFC1 merges into FCR31 and BC1T/BC1F branch on: in a game, Time Crisis II
+  wrote a different condition bit back into FCR31 within 120 frames of a load.
+- Lua: its idle timer was re-armed after every load (enabled, expiring never), unlike in the
+  machine that saved: now it is turned off, as there are no tasks waiting. It never fired; only
+  the state's bytes differed.
+- H8 SCI, Tekken 3's clock (not a save-state problem): in clocked synchronous mode the clock
+  output idles high once a transfer stops. System 12's BIOS stops receiving in the middle of a
+  byte after reading its RTC4543, which left the clock low, so the next read began with a rising
+  edge and sampled a bit before the chip had sent one: every other read came a bit late, and the
+  first-boot screen said "2 Feb. 2030" for patch 0003's 1998-01-01. It now says
+  "Thu. 1 Jan. 1998".
+
+diff --git a/src/devices/cpu/h8/h8_sci.cpp b/src/devices/cpu/h8/h8_sci.cpp
+index 46c2f3f4..42258aad 100644
+--- a/src/devices/cpu/h8/h8_sci.cpp
++++ b/src/devices/cpu/h8/h8_sci.cpp
+@@ -80,7 +80,7 @@ h8_sci_device::h8_sci_device(const machine_config &mconfig, const char *tag, dev
+ 	m_external_to_internal_ratio(0), m_internal_to_external_ratio(0), m_sync_timer(nullptr), m_id(0), m_eri_int(0), m_rxi_int(0), m_txi_int(0), m_tei_int(0),
+ 	m_tx_state(0), m_rx_state(0), m_tx_bit(0), m_rx_bit(0), m_clock_state(0), m_tx_parity(0), m_rx_parity(0), m_tx_clock_counter(0), m_rx_clock_counter(0),
+ 	m_clock_mode(INTERNAL_ASYNC), m_ext_clock_value(false), m_rx_value(true),
+-	m_rdr(0), m_tdr(0), m_smr(0), m_scr(0), m_ssr(0), m_ssr_read(0), m_brr(0), m_rsr(0), m_tsr(0), m_clock_event(0), m_divider(0)
++	m_rdr(0), m_tdr(0), m_smr(0), m_scr(0), m_ssr(0), m_ssr_read(0), m_brr(0), m_rsr(0), m_tsr(0), m_clock_event(0), m_clock_step(0), m_divider(0)
+ {
+ 	m_external_clock_period = attotime::never;
+ }
+@@ -510,6 +510,13 @@ void h8_sci_device::clock_stop(int mode)
+ 		m_clock_event = 0;
+ 		m_clock_step = 0;
+ 		LOGMASKED(LOG_CLOCK, "Stopping clocks\n");
++		// In clocked synchronous mode the clock output idles high between transfers. A receive
++		// cut short (RE cleared in the middle of a byte, as System 12's BIOS does after reading
++		// its RTC4543) left it low, so the next transfer began with a rising edge and sampled a
++		// bit before the device had sent one: every other RTC read came one bit late (Tekken 3's
++		// "FIRST POWER ON 2 Feb. 2030" for 1 Jan. 1998).
++		if(m_clock_mode == INTERNAL_SYNC_OUT)
++			m_cpu->do_sci_clk(m_id, 1);
+ 	}
+ 	m_cpu->internal_update();
+ }
+diff --git a/src/devices/cpu/mips/mips3.cpp b/src/devices/cpu/mips/mips3.cpp
+index bb389f9c..55d82d44 100644
+--- a/src/devices/cpu/mips/mips3.cpp
++++ b/src/devices/cpu/mips/mips3.cpp
+@@ -535,6 +535,7 @@ void mips3_device::device_start()
+ 	save_item(NAME(m_core->r));
+ 	save_item(NAME(m_core->cpr));
+ 	save_item(NAME(m_core->ccr));
++	save_item(NAME(m_cf)); // the interpreter's FPU condition flags (the recompiler's are in ccr[1][31])
+ 	save_item(NAME(m_core->llbit));
+ 	save_item(NAME(m_core->count_zero_time));
+ 	for (int tlbindex = 0; tlbindex < m_tlbentries; tlbindex++)
+diff --git a/src/devices/cpu/psx/dma.cpp b/src/devices/cpu/psx/dma.cpp
+index d0c3836e..e8ac4246 100644
+--- a/src/devices/cpu/psx/dma.cpp
++++ b/src/devices/cpu/psx/dma.cpp
+@@ -50,6 +50,11 @@ void psxdma_device::device_start()
+ 
+ 		dma->timer = timer_alloc(FUNC(psxdma_device::dma_finished), this);
+ 		dma->b_running = 0;
++		// no reset sets these: zero, not whatever the heap held
++		dma->n_base = 0;
++		dma->n_blockcontrol = 0;
++		dma->n_channelcontrol = 0;
++		dma->n_ticks = 0;
+ 
+ 		save_item(NAME(dma->n_base), index);
+ 		save_item(NAME(dma->n_blockcontrol), index);
+diff --git a/src/devices/cpu/psx/irq.cpp b/src/devices/cpu/psx/irq.cpp
+index 41706fcf..8be42f2c 100644
+--- a/src/devices/cpu/psx/irq.cpp
++++ b/src/devices/cpu/psx/irq.cpp
+@@ -34,7 +34,8 @@ void psxirq_device::device_reset()
+ 
+ void psxirq_device::device_post_load()
+ {
+-	psx_irq_update();
++	// Nothing to do: the CPU's interrupt line is in the state too (its input state and CAUSE).
++	// Setting it again here queued an input event, and a timer, the saving machine never had.
+ }
+ 
+ void psxirq_device::device_start()
+diff --git a/src/devices/cpu/psx/mdec.cpp b/src/devices/cpu/psx/mdec.cpp
+index 7b22e39e..7c3fe386 100644
+--- a/src/devices/cpu/psx/mdec.cpp
++++ b/src/devices/cpu/psx/mdec.cpp
+@@ -46,6 +46,14 @@ void psxmdec_device::device_post_load()
+ 
+ void psxmdec_device::device_start()
+ {
++	// tables the game uploads, and buffers: zero until then, not whatever the heap held
++	std::fill( std::begin( p_n_output ), std::end( p_n_output ), 0 );
++	std::fill( std::begin( p_n_quantize_y ), std::end( p_n_quantize_y ), 0 );
++	std::fill( std::begin( p_n_quantize_uv ), std::end( p_n_quantize_uv ), 0 );
++	std::fill( std::begin( p_n_cos ), std::end( p_n_cos ), 0 );
++	std::fill( std::begin( p_n_cos_precalc ), std::end( p_n_cos_precalc ), 0 );
++	std::fill( std::begin( m_p_n_unpacked ), std::end( m_p_n_unpacked ), 0 );
++
+ 	for( int n = 0; n < 256; n++ )
+ 	{
+ 		p_n_clamp8[ n ] = 0;
+diff --git a/src/devices/cpu/psx/psx.cpp b/src/devices/cpu/psx/psx.cpp
+index 38df770b..79b490d5 100644
+--- a/src/devices/cpu/psx/psx.cpp
++++ b/src/devices/cpu/psx/psx.cpp
+@@ -1840,6 +1840,24 @@ void psxcpu_device::device_start()
+ 	m_program->cache(m_instruction);
+ 	m_program->specific(m_data);
+ 
++	// Registers no reset sets would otherwise hold whatever the heap had where the device was
++	// built, so two machines would differ from power-on (Tekken 3 reads some of them).
++	std::fill( std::begin( m_r ), std::end( m_r ), 0 );
++	std::fill( std::begin( m_cp0r ), std::end( m_cp0r ), 0 );
++	m_pc = m_hi = m_lo = m_op = 0;
++	m_com_delay = m_delayv = m_delayr = m_berr = m_biu = 0;
++	std::fill( std::begin( m_icacheTag ), std::end( m_icacheTag ), 0 );
++	std::fill( std::begin( m_icache ), std::end( m_icache ), 0 );
++	std::fill( std::begin( m_dcache ), std::end( m_dcache ), 0 );
++	m_multiplier_operation = MULTIPLIER_OPERATION_IDLE;
++	m_multiplier_operand1 = m_multiplier_operand2 = 0;
++	m_exp_base = m_exp_config = m_ram_config = m_rom_config = 0;
++	for( int n = 0; n < 32; n++ )
++	{
++		m_gte.m_cp2cr[ n ].d = 0;
++		m_gte.m_cp2dr[ n ].d = 0;
++	}
++
+ 	save_item( NAME( m_op ) );
+ 	save_item( NAME( m_pc ) );
+ 	save_item( NAME( m_delayv ) );
+@@ -1861,6 +1879,7 @@ void psxcpu_device::device_start()
+ 	save_item( NAME( m_exp_config ) );
+ 	save_item( NAME( m_ram_config ) );
+ 	save_item( NAME( m_rom_config ) );
++	save_item( NAME( m_com_delay ) );
+ 
+ 	state_add( STATE_GENPC, "GENPC", m_pc ).noshow();
+ 	state_add( STATE_GENPCBASE, "CURPC", m_pc ).noshow();
+diff --git a/src/devices/video/psx.cpp b/src/devices/video/psx.cpp
+index c8b04086..131b47e6 100644
+--- a/src/devices/video/psx.cpp
++++ b/src/devices/video/psx.cpp
+@@ -502,6 +502,9 @@ void psxgpu_device::psx_gpu_init( int n_gputype )
+ 	n_lightgun_x = 0;
+ 	n_lightgun_y = 0;
+ 	b_reverseflag = 0;
++	// saved, but no reset sets them: zero, not whatever the heap held
++	std::fill( std::begin( m_packet.n_entry ), std::end( m_packet.n_entry ), 0 );
++	m_n_tx = m_n_ty = n_abr = n_tp = n_ix = n_iy = n_ti = 0;
+ 
+ 	p_vram = make_unique_clear<uint16_t[]>(width * height );
+ 
+diff --git a/src/emu/diexec.cpp b/src/emu/diexec.cpp
+index 9a349d12..ebe9ba3a 100644
+--- a/src/emu/diexec.cpp
++++ b/src/emu/diexec.cpp
+@@ -401,12 +401,30 @@ void device_execute_interface::interface_post_start()
+ 	device().save_item(STRUCT_MEMBER(m_input, m_curvector));
+ 	device().save_item(STRUCT_MEMBER(m_input, m_curstate));
+ 
++	// events set_input_line queued and a synchronize() timer hasn't applied yet: a load drops
++	// that timer (it's a temporary one), interface_post_load arms it again
++	device().save_item(STRUCT_MEMBER(m_input, m_queue));
++	device().save_item(STRUCT_MEMBER(m_input, m_qindex));
++
+ 	// fill in the input states and IRQ callback information
+ 	for (int line = 0; line < std::size(m_input); line++)
+ 		m_input[line].start(*this, line);
+ }
+ 
+ 
++//-------------------------------------------------
++//  interface_post_load - work to be done after a
++//  state is loaded
++//-------------------------------------------------
++
++void device_execute_interface::interface_post_load()
++{
++	// the loaded queues' events are still to be applied, by timers the load dropped
++	for (device_input &input : m_input)
++		input.post_load();
++}
++
++
+ //-------------------------------------------------
+ //  interface_pre_reset - work to be done prior to
+ //  actually resetting a device
+@@ -693,6 +711,19 @@ void device_execute_interface::device_input::set_state_synced(int state, int vec
+ }
+ 
+ 
++//-------------------------------------------------
++//  post_load - after a state is loaded, arm the
++//  timer that applies the queued events again (the
++//  scheduler drops temporary timers on a load)
++//-------------------------------------------------
++
++void device_execute_interface::device_input::post_load()
++{
++	if (m_qindex > 0)
++		m_execute->scheduler().synchronize(timer_expired_delegate(FUNC(device_execute_interface::device_input::empty_event_queue),this));
++}
++
++
+ //-------------------------------------------------
+ //  empty_event_queue - empty our event queue
+ //-------------------------------------------------
+diff --git a/src/emu/diexec.h b/src/emu/diexec.h
+index b40ef75c..7cbf91b2 100644
+--- a/src/emu/diexec.h
++++ b/src/emu/diexec.h
+@@ -212,6 +212,7 @@ protected:
+ 	virtual void interface_validity_check(validity_checker &valid) const override;
+ 	virtual void interface_pre_start() override;
+ 	virtual void interface_post_start() override;
++	virtual void interface_post_load() override;
+ 	virtual void interface_pre_reset() override;
+ 	virtual void interface_post_reset() override;
+ 	virtual void interface_clock_changed(bool sync_on_new_clock_domain) override;
+@@ -260,6 +261,7 @@ private:
+ 		void set_state_synced(int state, int vector = USE_STORED_VECTOR);
+ 		void set_vector(int vector) { m_stored_vector = vector; }
+ 		int default_irq_callback();
++		void post_load();
+ 
+ 		device_execute_interface *m_execute;// pointer to the execute interface
+ 		int             m_linenum;          // which input line we are
+diff --git a/src/emu/schedule.cpp b/src/emu/schedule.cpp
+index a475fd9b..7734d37a 100644
+--- a/src/emu/schedule.cpp
++++ b/src/emu/schedule.cpp
+@@ -676,6 +676,11 @@ void device_scheduler::presave()
+ 	u32 index = 0;
+ 	for (emu_timer *timer = m_timer_list; timer; timer = timer->m_next)
+ 		timer->m_index = index++;
++
++	// inactive timers are saved too: without this they keep the number they had when last saved
++	// active, so two identical machines' states differ by when each one last saved
++	for (emu_timer *timer = m_inactive_timers; timer; timer = timer->m_next)
++		timer->m_index = 0;
+ #if VERBOSE
+ 	dump_timers();
+ #endif
+diff --git a/src/frontend/mame/luaengine.cpp b/src/frontend/mame/luaengine.cpp
+index 87afd02d..7b7859ea 100644
+--- a/src/frontend/mame/luaengine.cpp
++++ b/src/frontend/mame/luaengine.cpp
+@@ -692,8 +692,9 @@ void lua_engine::on_machine_presave()
+ 
+ void lua_engine::on_machine_postload()
+ {
+-	// clear waiting tasks
+-	m_timer->reset();
++	// clear waiting tasks; their timer is off until a task waits again (reset() left it enabled,
++	// expiring never, where the machine that saved had it off)
++	m_timer->enable(false);
+ 	std::vector<int> expired;
+ 	expired.reserve(m_waiting_tasks.size());
+ 	for (auto const &waiting : m_waiting_tasks)

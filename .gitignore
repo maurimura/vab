@@ -33,3 +33,7 @@ node_modules/
 /*.png
 
 .DS_Store
+
+# MAME (Namco System 12 / System 23) build output and checkout (mame/build.sh)
+/mame/dist
+/mame/.cache
