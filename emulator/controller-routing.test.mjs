@@ -50,10 +50,9 @@ test('a lightgun aim in the high 16 bits never reaches the RetroPad, shared or n
 });
 
 // FBNeo's driving games (Out Run): Accelerate on R2, Brake on L2, the wheel on the left stick.
-const outrun = controllerRouting(
-  [new Map([[2, 'Coin 1'], [3, 'Start 1'], [13, 'Accelerate'], [12, 'Brake'], [0, 'Gear'], [6, 'Steering (Fake Digital Left)'], [7, 'Steering (Fake Digital Right)']])],
-  [new Map([['0/0', 'Steering']])],
-);
+const outrun = controllerRouting([
+  new Map([[2, 'Coin 1'], [3, 'Start 1'], [13, 'Accelerate'], [12, 'Brake'], [0, 'Gear'], [6, 'Steering (Fake Digital Left)'], [7, 'Steering (Fake Digital Right)']]),
+]);
 
 test('a driving game takes Up and Down as its pedals, on its own port only', () => {
   assert.deepEqual(outrun.pedals, [true]);
@@ -69,12 +68,16 @@ test('a driving game takes Up and Down as its pedals, on its own port only', () 
   assert.equal(routedButton([bit(4), 0, 0, 0], 0, 4, fighter), 1);
 });
 
-test("a driving game's arrows turn its wheel, never FBNeo's full-lock Left and Right", () => {
-  assert.deepEqual(outrun.wheel, [true]);
-  for (const id of [6, 7]) assert.equal(routedButton([bit(6) | bit(7), 0, 0, 0], 0, id, outrun), 0);
-  assert.equal(routedButton([bit(0), 0, 0, 0], 0, 0, outrun), 1);
-  // An analog stick without pedals (Terminator 2's gun) is no wheel: its arrows stay arrows.
-  const gun = controllerRouting([new Map([[4, 'Gun Y'], [7, 'Gun X'], [0, 'Button 1']])], [new Map([['0/0', 'Gun X']])]);
-  assert.deepEqual(gun.wheel, [false]);
-  assert.equal(routedButton([bit(7), 0, 0, 0], 0, 7, gun), 1);
+test("steering is the game's to say (libretro.js `wheel`), not the descriptors': the arrows stay arrows here", () => {
+  // Out Run's analog stick and "fake digital" Left and Right make no wheel by themselves; the
+  // Core keeps Left and Right from a game with a `wheel`.
+  assert.equal('wheel' in outrun, false);
+  for (const id of [6, 7]) assert.equal(routedButton([bit(6) | bit(7), 0, 0, 0], 0, id, outrun), 1);
+  // Cruis'n USA on MAME names Up and Down for its pedals itself: nothing to route.
+  const cruisn = controllerRouting([
+    new Map([[4, 'Accelerate'], [5, 'Brake'], [6, 'Steer left'], [7, 'Steer right'], [0, 'Shift Down'], [8, 'Shift Up'], [3, 'Start'], [2, 'Coin']]),
+  ]);
+  assert.deepEqual(cruisn.pedals, [false]);
+  for (const id of [4, 5, 6, 7]) assert.equal(routedButton([bit(id), 0, 0, 0], 0, id, cruisn), 1);
+  assert.equal(routedButton([bit(4), 0, 0, 0], 0, 13, cruisn), 0);
 });

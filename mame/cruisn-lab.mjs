@@ -5,7 +5,10 @@
 // is full, so B watches. Prints how evenly each worker posts its frames (the game draws every
 // other frame in a race: 34.5 ms apart at its 57.9 Hz), compares B's machine with A's at the
 // same frames (worker "probe"s: A numbers its frames as its stream to the watchers does) and
-// saves screenshots of both browsers. Each Chrome is killed by its own PID at the end.
+// saves screenshots of both browsers. Then A tries `/wheel` in the chat (Y, the line, Enter): the
+// numbers, then Right held as A's stream carries the wheel frame by frame, before and after
+// `/wheel lock=0.3 curve=1`, and B's machine against A's again, driving on with those numbers.
+// Each Chrome is killed by its own PID at the end.
 //
 //   node mame/cruisn-lab.mjs [--site=http://localhost:8787] [--out=mame/.cache/lab]
 //
@@ -28,10 +31,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 mkdirSync(OUT, { recursive: true });
 
 const WORKER_PROBE = `(() => {
-  const L = globalThis.__lab = { probes: {}, frames: 0, times: [], buttons: null };
+  const L = globalThis.__lab = { probes: {}, frames: 0, times: [], buttons: null, wheel: [] };
   const post = globalThis.postMessage;
   globalThis.postMessage = function (m, transfer) {
     if (m && m.type === "probe") L.probes[m.frame] = m;
+    // The player's wheel, as their stream carries it: bits 16-23 of port 0's input, each frame.
+    else if (m && m.type === "watch-inputs") {
+      for (let i = 0; i < m.inputs.length; i += 4) L.wheel.push((m.inputs[i] << 8) >> 24);
+      if (L.wheel.length > 3000) L.wheel.splice(0, L.wheel.length - 3000);
+    }
     else if (m && m.type === "frame") { L.frames++; L.times.push(performance.now()); if (L.times.length > 4000) L.times.shift(); }
     else if (m && m.type === "buttons") L.buttons = m.buttons;
     return post.call(this, m, transfer);
@@ -125,6 +133,21 @@ class Browser {
   down(code, key, vk) { return this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode: vk }, this.page); }
   up(code, key, vk) { return this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode: vk }, this.page); }
   async key(code, key, vk, hold = 120) { await this.down(code, key, vk); await sleep(hold); await this.up(code, key, vk); }
+  /** Says `line` in the bar's chat: Y opens it, the keys type it, Enter sends it. */
+  async chat(line) {
+    await this.key("KeyY", "y", 89, 60);
+    await sleep(200);
+    for (const c of line) {
+      const [code, vk] = /[a-z]/.test(c) ? [`Key${c.toUpperCase()}`, c.toUpperCase().charCodeAt(0)]
+        : /[0-9]/.test(c) ? [`Digit${c}`, c.charCodeAt(0)]
+        : { "/": ["Slash", 191], "=": ["Equal", 187], ".": ["Period", 190], " ": ["Space", 32] }[c];
+      await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: c, code, text: c, windowsVirtualKeyCode: vk }, this.page);
+      await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: c, code, windowsVirtualKeyCode: vk }, this.page);
+      await sleep(30);
+    }
+    await this.key("Enter", "Enter", 13, 60);
+    await sleep(500);
+  }
   async click(x, y) {
     for (const type of ["mousePressed", "mouseReleased"]) await this.cdp.send("Input.dispatchMouseEvent", { type, x, y, button: "left", clickCount: 1 }, this.page);
   }
@@ -212,27 +235,61 @@ console.log(`${at()} B watching: "${await status(B)}"; A "${await status(A)}"`);
 // Same frames on both machines: B numbers its frames from the stream's start, and A answers a
 // probe for a frame by that number (worker.js). B's next frame says where the stream is.
 const asked = [];
-for (let round = 0; round < 4; round++) {
-  const seen = new Set(Object.keys((await B.lab()).probes).map(Number));
-  await B.eval(`onmessage({ data: { type: "probe" } })`, B.workers.at(-1));
-  const now = await until("B's frame", async () => {
-    const frames = Object.keys((await B.lab()).probes).map(Number).filter((f) => !seen.has(f) && !asked.includes(f));
-    return frames.length ? Math.max(...frames) : undefined;
-  });
-  const frame = now + 240;
-  asked.push(frame);
-  for (const b of [A, B]) await b.eval(`onmessage({ data: { type: "probe", at: ${frame} } })`, b.workers.at(-1));
-  await sleep(6000);
+async function compare(rounds) {
+  const these = [];
+  for (let round = 0; round < rounds; round++) {
+    const seen = new Set(Object.keys((await B.lab()).probes).map(Number));
+    await B.eval(`onmessage({ data: { type: "probe" } })`, B.workers.at(-1));
+    const now = await until("B's frame", async () => {
+      const frames = Object.keys((await B.lab()).probes).map(Number).filter((f) => !seen.has(f) && !asked.includes(f));
+      return frames.length ? Math.max(...frames) : undefined;
+    });
+    const frame = now + 240;
+    asked.push(frame);
+    these.push(frame);
+    for (const b of [A, B]) await b.eval(`onmessage({ data: { type: "probe", at: ${frame} } })`, b.workers.at(-1));
+    await sleep(6000);
+  }
+  await sleep(8000);
+  const [a, b] = await Promise.all([A.lab(), B.lab()]);
+  const both = these.filter((f) => a.probes[f] && b.probes[f]);
+  const same = both.filter((f) => a.probes[f].hash === b.probes[f].hash);
+  console.log(`${at()} B's machine against A's: RAM the same at ${same.length} of ${both.length} probed frames (${these.join(", ")})` +
+    `${both.length - same.length ? `; DIFFERENT at ${both.filter((f) => !same.includes(f)).join(", ")}` : ""}`);
 }
+const comparing = compare(4);
+await sleep(6000);
 console.log(`${at()} A racing, watched: ${await pacing(A, 6000)}`);
 console.log(`${at()} B watching: ${await pacing(B, 6000)}`);
-await sleep(8000);
-const [a, b] = await Promise.all([A.lab(), B.lab()]);
-const both = asked.filter((f) => a.probes[f] && b.probes[f]);
-const same = both.filter((f) => a.probes[f].hash === b.probes[f].hash);
-console.log(`${at()} B's machine against A's: RAM the same at ${same.length} of ${both.length} probed frames (${asked.join(", ")})` +
-  `${both.length - same.length ? `; DIFFERENT at ${both.filter((f) => !same.includes(f)).join(", ")}` : ""}`);
+await comparing;
 clearInterval(steering);
+
+// `/wheel`: the numbers (on A's screen), then the wheel frame by frame for Right held 0.7 s, as
+// A's stream carries it, with games.ron's numbers and then with others.
+await A.eval(`(() => { const calls = (window.__wheelCalls = []); const hook = window.emulatorWheel; window.emulatorWheel = (json) => (calls.push(json), hook(json)); })()`);
+async function turn() {
+  await sleep(1500);
+  const from = (await A.lab()).wheel.length;
+  await A.key("ArrowRight", "ArrowRight", 39, 700);
+  await sleep(1500);
+  const wheel = (await A.lab()).wheel.slice(from);
+  const first = wheel.findIndex((w) => w !== 0);
+  const last = wheel.findLastIndex((w) => w !== 0);
+  return first < 0 ? "(no turn)" : wheel.slice(first, last + 2).join(" ");
+}
+await A.chat("/wheel");
+await A.screenshot(join(OUT, "cruisn-A-5-wheel.png"));
+console.log(`${at()} A holds Right 0.7 s, the wheel each frame: ${await turn()}`);
+await A.chat("/wheel lock=0.3 curve=1");
+await A.screenshot(join(OUT, "cruisn-A-6-wheel-tuned.png"));
+console.log(`${at()} A said /wheel lock=0.3 curve=1; to the page: ${await A.eval("JSON.stringify(window.__wheelCalls)")}`);
+console.log(`${at()} the same hold now: ${await turn()}`);
+const tuned = setInterval(() => {
+  const right = Math.random() < 0.5;
+  A.key(right ? "ArrowRight" : "ArrowLeft", right ? "ArrowRight" : "ArrowLeft", right ? 39 : 37, 250).catch(() => {});
+}, 2000);
+await compare(3);
+clearInterval(tuned);
 await A.up("ArrowUp", "ArrowUp", 38);
 await A.screenshot(join(OUT, "cruisn-A-4-race-watched.png"));
 await B.screenshot(join(OUT, "cruisn-B-watching.png"));
