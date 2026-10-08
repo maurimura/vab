@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Builds MAME's Namco System 12 (Tekken 3) and System 23 (Time Crisis II) drivers as a standalone
-# Emscripten ES module that speaks the libretro API, so web/emulator/libretro.js and worker.js
-# drive it like the FBNeo cores (emulator/build.sh) and Supermodel (supermodel/build.sh).
+# Builds MAME's Namco System 12 (Tekken 3), System 23 (Time Crisis II) and Midway V-Unit (Cruis'n
+# USA) drivers as a standalone Emscripten ES module that speaks the libretro API, so
+# web/emulator/libretro.js and worker.js drive it like the FBNeo cores (emulator/build.sh) and
+# Supermodel (supermodel/build.sh).
 #
 #   mame/dist/mame.mjs + mame.wasm    for the page, the worker and Node (bench.mjs)
 #
@@ -15,7 +16,7 @@
 #      (src/osd/libretro) whose retro_run() steps the machine one frame and returns, no threads
 #      and no coroutines, which is what WebAssembly needs. Our fixes on top: patches/
 #   3. MAME's own GENie build for Emscripten (TARGETOS=asmjs, which the makefile picks when CC is
-#      emcc) with the retro OSD and only the two drivers (SUBTARGET + SOURCES; makedep finds the
+#      emcc) with the retro OSD and only these drivers (SUBTARGET + SOURCES; makedep finds the
 #      devices they use). patches/0001 makes the libretro target an archive on asmjs.
 #   4. Our own link of those archives into mame.mjs + mame.wasm, exporting the libretro API
 #      (exports.json), as emulator/build.sh does for FBNeo.
@@ -24,10 +25,12 @@ set -euo pipefail
 MAME_REPO="https://github.com/libretro/mame.git"
 MAME_COMMIT="9069f39340f2d2b1795df8e71bb1d3d0fbc76598" # 2026-09-24
 
-# The drivers in the core: Namco System 12 (Tekken 3, Soul Calibur, ...) and System 23 / Super
+# The drivers in the core: Namco System 12 (Tekken 3, Soul Calibur, ...), System 23 / Super
 # System 23 (Time Crisis II, Motocross Go!, ...; its R4650 is MAME's MIPS III core, which brings
-# the DRC with its C backend: Emscripten builds have NOASM, so FORCE_DRC_C_BACKEND).
-SOURCES="src/mame/namco/namcos12.cpp,src/mame/namco/namcos23.cpp"
+# the DRC with its C backend: Emscripten builds have NOASM, so FORCE_DRC_C_BACKEND) and Midway
+# V-Unit (Cruis'n USA, Cruis'n World, Off Road Challenge, War Gods: a TMS320C31, the DCS sound
+# board's ADSP-2105, an ADC0844 for the wheel and pedals; midvunit_v.cpp comes with it).
+SOURCES="src/mame/namco/namcos12.cpp,src/mame/namco/namcos23.cpp,src/mame/williams/midvunit.cpp"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HERE="$ROOT/mame"

@@ -1,0 +1,112 @@
+Input ports' state from one frame to the next in save states, so that a machine that loads a
+state goes on exactly as the one that saved it (found with Cruis'n USA, the first game here with
+analog controls the bar moves with keys; patches/0007).
+
+MAME's input ports carry state across frames that its save states left out:
+
+- analog_field: the accumulated position (m_accum), the previous one (m_previous, for mid-frame
+  interpolation), the last raw analog value (m_previousanalog: an absolute device only moves the
+  control when its value changes) and whether the last move was digital (m_lastdigital, which
+  autocentring needs). Keys move a wheel or a pedal a little each frame and it goes back by itself
+  when they let go, so a machine that loaded a state taken mid-turn started from its own wheel
+  position: a watcher's Cruis'n USA, started from the player's state while they steered, drove
+  another race from there. Time Crisis II's light gun position is one too.
+- ioport_field_live: a digital field's last state (switch-down detection for impulse and toggle
+  fields), its impulse count and a toggle's value.
+- dynamic_field: the last value a field's change callback (PORT_CHANGED_MEMBER: Cruis'n USA's
+  Shift Up/Down) or read callback saw. A machine that loaded a state taken with a shift button
+  held saw a fresh press on its first frame, and shifted.
+
+All registered once the ports' live state exists (ioport_manager::initialize), as items of the
+"ioport_analog", "ioport_field", "ioport_write" and "ioport_read" modules by port tag and index.
+This is MAME's core: every game's states grow by a few bytes per input field (Cruis'n USA by 395,
+Tekken 3 by 198, Time Crisis II by 332).
+
+diff --git a/src/emu/ioport.cpp b/src/emu/ioport.cpp
+index 68248081..23d20a95 100644
+--- a/src/emu/ioport.cpp
++++ b/src/emu/ioport.cpp
+@@ -1848,6 +1848,7 @@ time_t ioport_manager::initialize()
+ 	// allocate live structures to mirror the configuration
+ 	for (auto &port : m_portlist)
+ 		port.second->init_live_state();
++	save_live_state();
+ 
+ 	// handle autoselection of devices
+ 	init_autoselect_devices({ IPT_AD_STICK_X,  IPT_AD_STICK_Y,   IPT_AD_STICK_Z }, OPTION_ADSTICK_DEVICE,    "analog joystick");
+@@ -1872,6 +1873,54 @@ time_t ioport_manager::initialize()
+ }
+ 
+ 
++//-------------------------------------------------
++//  save_live_state - what the inputs carry from
++//  one frame to the next goes in save states
++//  (the arcade bar: a machine that loads a state
++//  must go on exactly as the one that saved it)
++//-------------------------------------------------
++
++void ioport_manager::save_live_state()
++{
++	for (auto &port : m_portlist)
++	{
++		const char *const tag = port.second->tag();
++		ioport_port_live &live = port.second->live();
++
++		// an analog control's position: keys move a wheel or a pedal a little each frame, and
++		// it goes back by itself (Cruis'n USA); a light gun's last position (Time Crisis II)
++		int index = 0;
++		for (analog_field &analog : live.analoglist)
++		{
++			machine().save().save_item(nullptr, "ioport_analog", tag, index, analog.m_accum, "accum");
++			machine().save().save_item(nullptr, "ioport_analog", tag, index, analog.m_previous, "previous");
++			machine().save().save_item(nullptr, "ioport_analog", tag, index, analog.m_previousanalog, "previousanalog");
++			machine().save().save_item(nullptr, "ioport_analog", tag, index, analog.m_lastdigital, "lastdigital");
++			index++;
++		}
++
++		// a digital field's state last frame (its impulse count, a toggle's value)
++		index = 0;
++		for (ioport_field &field : port.second->fields())
++		{
++			machine().save().save_item(nullptr, "ioport_field", tag, index, field.live().value, "value");
++			machine().save().save_item(nullptr, "ioport_field", tag, index, field.live().impulse, "impulse");
++			machine().save().save_item(nullptr, "ioport_field", tag, index, field.live().last, "last");
++			index++;
++		}
++
++		// the last value a field's change callback saw (Cruis'n USA's shift buttons), or its
++		// read callback gave
++		index = 0;
++		for (dynamic_field &dynfield : live.writelist)
++			machine().save().save_item(nullptr, "ioport_write", tag, index++, dynfield.m_oldval, "oldval");
++		index = 0;
++		for (dynamic_field &dynfield : live.readlist)
++			machine().save().save_item(nullptr, "ioport_read", tag, index++, dynfield.m_oldval, "oldval");
++	}
++}
++
++
+ //-------------------------------------------------
+ //  init_port_types - initialize the default
+ //  type list
+diff --git a/src/emu/ioport.h b/src/emu/ioport.h
+index 735d4b01..3f4eddc3 100644
+--- a/src/emu/ioport.h
++++ b/src/emu/ioport.h
+@@ -901,6 +901,8 @@ public:
+ 	void write(ioport_value newval);
+ 
+ private:
++	friend class ioport_manager; // saves m_oldval (save_live_state)
++
+ 	// internal state
+ 	ioport_field &          m_field;            // reference to the input field
+ 	u8                      m_shift;            // shift to apply to the final result
+@@ -966,6 +968,7 @@ public:
+ private:
+ 	// internal helpers
+ 	void init_port_types();
++	void save_live_state();
+ 	void init_autoselect_devices(std::initializer_list<ioport_type> types, std::string_view option, std::string_view ananame);
+ 
+ 	void frame_update_callback();

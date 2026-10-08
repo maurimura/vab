@@ -9,13 +9,18 @@ The libretro frontend as the arcade bar (web/emulator/libretro.js) drives it.
   config read/write, auto save and cheats off, as before.
 - Input descriptors: the loaded game's own, from MAME's input fields (named fields by their
   names, Tekken 3's unnamed four as Left/Right Punch/Kick), RetroPad and, for a lightgun game,
-  lightgun; ordered stick, buttons, Start, Coin. The fork's generic "A"/"B"/... list goes.
+  lightgun; ordered stick, buttons, Start, Coin. Only fields the game reads as it is set up (a
+  field's condition holds). For a driving game (retro_driving, which a game's button profile
+  sets: patches/0007) the d-pad is the wheel ("Steer left"/"Steer right") and the pedals
+  ("Accelerate" up, "Brake" down). The fork's generic "A"/"B"/... list goes.
 - RETRO_MEMORY_SYSTEM_RAM: the main CPU's work RAM (a RAM device under it, else the largest RAM
   in its program map: System 23's 16 MB at 0). The fork's heuristic returned the base of whatever
   memory bank came first.
 - mame_drc (default disabled): MAME's -drc / -nodrc, for CPUs with a recompiler (System 23's
   R4650). WebAssembly has only the recompiler's C backend, which in Chrome is slower than the
   interpreter (mame/README.md has the numbers). Both boards of a link use the same setting.
+- MAME's -artwork_crop: the frame is the game's screen alone, not what a game's layout draws
+  around it (Cruis'n USA's dashboard of button lamps made its frame 512x451, not 512x400).
 - Pixels: RGBA8888 (the bar's format 100, bytes R G B A, opaque) when the frontend takes it,
   XRGB8888 otherwise. GET_AUDIO_VIDEO_ENABLE without video: the frame isn't rendered or sent.
 - Determinism for rollback netplay: every retro_run runs exactly one frame (MAME's start-up text
@@ -33,7 +38,7 @@ The libretro frontend as the arcade bar (web/emulator/libretro.js) drives it.
   exported by default).
 
 diff --git a/src/osd/libretro/libretro-internal/libretro.cpp b/src/osd/libretro/libretro-internal/libretro.cpp
-index b5370dfd..faf2f99c 100755
+index b5370dfd..e5767a50 100755
 --- a/src/osd/libretro/libretro-internal/libretro.cpp
 +++ b/src/osd/libretro/libretro-internal/libretro.cpp
 @@ -20,12 +20,40 @@
@@ -436,7 +441,7 @@ index b5370dfd..faf2f99c 100755
        video_cb(videoBuffer, fb_width, fb_height, fb_width << LOG_PIXEL_BYTES);
     else
        video_cb(NULL, fb_width, fb_height, fb_width << LOG_PIXEL_BYTES);
-@@ -933,8 +955,139 @@ void retro_run(void)
+@@ -933,8 +955,160 @@ void retro_run(void)
        update_geometry();
  }
  
@@ -444,6 +449,11 @@ index b5370dfd..faf2f99c 100755
 + * (or light gun) button reaches, by the name the game gives it. The bar's page shows port 0's
 + * on its controls card. Buttons MAME leaves unnamed get their cabinet's names here. */
 +extern int button_mapping[];
++
++/* A driving game, whose d-pad turns the wheel (Left/Right) and works the gas pedal (Up) and the
++ * brake (Down): set for the loaded game by its button profile (input_retro.cpp's Input_Binding,
++ * patches/0007), which also binds the d-pad so. */
++bool retro_driving = false;
 +
 +static const struct
 +{
@@ -488,6 +498,10 @@ index b5370dfd..faf2f99c 100755
 +      for (ioport_field &field : port.second->fields())
 +      {
 +         const ioport_type type = field.type();
++         /* only what the game reads as it is set up (Cruis'n USA's gear buttons or shift
++          * buttons, by its shifter type) */
++         if (!field.enabled())
++            continue;
 +         unsigned player = field.player();
 +         const char *specific = field.specific_name();
 +         unsigned id, order;
@@ -514,6 +528,18 @@ index b5370dfd..faf2f99c 100755
 +         else if (type == IPT_JOYSTICK_DOWN)  { id = RETRO_DEVICE_ID_JOYPAD_DOWN;  order = 1; label = "Down"; }
 +         else if (type == IPT_JOYSTICK_LEFT)  { id = RETRO_DEVICE_ID_JOYPAD_LEFT;  order = 2; label = "Left"; }
 +         else if (type == IPT_JOYSTICK_RIGHT) { id = RETRO_DEVICE_ID_JOYPAD_RIGHT; order = 3; label = "Right"; }
++         /* a driving game's d-pad: the pedals and the wheel (input_retro.cpp) */
++         else if (retro_driving && type == IPT_PEDAL)  { id = RETRO_DEVICE_ID_JOYPAD_UP;   order = 0; label = "Accelerate"; }
++         else if (retro_driving && type == IPT_PEDAL2) { id = RETRO_DEVICE_ID_JOYPAD_DOWN; order = 1; label = "Brake"; }
++         else if (retro_driving && type == IPT_PADDLE)
++         {
++            if (player < 4)
++            {
++               add(player, RETRO_DEVICE_JOYPAD, RETRO_DEVICE_ID_JOYPAD_LEFT, 2, "Steer left");
++               add(player, RETRO_DEVICE_JOYPAD, RETRO_DEVICE_ID_JOYPAD_RIGHT, 3, "Steer right");
++            }
++            continue;
++         }
 +         else if (type >= IPT_START1 && type <= IPT_START4)
 +         {
 +            player = type - IPT_START1;
@@ -576,7 +602,7 @@ index b5370dfd..faf2f99c 100755
     retro_load_ok = false;
  
     check_variables();
-@@ -974,16 +1127,34 @@ bool retro_load_game(const struct retro_game_info *info)
+@@ -974,16 +1148,34 @@ bool retro_load_game(const struct retro_game_info *info)
  
     if (res != 0)
     {
@@ -611,7 +637,7 @@ index b5370dfd..faf2f99c 100755
     return true;
  }
  
-@@ -1001,7 +1172,8 @@ void retro_unload_game(void)
+@@ -1001,7 +1193,8 @@ void retro_unload_game(void)
  
  size_t retro_serialize_size(void)
  {
@@ -621,7 +647,7 @@ index b5370dfd..faf2f99c 100755
  	      && mame_machine_manager::instance()->machine() != NULL
  	      && ram_state::get_size(mame_machine_manager::instance()->machine()->save()) > 0)
        return ram_state::get_size(mame_machine_manager::instance()->machine()->save());
-@@ -1011,7 +1183,8 @@ size_t retro_serialize_size(void)
+@@ -1011,7 +1204,8 @@ size_t retro_serialize_size(void)
  bool retro_serialize(void *data, size_t size)
  {
     save_error error = STATERR_NOT_FOUND;
@@ -631,7 +657,7 @@ index b5370dfd..faf2f99c 100755
  	      && mame_machine_manager::instance()->machine() != NULL
  	      && ram_state::get_size(mame_machine_manager::instance()->machine()->save()) > 0)
        error = mame_machine_manager::instance()->machine()->save().write_buffer((u8*)data, size);
-@@ -1023,113 +1196,120 @@ bool retro_serialize(void *data, size_t size)
+@@ -1023,113 +1217,120 @@ bool retro_serialize(void *data, size_t size)
  bool retro_unserialize(const void *data, size_t size)
  {
     save_error error = STATERR_NOT_FOUND;
@@ -691,7 +717,9 @@ index b5370dfd..faf2f99c 100755
 +   system_ram_ptr = NULL;
 +   system_ram_size = 0;
 +   if (!machine || !retro_load_ok)
-+   {
+    {
+-      memory_interface_enumerator iter(mame_machine_manager::instance()->machine()->root_device());
+-      for (device_memory_interface &memory : iter)
 +      system_ram_machine = NULL;
 +      return;
 +   }
@@ -710,9 +738,7 @@ index b5370dfd..faf2f99c 100755
 +      system_ram_size = ram->size();
 +   }
 +   else
-    {
--      memory_interface_enumerator iter(mame_machine_manager::instance()->machine()->root_device());
--      for (device_memory_interface &memory : iter)
++   {
 +      device_memory_interface *memory;
 +      if (cpu->interface(memory) && memory->has_space(AS_PROGRAM) && memory->space(AS_PROGRAM).map())
        {
@@ -922,7 +948,7 @@ index 0e29a2f1..9a2bdf9a 100644
  
  #ifdef __cplusplus
 diff --git a/src/osd/libretro/libretro-internal/retro_init.cpp b/src/osd/libretro/libretro-internal/retro_init.cpp
-index 855bb7d4..49d7c56a 100755
+index 855bb7d4..ffa8d021 100755
 --- a/src/osd/libretro/libretro-internal/retro_init.cpp
 +++ b/src/osd/libretro/libretro-internal/retro_init.cpp
 @@ -78,6 +78,7 @@ int rotation_mode = ROTATION_MODE_LIBRETRO;
@@ -933,13 +959,17 @@ index 855bb7d4..49d7c56a 100755
  
  // rom file name and path
  char g_rom_dir[RETRO_PATH_MAX];
-@@ -545,6 +546,9 @@ static void Set_Default_Option(void)
+@@ -545,6 +546,13 @@ static void Set_Default_Option(void)
     }
  
     Add_Option("-update_in_pause");
 +
 +   /* the arcade bar: the recompiler on or off (mame_drc) */
 +   Add_Option(drc_enable ? "-drc" : "-nodrc");
++
++   /* the arcade bar: the frame is the game's screen alone, without what a game's layout draws
++    * around it (Cruis'n USA's dashboard of button lamps under the screen) */
++   Add_Option("-artwork_crop");
  }
  
  static void Set_Path_Option(void)

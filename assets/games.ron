@@ -42,4 +42,5 @@
     (rom: "tekken3je1", core: "mame", title: "Tekken 3", lockstep: true, cabinets: ["tekken3"]),
     (rom: "timecrs2", core: "mame", title: "Time Crisis II", players: 2, gun: true, linked: true, cabinets: ["timecrs2"]),
     (rom: "outrun", core: "outrun", title: "Out Run", players: 1, cabinets: []),
+    (rom: "crusnusa41", core: "mame", title: "Cruis'n USA", players: 1, cabinets: []),
 ]
