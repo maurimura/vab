@@ -36,6 +36,8 @@ def load_recipe(name):
         raise ValueError('Recipe version/skin mismatch')
     if recipe.get('renderer') not in RENDERERS:
         raise ValueError('Unknown renderer; register reviewed code explicitly')
+    if recipe['renderer'] == 'racing' and recipe.get('shell') not in (None, 'deluxe-car'):
+        raise ValueError('Unknown racing shell')
     # Linked races have eight catalog seats but one physical driving station.
     max_players = 8 if recipe.get('linked') and recipe['renderer'] == 'racing' else 4
     if recipe.get('players') not in range(1, max_players + 1):

@@ -426,7 +426,7 @@ mod tests {
     }
 
     /// Games whose cabinet skin isn't drawn yet: they stand in plain cabinets for now.
-    const SKIN_TO_COME: [&str; 2] = ["outrun", "crusnusa41"];
+    const SKIN_TO_COME: [&str; 0] = [];
 
     #[test]
     fn out_run_is_one_player_on_its_own_core() {
@@ -434,6 +434,7 @@ mod tests {
         let outrun = games.iter().find(|g| g.rom == "outrun").unwrap();
         assert_eq!(outrun.core, "outrun");
         assert_eq!(outrun.title, "Out Run");
+        assert_eq!(outrun.cabinets, ["outrun"]);
         // One player; whoever presses E next watches.
         assert_eq!(outrun.players, 1);
         assert!(outrun.bios.is_none() && outrun.options.is_empty());
@@ -553,8 +554,8 @@ mod tests {
                 span: (5200, 28900)
             })
         );
-        // Its skin is still to come: a plain cabinet on the bar's map runs it.
-        assert!(cruisn.cabinets.is_empty());
+        assert_eq!(cruisn.cabinets, ["crusnusa"]);
+        // Existing plain-cabinet placements remain valid; art doesn't replace the map.
         let map = Map::from_ron(include_str!("../../assets/maps/bar.ron")).unwrap();
         assert!(map.objects.iter().any(|object| {
             object.tile == "objects/cabinet" && object.game.as_deref() == Some("crusnusa41")
@@ -566,7 +567,7 @@ mod tests {
         let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
         let tiles =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tiles/objects");
-        // A game without a skin yet (Out Run) runs on a plain cabinet.
+        // Every current game has a skin; future gaps must be recorded explicitly.
         for game in games {
             let to_come = SKIN_TO_COME.contains(&game.rom.as_str());
             assert_eq!(

@@ -1,0 +1,482 @@
+{
+  "version": 1,
+  "renderer": "racing",
+  "size": [
+    48,
+    56
+  ],
+  "footprint_scale": 0.7,
+  "players": 1,
+  "control_stations": 1,
+  "control_kind": "wheel",
+  "full_side_art": true,
+  "wheel": {
+    "center": [
+      9.2,
+      9,
+      15.5
+    ],
+    "radius": 2.2,
+    "thickness": 0.45,
+    "tilt": 0.35
+  },
+  "pedals": [
+    {
+      "position": [
+        7,
+        8,
+        4
+      ]
+    },
+    {
+      "position": [
+        7,
+        11,
+        4
+      ]
+    }
+  ],
+  "skin": "outrun",
+  "rom": "outrun",
+  "hardware": {"platform": "Sega OutRun hardware", "year": 1986, "physical_players": 1},
+  "title": "OUT RUN / SEGA DELUXE MOVING CABINET",
+  "variant": "1986 Sega Out Run deluxe moving sit-down with red car body, rear tires, spoiler, gray motion base and separate coin pedestal; not the standard moving seat, upright, Turbo Out Run or OutRun 2.",
+  "shell": "deluxe-car",
+  "buttons_per_player": 1,
+  "game_actions": [
+    "Steering",
+    "Accelerator",
+    "Brake",
+    "Two-position Low/High gear lever",
+    "Start"
+  ],
+  "dimensions": {
+    "tower_rear": -5,
+    "tower_front": 5,
+    "seat_back": 23,
+    "side_min": 2,
+    "side_max": 14,
+    "tower_height": 29,
+    "seat_height": 20
+  },
+  "shifter": {
+    "position": [
+      14,
+      4.1,
+      8
+    ]
+  },
+  "buttons": [
+    {
+      "position": [
+        8.3,
+        12,
+        16
+      ],
+      "color": [
+        245,
+        214,
+        43
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      24,
+      27,
+      31
+    ],
+    "trim": [
+      230,
+      48,
+      39
+    ],
+    "rubber": [
+      14,
+      16,
+      20
+    ],
+    "metal": [
+      194,
+      204,
+      209
+    ],
+    "platform": [
+      112,
+      127,
+      138
+    ],
+    "vent": [
+      17,
+      21,
+      26
+    ],
+    "seat": [
+      34,
+      35,
+      39
+    ],
+    "seat_edge": [
+      54,
+      56,
+      60
+    ]
+  },
+  "preview_note": "48 x 56 px | red deluxe car + gray motion base | wheel / Low-High shift / two pedals / real 320 x 224 attract display",
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Original-design deluxe moving cabinet photograph: red car body, black tires with light hubs, rear spoiler/logo and exhausts, black/red tower, gray motion base, separate left coin pedestal and seat-side speaker. Supplies measured outer-side, hood, seat-back and spoiler artwork.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/96513",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/outrun.png",
+      "rights": "Underlying Sega artwork/trademarks; photograph author, restoration status and redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "1e1634534767c3feb214de32e9b854b464660977061d9a4e6ee3978682d20e9c",
+      "download_dimensions": [
+        1000,
+        931
+      ]
+    },
+    "controls": {
+      "file": "controls.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Photographed Out Run dashboard corroborates one yellow Start, black three-spoke wheel, original gauge artwork and two-position Low/High shifter. Its separate chrome panel supplies small original-design gauge crops; not used to claim an exact regional panel finish.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/5479",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/outrun.png",
+      "rights": "Underlying Sega artwork/trademarks; photograph author, restoration status and redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "2ac4ae42460742c2711972cdcc1fd4c83db108b83e35548497df657544fb8a59",
+      "download_dimensions": [
+        747,
+        365
+      ]
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "kind": "original-art-scan",
+      "purpose": "1986 Sega Enterprises USA printed flyer distinguishes Standard Moving, Deluxe Moving and Upright cabinets. The printed car/seat photograph corroborates the selected deluxe variant. Research only; the screen is independently captured from the supplied local game.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/87272",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadeflyers168/outrun.png",
+      "rights": "Copyright Sega 1986; third-party scan provenance and redistribution permission unverified. Archive hosting is not publisher authorization.",
+      "sha256": "66b3d3f6ada6678e8753a0919a33ac9cdc4c7faeb907c8707970ef3e2738b443",
+      "download_dimensions": [
+        850,
+        1110
+      ]
+    },
+    "screen": {
+      "file": "screen.png",
+      "kind": "local-game-capture",
+      "purpose": "Native 320x224 Out Run attract racing frame from the already supplied ~/Downloads/outrun.zip and the in-progress local FBNeo Out Run core. Reproduce: node tools/art/capture_screen.mjs emulator/dist/outrun/fbneo.mjs /path/to/outrun.zip art/references/outrun/screen.png - --frames=1200 (15-second boot, Start pulse without coins, then 1200 neutral frames). No startup state, ROM download, repacking or upload. Capture used the parallel integration worktree's core; this recipe records its WASM hash rather than claiming it is built by this art-only change.",
+      "rights": "Copyright Sega game imagery; captured from already supplied local ROM. No redistribution license inferred.",
+      "sha256": "a85a2fae62b87b38377e585231ca4289a572ae7a880469ee191a6de4a786c637",
+      "rom_sha256": "a6ca0fe457238103b05bbdf0a244439c23d7381a3a96d1eacc4f36ab8df70228",
+      "core_wasm_sha256": "651039475e0effc8ff662b89f89d8dba5bac71fed0ab18e861f017d4b2a2cf6f",
+      "download_dimensions": [320, 224]
+    }
+  },
+  "textures": {
+    "left": {
+      "source": "cabinet",
+      "quad": [
+        [
+          5,
+          12
+        ],
+        [
+          343,
+          12
+        ],
+        [
+          343,
+          490
+        ],
+        [
+          5,
+          490
+        ]
+      ],
+      "rectified_size": [
+        338,
+        478
+      ],
+      "size": [
+        16,
+        30
+      ],
+      "mask_polygon": [
+        [
+          338,
+          13
+        ],
+        [
+          265,
+          29
+        ],
+        [
+          184,
+          125
+        ],
+        [
+          121,
+          232
+        ],
+        [
+          17,
+          324
+        ],
+        [
+          6,
+          390
+        ],
+        [
+          30,
+          444
+        ],
+        [
+          174,
+          485
+        ],
+        [
+          266,
+          339
+        ],
+        [
+          291,
+          158
+        ]
+      ],
+      "background": [
+        21,
+        23,
+        28
+      ]
+    },
+    "right": {
+      "source": "cabinet",
+      "quad": [
+        [
+          5,
+          12
+        ],
+        [
+          343,
+          12
+        ],
+        [
+          343,
+          490
+        ],
+        [
+          5,
+          490
+        ]
+      ],
+      "rectified_size": [
+        338,
+        478
+      ],
+      "size": [
+        16,
+        30
+      ],
+      "mask_polygon": [
+        [
+          338,
+          13
+        ],
+        [
+          265,
+          29
+        ],
+        [
+          184,
+          125
+        ],
+        [
+          121,
+          232
+        ],
+        [
+          17,
+          324
+        ],
+        [
+          6,
+          390
+        ],
+        [
+          30,
+          444
+        ],
+        [
+          174,
+          485
+        ],
+        [
+          266,
+          339
+        ],
+        [
+          291,
+          158
+        ]
+      ],
+      "background": [
+        21,
+        23,
+        28
+      ]
+    },
+    "marquee": {
+      "source": "cabinet",
+      "quad": [
+        [
+          344,
+          16
+        ],
+        [
+          615,
+          25
+        ],
+        [
+          602,
+          66
+        ],
+        [
+          333,
+          58
+        ]
+      ],
+      "rectified_size": [
+        280,
+        45
+      ],
+      "size": [
+        24,
+        4
+      ]
+    },
+    "seat_back": {
+      "source": "cabinet",
+      "quad": [
+        [
+          823,
+          195
+        ],
+        [
+          891,
+          194
+        ],
+        [
+          868,
+          302
+        ],
+        [
+          815,
+          318
+        ]
+      ],
+      "rectified_size": [
+        80,
+        130
+      ],
+      "size": [
+        12,
+        16
+      ]
+    },
+    "spoiler": {
+      "source": "cabinet",
+      "quad": [
+        [
+          782,
+          515
+        ],
+        [
+          960,
+          453
+        ],
+        [
+          974,
+          501
+        ],
+        [
+          785,
+          566
+        ]
+      ],
+      "rectified_size": [
+        200,
+        55
+      ],
+      "size": [
+        24,
+        5
+      ]
+    },
+    "dashboard": {
+      "canvas": [
+        400,
+        160
+      ],
+      "fill": [
+        49,
+        53,
+        58
+      ],
+      "size": [
+        22,
+        8
+      ],
+      "patches": [
+        {
+          "source": "controls",
+          "crop": [
+            131,
+            117,
+            206,
+            262
+          ],
+          "placement": [
+            72,
+            10,
+            100,
+            140
+          ]
+        },
+        {
+          "source": "controls",
+          "crop": [
+            432,
+            115,
+            492,
+            255
+          ],
+          "placement": [
+            231,
+            10,
+            90,
+            140
+          ]
+        }
+      ]
+    },
+    "screen": {
+      "source": "screen",
+      "size": [
+        24,
+        18
+      ],
+      "fit": "contain",
+      "brightness": 1.1
+    }
+  },
+  "uncertainties": [
+    "Photo and original 1986 flyer support the deluxe moving cabinet, but exact region, restoration and motion mechanism are unknown. Motion is represented by a stationary gray platform, not an animated simulator.",
+    "All physical controls are one station: one Start, steering rim/spokes, two pedals and Low/High lever. The model uses a simple two-position gate rather than Daytona's H-pattern; no view buttons are added. Control sheet chrome finish is not imposed on the dark photographed housing.",
+    "One photographed outer side and rear-seat print are reused readably for unverified opposite surfaces. No unseen side artwork is invented. Seat curvature, speaker, hubs, exhausts, coin pedestal and spoiler are pixel-scale geometric approximations.",
+    "The display is an actual native 320x224 Out Run attract racing capture from the already supplied local ROM and the parallel integration's local FBNeo core. Only the reference image is tracked; no ROM, binary or startup state is part of this cabinet change.",
+    "Height remains unchanged while the footprint is compressed to 70% around the existing bottom-center anchor, fitting all four views. Car and coin-pedestal overhang require floor clearance when later placing.",
+    "Original decoded downloads are retained with SHA-256 and dimensions. Measured crops/rectifications reduce art for tiny sprites; archive hosting does not grant Sega/photograph redistribution permission."
+  ]
+}
