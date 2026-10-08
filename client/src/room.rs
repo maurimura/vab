@@ -13,6 +13,9 @@ use crate::player::{self, Player, Zoom};
 
 /// A little faster than walking, so others catch up with where they said they are.
 const SPEED: f32 = 80.0;
+/// How often they say it (room.js sends 10 a second): a runner, further away with each one, is
+/// followed at whatever speed covers that in time instead of trailing further until the snap.
+const UPDATE: f32 = 0.1;
 /// Further than this and they jump there (they sat down, or the connection dropped for a bit).
 const SNAP: f32 = 48.0;
 /// Where a name sits: a little above a character's head, in world pixels from their feet.
@@ -236,7 +239,7 @@ fn walk_others(time: Res<Time>, zoom: Res<Zoom>, mut others: Query<(&mut Other, 
         if to_go.length() > SNAP {
             other.feet = other.target;
         } else {
-            let step = SPEED * time.delta_secs();
+            let step = SPEED.max(to_go.length() / UPDATE) * time.delta_secs();
             other.feet = if to_go.length() <= step {
                 other.target
             } else {

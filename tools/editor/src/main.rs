@@ -1114,7 +1114,7 @@ mod tests {
             .collect();
         assert_eq!(cabinets.len(), 1);
         assert_eq!(cabinets[0].skin.as_deref(), Some("mk2_v2"));
-        assert_eq!(cabinets[0].label(), "mkII");
+        assert_eq!(cabinets[0].label(), "Mortal Kombat II");
     }
 
     #[test]

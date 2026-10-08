@@ -25,7 +25,7 @@
 // analog stick (0 to 32767) its wheel turns, all of it unless said (Out Run's FBNeo core has dead
 // zones). `/wheel` in the chat tries other numbers while driving and prints the line for here.
 [
-    (rom: "mk2", core: "midway", title: "mkII", cabinets: ["mk2_v2"]),
+    (rom: "mk2", core: "midway", title: "Mortal Kombat II", cabinets: ["mk2_v2"]),
     (rom: "umk3", core: "midway", title: "Ultimate Mortal Kombat 3", cabinets: ["umk3"]),
     (rom: "kof98", core: "neogeo", title: "The King of Fighters '98", bios: Some("neogeo"), cabinets: ["kof98"]),
     (rom: "nbajam", core: "midway", title: "NBA Jam", players: 4, cabinets: ["nbajam"]),

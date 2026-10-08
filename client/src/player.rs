@@ -1,6 +1,6 @@
-//! A placeholder player that walks the bar with the arrow keys or WASD, or a thumb dragged on
-//! a touch screen (touch.rs). It can stand on floor tiles without an object, and slides along
-//! whatever blocks it.
+//! A placeholder player that walks the bar with the arrow keys or WASD (holding Shift runs), or
+//! a thumb dragged on a touch screen (touch.rs). It can stand on floor tiles without an object,
+//! and slides along whatever blocks it.
 
 use std::collections::HashSet;
 
@@ -17,6 +17,8 @@ use crate::touch::Touch;
 
 /// Walking speed in world pixels per second.
 const SPEED: f32 = 64.0;
+/// How many times faster the player runs, holding Shift.
+const RUN: f32 = 2.0;
 /// Roughly how many world pixels tall the view is; the zoom is the whole number closest to it.
 const VIEW_HEIGHT: f32 = 270.0;
 /// In a window much taller than wide (a phone held upright), how many it is wide instead.
@@ -125,8 +127,13 @@ fn walk(
     if direction == Vec2::ZERO {
         return;
     }
+    let speed = if keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]) {
+        SPEED * RUN
+    } else {
+        SPEED
+    };
     // Up and down at half speed, so walking looks even on the 2:1 isometric floor.
-    let step = direction.normalize() * Vec2::new(1.0, 0.5) * SPEED * time.delta_secs();
+    let step = direction.normalize() * Vec2::new(1.0, 0.5) * speed * time.delta_secs();
 
     for (mut player, mut sprite) in &mut players {
         // The whole step if it's free, otherwise slide along whichever axis is.
