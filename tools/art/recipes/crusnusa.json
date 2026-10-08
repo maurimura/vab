@@ -1,0 +1,522 @@
+{
+  "version": 1,
+  "renderer": "racing",
+  "size": [
+    48,
+    56
+  ],
+  "footprint_scale": 0.7,
+  "players": 1,
+  "control_stations": 1,
+  "control_kind": "wheel",
+  "full_side_art": true,
+  "wheel": {
+    "center": [
+      9.2,
+      9,
+      15.5
+    ],
+    "radius": 2.2,
+    "thickness": 0.45,
+    "tilt": 0.35
+  },
+  "pedals": [
+    {
+      "position": [
+        7,
+        8,
+        4
+      ]
+    },
+    {
+      "position": [
+        7,
+        11,
+        4
+      ]
+    }
+  ],
+  "skin": "crusnusa",
+  "rom": "crusnusa41",
+  "hardware": {"platform": "Midway V-Unit", "year": 1994, "physical_players": 1},
+  "title": "CRUIS'N USA / MIDWAY SINGLE SIT-DOWN",
+  "variant": "Original-design 1994 Midway Cruis'n USA single sit-down with sunset/red-car full sides, independent marquee, black tall bucket and black dashboard; not the compact linked twin or upright.",
+  "buttons_per_player": 5,
+  "ribbed_seat": true,
+  "game_actions": [
+    "Steering",
+    "Accelerator",
+    "Brake",
+    "Four-speed gear lever",
+    "Start",
+    "Radio",
+    "View 1 Low Rider",
+    "View 2 Cruis'n",
+    "View 3 Sky High"
+  ],
+  "dimensions": {
+    "tower_rear": -5,
+    "tower_front": 5,
+    "seat_back": 23,
+    "side_min": 2,
+    "side_max": 14,
+    "tower_height": 29,
+    "seat_height": 23
+  },
+  "shifter": {
+    "position": [
+      8.3,
+      4.4,
+      14.2
+    ]
+  },
+  "buttons": [
+    {
+      "position": [
+        8.3,
+        12.1,
+        16.5
+      ],
+      "color": [
+        233,
+        37,
+        34
+      ]
+    },
+    {
+      "position": [
+        8.3,
+        12.1,
+        15.5
+      ],
+      "color": [
+        235,
+        235,
+        220
+      ]
+    },
+    {
+      "position": [
+        8.3,
+        12.1,
+        14.5
+      ],
+      "color": [
+        29,
+        161,
+        208
+      ]
+    },
+    {
+      "position": [
+        8.3,
+        4.4,
+        16.9
+      ],
+      "color": [
+        46,
+        219,
+        54
+      ]
+    },
+    {
+      "position": [
+        8.3,
+        4.4,
+        15.8
+      ],
+      "color": [
+        255,
+        124,
+        24
+      ]
+    }
+  ],
+  "colors": {
+    "body": [
+      23,
+      25,
+      28
+    ],
+    "trim": [
+      25,
+      26,
+      29
+    ],
+    "rubber": [
+      13,
+      14,
+      16
+    ],
+    "metal": [
+      119,
+      127,
+      131
+    ],
+    "platform": [
+      38,
+      37,
+      34
+    ],
+    "vent": [
+      9,
+      10,
+      13
+    ],
+    "seat": [
+      37,
+      34,
+      31
+    ],
+    "seat_edge": [
+      56,
+      51,
+      43
+    ]
+  },
+  "preview_note": "48 x 56 px | sunset/red-car sides / tall black bucket / wheel + 4-speed / Start, Radio, three views",
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Selected single sit-down cabinet photograph corroborates full purple/sunset/red-car side print, independent marquee, tall black ribbed bucket seat and black dashboard. Supplies marquee and photographed original-design side artwork.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/93302",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/crusnusa.png",
+      "rights": "Underlying Midway/Nintendo artwork/trademarks; photograph author, restoration status and redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "1af96dea5b98ee3abc85b6b659a5854de0731c29d784ca3a651676a4f8a83d47",
+      "download_dimensions": [
+        1000,
+        1200
+      ]
+    },
+    "controls": {
+      "file": "controls.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Physical layout corroboration: left red/white/blue three views; right green Start, orange Radio and four-speed shifter; black three-spoke wheel. Chrome finish differs from selected black cabinet, so no chrome overlay is silently mixed in. Research only.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/4549",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/crusnusa.png",
+      "rights": "Underlying Midway/Nintendo artwork/trademarks; photograph author, restoration status and redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "d22e39f1eeb4aee20d073e589787f96f51e33fd034b84b14a474e68f6a17e154",
+      "download_dimensions": [
+        750,
+        345
+      ]
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "kind": "original-art-scan",
+      "purpose": "Printed Midway promotional flyer corroborates original 1994 title/road identity. Research only, not fabricated side or marquee art.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/85202",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadeflyers168/crusnusa.png",
+      "rights": "Copyright Midway and underlying licensors; scan author/provenance and redistribution permission unknown. Archive hosting is not publisher authorization.",
+      "sha256": "743178fe0fd2111ca57d3ac6e55824c6ded7b4300120b081c714e6e7683c1213",
+      "download_dimensions": [
+        850,
+        1107
+      ]
+    },
+    "compact": {
+      "file": "compact-cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Alternative compact linked twin with shared leader marquee, retained as research only. Not mixed into the selected independent-marquee single.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/93303",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/crusnusa21.png",
+      "rights": "Underlying Midway/Nintendo artwork/trademarks; photograph author, restoration status and redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "bdba4f7309b6d7b9db18a6db6d0369823f3ec4afd6a15b06721db87c19dfe513",
+      "download_dimensions": [
+        1000,
+        868
+      ]
+    },
+    "upright": {
+      "file": "upright-cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Alternative original-design upright. Only the photographed actual arcade racing display is rectified for this same-game screen texture; shell/marquee/side/control variant is not used.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/93304",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/crusnusa40.png",
+      "rights": "Underlying Midway/Nintendo artwork/trademarks; photograph author, restoration status and redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "14be83c526f355866bcb373e6de7d9b52f84876d105336f5ac6ec1e402a24260",
+      "download_dimensions": [
+        421,
+        859
+      ]
+    }
+  },
+  "textures": {
+    "left": {
+      "source": "cabinet",
+      "quad": [
+        [
+          65,
+          70
+        ],
+        [
+          315,
+          70
+        ],
+        [
+          315,
+          1010
+        ],
+        [
+          65,
+          940
+        ]
+      ],
+      "rectified_size": [
+        250,
+        940
+      ],
+      "size": [
+        16,
+        32
+      ],
+      "mask_polygon": [
+        [
+          310,
+          70
+        ],
+        [
+          280,
+          87
+        ],
+        [
+          147,
+          253
+        ],
+        [
+          65,
+          406
+        ],
+        [
+          76,
+          855
+        ],
+        [
+          98,
+          947
+        ],
+        [
+          287,
+          1010
+        ],
+        [
+          311,
+          895
+        ],
+        [
+          313,
+          585
+        ],
+        [
+          245,
+          550
+        ],
+        [
+          272,
+          376
+        ]
+      ],
+      "background": [
+        20,
+        20,
+        25
+      ]
+    },
+    "right": {
+      "source": "cabinet",
+      "quad": [
+        [
+          65,
+          70
+        ],
+        [
+          315,
+          70
+        ],
+        [
+          315,
+          1010
+        ],
+        [
+          65,
+          940
+        ]
+      ],
+      "rectified_size": [
+        250,
+        940
+      ],
+      "size": [
+        16,
+        32
+      ],
+      "mask_polygon": [
+        [
+          310,
+          70
+        ],
+        [
+          280,
+          87
+        ],
+        [
+          147,
+          253
+        ],
+        [
+          65,
+          406
+        ],
+        [
+          76,
+          855
+        ],
+        [
+          98,
+          947
+        ],
+        [
+          287,
+          1010
+        ],
+        [
+          311,
+          895
+        ],
+        [
+          313,
+          585
+        ],
+        [
+          245,
+          550
+        ],
+        [
+          272,
+          376
+        ]
+      ],
+      "background": [
+        20,
+        20,
+        25
+      ]
+    },
+    "marquee": {
+      "source": "cabinet",
+      "quad": [
+        [
+          318,
+          89
+        ],
+        [
+          605,
+          99
+        ],
+        [
+          585,
+          205
+        ],
+        [
+          300,
+          208
+        ]
+      ],
+      "rectified_size": [
+        310,
+        110
+      ],
+      "size": [
+        24,
+        6
+      ]
+    },
+    "dashboard": {
+      "canvas": [
+        400,
+        160
+      ],
+      "fill": [
+        22,
+        25,
+        28
+      ],
+      "size": [
+        22,
+        8
+      ],
+      "patches": [
+        {
+          "source": "cabinet",
+          "crop": [
+            309,
+            550,
+            359,
+            652
+          ],
+          "placement": [
+            20,
+            5,
+            60,
+            140
+          ]
+        },
+        {
+          "source": "cabinet",
+          "crop": [
+            551,
+            493,
+            586,
+            574
+          ],
+          "placement": [
+            326,
+            5,
+            50,
+            140
+          ]
+        }
+      ]
+    },
+    "screen": {
+      "source": "upright",
+      "quad": [
+        [
+          143,
+          187
+        ],
+        [
+          304,
+          176
+        ],
+        [
+          313,
+          327
+        ],
+        [
+          140,
+          341
+        ]
+      ],
+      "rectified_size": [
+        200,
+        150
+      ],
+      "size": [
+        24,
+        18
+      ],
+      "fit": "contain",
+      "brightness": 1.25
+    }
+  },
+  "uncertainties": [
+    "Selected original-design single sit-down is corroborated by the cabinet photograph, not assumed to be a factory-specific regional/restoration example. Compact twin/shared leader marquee and upright remain research-only variants.",
+    "The chrome controls photograph corroborates button functions/colors/positions, but its finish is not copied onto the selected black dashboard. Start and Radio plus three views are five modeled physical buttons; they are not five racing actions.",
+    "One photographed full-height side print is reused readably on the opposite side. The side's slanted silhouette is masked before extraction. No unseen print or seat-back decal is invented: the tall black seat uses modeled ribs.",
+    "The display is the actual same-game racing image rectified from the separate upright photograph, not a local capture. Only the gameplay image crosses variants; no upright shell or artwork is silently mixed in. Glare and source detail limit fidelity. A capture attempt with the supplied legacy ZIP under the parent crusnusa name failed MAME ROM validation (the supplied program is revision 4.1); no ROM was downloaded, modified or fabricated to work around it.",
+    "The tower/bucket/platform dimensions, shifter, seat ribs and service details are sprite-scale estimates. The shared racing shell is adapted with full-height side art and a taller seat. Footprint is compressed to 70% around the existing cell anchor; leave clearance at later placement.",
+    "Original decoded downloads, SHA-256 and dimensions are retained. Copyrighted Midway/Nintendo artwork and photograph rights remain unresolved; third-party archive access is not redistribution authorization."
+  ]
+}
