@@ -15,7 +15,7 @@ WASM_BINDGEN := .tools/wasm-bindgen-$(WASM_BINDGEN_VERSION)/bin/wasm-bindgen
 WASM_OPT := emulator/.cache/emsdk/upstream/bin/wasm-opt
 
 .PHONY: client netplay emulator emulator-remote upload-emulator supermodel supermodel-remote upload-supermodel \
-	daytona daytona-remote upload-daytona upload-daytona-states upload-rom dev deploy preview \
+	mame mame-remote upload-mame daytona daytona-remote upload-daytona upload-daytona-states upload-rom dev deploy preview \
 	editor editor-web editor-dev editor-deploy editor-preview pull-map e2e
 
 $(WASM_BINDGEN):
@@ -66,6 +66,14 @@ supermodel:
 supermodel-remote:
 	$(MAKE) upload-supermodel R2_TARGET=--remote
 
+# The MAME core (Namco System 12 and System 23: Tekken 3, Time Crisis II) -> mame/dist/, then
+# into local R2 (served at /mame/*), like Supermodel above. mame-remote uploads to production.
+mame:
+	./mame/build.sh
+	$(MAKE) upload-mame R2_TARGET=--local
+
+mame-remote:
+	$(MAKE) upload-mame R2_TARGET=--remote
 # The Daytona USA (Sega Model 2) core -> daytona/dist/, then into local R2 (served at
 # /daytona/*), the same way. daytona-remote uploads to production. Its ROM set is MAME's
 # `daytona`: make upload-rom ROM=$HOME/Downloads/daytona.zip.
@@ -92,6 +100,11 @@ upload-supermodel:
 	npx wrangler r2 object put $(R2_BUCKET)/supermodel/supermodel.wasm $(R2_TARGET) \
 		--file ../supermodel/dist/supermodel.wasm --content-type application/wasm
 
+upload-mame:
+	cd server && npx wrangler r2 object put $(R2_BUCKET)/mame/mame.mjs $(R2_TARGET) \
+		--file ../mame/dist/mame.mjs --content-type text/javascript && \
+	npx wrangler r2 object put $(R2_BUCKET)/mame/mame.wasm $(R2_TARGET) \
+		--file ../mame/dist/mame.wasm --content-type application/wasm
 upload-daytona:
 	cd server && npx wrangler r2 object put $(R2_BUCKET)/daytona/daytona.mjs $(R2_TARGET) \
 		--file ../daytona/dist/daytona.mjs --content-type text/javascript && \

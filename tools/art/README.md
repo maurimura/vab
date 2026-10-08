@@ -401,6 +401,63 @@ their existing full-page behavior. Update the recipe hash after recapturing.
 Screen filtering preserves aspect with `fit: contain`. No ROM is stored in art,
 committed or downloaded by this workflow.
 
+### Tekken 3 and Time Crisis II — Namco cabinets
+
+```sh
+for skin in tekken3 timecrs2; do
+  python3 tools/art/cabinet_pipeline.py validate "$skin"
+  python3 tools/art/cabinet_pipeline.py build "$skin"
+done
+python3 tools/art/preview_catalog.py tekken3 timecrs2 \
+  --filename=tekken3-timecrs2.png --title='TEKKEN 3 + TIME CRISIS II'
+python3 -m unittest discover -s tools/art -p 'test_*.py'
+```
+
+Review `art/previews/tekken3-timecrs2.png` or the individual previews. Each
+skin has four sprites and seven editable layers per facing. `assets/games.ron`
+selects them without changing ROM, MAME core, seats, lockstep or linked/gun flags.
+No map placement, local ROM capture, ROM download/upload, commit or deployment.
+
+- **Tekken 3**: **32×48** gray Namco operator conversion, orange/black title,
+  brown photographed deck, plain dark-gray sides and gray coin-door front.
+  Two black/red sticks and four punch/kick actions each: the photographed left
+  blue/red punches, right red punches and yellow kicks are modeled. White Start
+  buttons remain photographed. This is not a claimed factory-dedicated Jin cabinet;
+  the separate lightning-overlay panel and Jin flyer are research only. The
+  original-design Namco instruction strip supplies narrow upper/lower bezel bands.
+  Shared upright geometry approximates the shell. System 12 identification is
+  corroborated by [MAME's hardware list](https://github.com/mamedev/mame/blob/master/src/mame/namco/namcos12.cpp).
+- **Time Crisis II**: **64×64** red/blue CRT twin with one shared yellow title,
+  two independent monitor bays, white edging, a central coin/instruction tower,
+  cyan/pink holstered pistols, simplified cords and two metal-tread floor pedals.
+  The new reusable `twin-gun` renderer shares the existing raycaster/export and
+  texture loader; it does not turn free feedback pistols into T2 mounted guns.
+  Only the separate control photograph's center plaque is extracted, since its
+  pistol colors are swapped relative to the selected cabinet. The Namco Europe
+  flyer corroborates System 23, twin screens, feedback guns and pedals. Floor depth
+  is compressed 0.55× and width 0.9× around the cell center to avoid clipping the
+  pedals with the established anchor; proportions and tread are sprite adaptations,
+  not dimensionally exact. Leave neighboring floor space when placing it later.
+
+The screens are **actual game/attract displays rectified from the selected cabinet
+photos**, not local emulator captures or another game's imagery. Both preserve
+aspect ratio and receive modest brightness boosts at sprite scale; reflections and
+fine detail remain uncertain. Time Crisis II repeats the one photographed blue
+side readably on both sides, not an invented unseen opposite print. The alternative
+projection twin and flyer's red side/black guns are not silently mixed in.
+
+Sources: [Tekken cabinet](https://www.arcadeartwork.org/picture.php?/98203),
+[instruction strip](https://www.arcadeartwork.org/picture.php?/100922),
+[Time Crisis II cabinet](https://www.arcadeartwork.org/picture.php?/98329),
+[control plaque](https://www.arcadeartwork.org/picture.php?/6129) and
+[Namco Europe flyer](https://www.arcadeartwork.org/picture.php?/88485).
+Original downloads, measured corners, source purposes, hashes and unused research
+variants are retained under `art/references/{tekken3,timecrs2}/` and their recipes.
+Namco/licensor artwork and photographs retain their underlying rights; archive
+hosting is not publisher authorization. Scan/photograph authors, replacement-print
+status and redistribution permissions remain unknown. Visual approval and rights
+review are still needed before deployment.
+
 ### Metal Slug: online-source trial
 
 `mslug` uses a **40×56**, two-player Neo Geo MVS big-red shell with red sides,

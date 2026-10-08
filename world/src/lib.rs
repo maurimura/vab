@@ -94,8 +94,8 @@ pub struct Game {
     /// The ROM set, served at /roms/<rom>.zip.
     pub rom: String,
     /// The core that runs it: an FBNeo core, served at /fbneo/<core>/fbneo.mjs, or a core built
-    /// on its own and served at /<core>/<core>.mjs: "supermodel" (Sega Model 3, supermodel/) or
-    /// "daytona" (Daytona USA's Sega Model 2, daytona/).
+    /// on its own and served at /<core>/<core>.mjs: "supermodel" (Sega Model 3, supermodel/),
+    /// "daytona" (Daytona USA's Sega Model 2, daytona/) or "mame" (MAME, mame/).
     pub core: String,
     pub title: String,
     /// A BIOS set loaded next to the ROM, e.g. "neogeo".
@@ -113,6 +113,16 @@ pub struct Game {
     /// is 32 MB).
     #[serde(default)]
     pub lockstep: bool,
+    /// A lightgun game (Time Crisis II): the player aims with the mouse or a finger on the screen,
+    /// which shows a crosshair, and the aim goes to the core with the buttons.
+    #[serde(default)]
+    pub gun: bool,
+    /// Two players play on two linked boards, one each, as a twin cabinet (Time Crisis II): each
+    /// browser runs its player's own board, and the boards talk over the game's own link
+    /// (web/emulator/linked.js) instead of sharing one machine. Both start over when the second
+    /// player sits down, the link being set at power-on.
+    #[serde(default)]
+    pub linked: bool,
     /// Linked cabinets, as in an arcade (Daytona USA): every player's browser runs only their
     /// own cabinet, from a state for their seat (/roms/<rom>.seat<n>.state), and the cabinets'
     /// link boards talk to each other through the players' browsers, so the game's own rules
@@ -126,7 +136,7 @@ pub struct Game {
     #[serde(default)]
     pub options: BTreeMap<String, String>,
     /// The cabinet skins drawn for it (tiles/objects/cabinet_<skin>_<facing>.png), which the
-    /// editor gives this game.
+    /// editor gives this game. None yet: it runs on a plain cabinet the editor sets it on.
     #[serde(default)]
     pub cabinets: Vec<String>,
 }
@@ -214,7 +224,8 @@ pub struct MapSprite;
 /// The sprite for a placed floor tile or object.
 ///
 /// Floor tiles are centered on their cell. Objects stand on the cells they cover: the image's
-/// left edge is the area's left corner and its bottom the area's bottom point, and objects
+/// bottom is the area's bottom point and its middle the area's, so one wider than the area
+/// (a cabinet whose deck or canvas overhangs its cell) overhangs both sides alike, and objects
 /// nearer the viewer (by their front cell) draw on top.
 #[cfg(feature = "bevy")]
 pub fn map_sprite(
@@ -228,8 +239,12 @@ pub fn map_sprite(
         let front = IVec2::new(placed.x, placed.y) + size - IVec2::ONE;
         let depth = (front.x + front.y) as f32 * 0.001;
         let left = cell_to_world(placed.x, front.y).x - TILE_WIDTH / 2.0;
+        let middle = left + (size.x + size.y) as f32 * TILE_WIDTH / 4.0;
         let bottom = cell_to_world(front.x, front.y).y - TILE_HEIGHT / 2.0;
-        (Anchor::BOTTOM_LEFT, Vec3::new(left, bottom, 1.0 + depth))
+        (
+            Anchor::BOTTOM_CENTER,
+            Vec3::new(middle, bottom, 1.0 + depth),
+        )
     } else {
         let depth = (placed.x + placed.y) as f32 * 0.001;
         (
@@ -338,10 +353,30 @@ mod tests {
     const SKIN_TO_COME: [&str; 0] = [];
 
     #[test]
+    fn mame_catalog_has_tekken_and_the_lightgun_game() {
+        let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
+        let tekken = games.iter().find(|g| g.rom == "tekken3je1").unwrap();
+        assert_eq!(tekken.core, "mame");
+        assert_eq!(tekken.title, "Tekken 3");
+        assert_eq!(tekken.players, 2);
+        assert!(!tekken.gun && !tekken.linked && !tekken.turns);
+        let crisis = games.iter().find(|g| g.rom == "timecrs2").unwrap();
+        assert_eq!(crisis.core, "mame");
+        assert_eq!(crisis.title, "Time Crisis II");
+        // Two players, each at their own linked cabinet with a gun.
+        assert_eq!(crisis.players, 2);
+        assert!(crisis.gun && crisis.linked && !crisis.lockstep && !crisis.turns);
+        // Only a lightgun game says so, and only the twin cabinet is linked.
+        assert_eq!(games.iter().filter(|g| g.gun).count(), 1);
+        assert_eq!(games.iter().filter(|g| g.linked).count(), 1);
+    }
+
+    #[test]
     fn catalog_cabinet_skins_have_all_four_views() {
         let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
         let tiles =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tiles/objects");
+        // A game without a skin yet (Tekken 3, Time Crisis II) runs on a plain cabinet.
         for game in games {
             let to_come = SKIN_TO_COME.contains(&game.rom.as_str());
             assert_eq!(

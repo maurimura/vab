@@ -47,6 +47,13 @@ Coin, Start and Leave. The chat is typed in the page's own box, since
 a canvas can't bring up a phone's keyboard. Chrome's device toolbar shows all of it on a computer,
 as long as its pixel ratio is left at the computer's own (an emulated one gets the canvas size wrong).
 
+Time Crisis II is played with a lightgun (`gun` in `assets/games.ron`): the mouse aims over the
+game, where a crosshair stands in for the pointer, a click shoots, and the right button or Space
+works the pedal (Z and X do too). On a touch screen a finger on the game aims there and shoots
+for as long as it's down, and the pedal is a button. Its cabinet is the game's twin cabinet: two
+players each play their own screen and gun, linked (see [Online play](#online-play)); the next
+to press E watches.
+
 | Path | What | Built with |
 | --- | --- | --- |
 | `client/` | Bevy app, mounted on `<canvas id="bevy">`; its text font (Fira Mono cut to Latin-1, OFL) is in `fonts/` | `cargo` + `wasm-bindgen` → `web/pkg/` |
@@ -54,6 +61,7 @@ as long as its pixel ratio is left at the computer's own (an emulated one gets t
 | `netplay/` | Rollback for two players at a cabinet (GGRS), run by the emulator worker | `cargo` + `wasm-bindgen` → `web/netplay/` |
 | `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
 | `supermodel/`, `daytona/` | The Sega cores, each an Emscripten ES module behind the libretro API: Supermodel for the Model 3 (Virtua Striker 2) and Daytona USA's Model 2 (see [Daytona USA](#daytona-usa)) | their `build.sh` → `supermodel/dist/`, `daytona/dist/` |
+| `mame/` | MAME (libretro's fork) with the Namco System 12 and System 23 drivers only, for Tekken 3 and Time Crisis II, as an Emscripten ES module: see [mame/README.md](mame/README.md) | emsdk + MAME's own build (`mame/build.sh`) → `mame/dist/` |
 | `hockey/` | Air hockey physics and the bot, without Bevy, tested natively (`cargo test -p hockey`) | |
 | `darts/` | Darts scoring, a game of 301 and the throwing hand's sway, without Bevy, tested natively (`cargo test -p darts`) | |
 | `shuffleboard/` | Table shuffleboard physics and scoring, without Bevy, tested natively (`cargo test -p shuffleboard`) | |
@@ -64,7 +72,7 @@ as long as its pixel ratio is left at the computer's own (an emulated one gets t
 | `assets/` | Tile art (`tiles/`) and maps (`maps/`) | |
 | `web/` | Static assets: `index.html`, the room connection (`room.js`), Bevy's `pkg/`, the emulator worker + libretro frontend in `emulator/` | |
 
-Routes: static files from `web/`, `GET /ws/:room` (WebSocket to that room's Durable Object), `GET /ice` (WebRTC servers), `GET /fbneo/<core>/fbneo.{mjs,wasm}` (FBNeo cores), `GET /supermodel/supermodel.{mjs,wasm}` and `GET /daytona/daytona.{mjs,wasm}` (the Sega cores) and `GET /roms/<file>` (ROM sets), all from R2, and `GET /assets/maps/bar.ron` (the bar's map: the one last saved from the web editor, from R2, or the one in `web/`; `PUT` saves it, from the editor Worker only).
+Routes: static files from `web/`, `GET /ws/:room` (WebSocket to that room's Durable Object), `GET /ice` (WebRTC servers), `GET /fbneo/<core>/fbneo.{mjs,wasm}` (FBNeo cores), `GET /supermodel/supermodel.{mjs,wasm}`, `GET /daytona/daytona.{mjs,wasm}` and `GET /mame/mame.{mjs,wasm}` (the Sega and MAME cores) and `GET /roms/<file>` (ROM sets), all from R2, and `GET /assets/maps/bar.ron` (the bar's map: the one last saved from the web editor, from R2, or the one in `web/`; `PUT` saves it, from the editor Worker only).
 
 ## Setup
 
@@ -213,7 +221,8 @@ node emulator/rollback-check.mjs emulator/dist/midway/fbneo.mjs $HOME/Downloads/
 
 Players take a cabinet's free seats in order: as many as its game takes (`players` in
 `assets/games.ron`, 2 unless said, up to 4 as in Sunset Riders, 8 at Daytona USA's linked
-cabinets, which play another way: see [Daytona USA](#daytona-usa)), each on their seat's controls.
+cabinets, which play another way: see [Daytona USA](#daytona-usa), or 1, when the next to press
+E watches), each on their seat's controls.
 The first plays alone right away. Whoever sits down later joins that game as it is: the lowest
 seat among those playing captures its machine and hands it to everyone through the room, and all
 of them start a new GGRS session (`netplay/`) from it. Someone leaving works the same way. Each
@@ -231,6 +240,32 @@ Game packets go through the room's WebSocket at first and straight between the b
 WebRTC once that connects (`web/room.js`). Turn-based games (`turns`) use player 1's controls for
 both players, like an upright cabinet.
 
+A `linked` game (Time Crisis II's co-op) is played differently: the real one is a twin cabinet,
+two boards joined by a serial link, and so is the bar's. Each player's browser runs their own
+board (seat 0 the Left/Red one, seat 1 the Right/Blue), fed only by their own gun, on its player
+1 controls; nothing is shared but the link, which the MAME core emulates and the worker carries
+(`web/emulator/linked.js`, [mame/README.md](mame/README.md#linked-cabinets-time-crisis-ii-co-op)):
+each frame, a board is handed what the other board transmitted D frames earlier, then runs, then
+sends what it transmitted, every frame. D comes from the round trip as a lockstep game's delay
+does (2 to 12 frames; each board proposes one and both take the larger) and is fixed for the
+session; a board runs at most D frames ahead of the other and waits, as lockstep does, when the
+other's bytes are late. Over the reliable, ordered channel lockstep games use. The status line
+says "linked with player 2, 4 frames of delay", and "Link lost" if a second goes by with nothing
+from the other board (linked boards talk every frame or so, even in attract mode). The link is
+set at power-on, so a game in progress can't take a second player: when someone sits at the
+other seat, both boards start over from their side's start-up state (`timecrs2-link0.state`,
+`timecrs2-link1.state` in R2, made by `mame/link-states.mjs`: the two boards linked, at the mode
+select with 4 credits each, saved after the same frame, with the link bytes that were in flight
+between them), and when one player leaves, the other's board starts over alone from
+`timecrs2.state`. Whatever was being played is lost both times: the price of a cabinet whose
+link is set at power-on, for now.
+
+A player's input for a frame, what GGRS sends and confirms and the watchers get, is 32 bits: the
+RetroPad's buttons in the low 16 (bit `1 << id`, ids from libretro.h), and at a lightgun game
+where the gun points in the high 16, 8 bits across the screen (0 its left edge, 255 its right)
+and 8 down (0 the top). Other games leave those 0. The emulator worker answers the core's
+RetroPad from the low half and, at a lightgun game only, its lightgun from both
+(`web/emulator/libretro.js`).
 ## Daytona USA
 
 Daytona USA (Sega Model 2, 1994) runs on its own core, `daytona/`, built and put in the local
@@ -317,13 +352,16 @@ screen its lines are touch buttons. Players no call can reach show "no voice".
 ## Watching
 
 Anyone can watch a cabinet's game. Each watcher's browser runs the game itself, a little behind
-the players: the lowest seat playing sends them a state, then every player's input for each frame
-once GGRS has confirmed it, so no rollback can change it. Inputs go out about ten times a second,
-to everyone watching through one message to the room (address 0), and each watcher keeps a few
-frames in hand so they play evenly. When the players change, the new session starts a new stream
-with a fresh state. Watchers cost the players nothing: their game never pauses for one. At Daytona
-USA's linked cabinets a watcher follows one player's cabinet, streamed by that player
-([Daytona USA](#daytona-usa)).
+the players: the lowest seat playing sends them a state, then every player's input (32 bits a
+controller port) for each frame once GGRS has confirmed it, so no rollback can change it. Inputs
+go out about ten times a second, to everyone watching through one message to the room (address
+0), and each watcher keeps a few frames in hand so they play evenly. When the players change, the new session starts a new stream
+with a fresh state. Watchers cost the players nothing: their game never pauses for one. At a
+`linked` game the watcher sees the lowest seat's own board (the red one while both play): its
+state, marked with the side it's linked on, then for each frame its player's input and the link
+bytes the board was handed before it (`WATCH_LINK` in `web/room.js`), which the watcher's board,
+linked on the same side, is handed in turn. At Daytona USA's linked cabinets a watcher
+follows one player's cabinet, streamed by that player ([Daytona USA](#daytona-usa)).
 
 The tables and the dartboard can be watched the same way (F, or E once both seats are taken),
 through the room, which passes a message sent to address 0 on to everyone watching the sender's
@@ -338,6 +376,18 @@ the rink itself, about 20 times a second; in between, a watcher's rink plays on 
 and what each state puts right is drawn gliding there, as online play's corrections are. A
 watcher's hands are off the cue, the puck, the paddles and the darts, and they see who plays
 over the table. `tools/e2e/watch.mjs` tries all four with two players in headless Chrome.
+
+`mame/linked-check.mjs` does the same for Time Crisis II's twin cabinet: two workers as the two
+seats, one alone first, then both starting over linked, shooting their way into a linked game,
+then one leaving, with a watcher on the first; `mame/link-states.mjs` makes the start-up states
+it needs (redo them whenever the MAME core is rebuilt, then `make upload-rom` each of the three),
+and `mame/linked-lab.mjs` plays it in three headless Chromes against `make dev BUCKET=local`
+(a cabinet set to `timecrs2` on the map):
+
+```sh
+node mame/link-states.mjs $HOME/Downloads/timecrs2.zip          # -> mame/.cache/roms/timecrs2{,-link0,-link1}.state
+node mame/linked-check.mjs $HOME/Downloads/timecrs2.zip
+```
 
 `emulator/netplay-check.mjs` plays a game between workers in Node over a simulated network:
 player 1 alone, the others dropping in one by one, then player 2 leaving. Player 1 streams to a

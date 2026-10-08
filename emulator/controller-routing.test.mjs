@@ -39,3 +39,12 @@ test('ordinary simultaneous and third/fourth-seat controls are unchanged', () =>
   assert.equal(routedButton(inputs, 3, 11, ordinary, true), 1);
   assert.deepEqual(inputs, copy);
 });
+
+test('a lightgun aim in the high 16 bits never reaches the RetroPad, shared or not', () => {
+  const inputs = Uint32Array.of(bit(6) | 0xffff0000, bit(0) | bit(3) | 0x80400000, 0, 0);
+  for (let id = 0; id < 16; id++) {
+    assert.equal(routedButton(inputs, 0, id, ordinary, true), id === 6 || id === 0 ? 1 : 0);
+    assert.equal(routedButton(inputs, 1, id, ordinary), id === 0 || id === 3 ? 1 : 0);
+  }
+  assert.equal(routedButton(inputs, 0, 15, asteroid, true), 1);
+});

@@ -1,0 +1,155 @@
+Build the libretro fork's core with Emscripten (MAME's TARGETOS=asmjs, OSD=retro).
+
+The asmjs configuration in scripts/genie.lua is upstream's SDL3 page: it compiles with SDL3_ttf
+(an Emscripten port fetched at compile time) and JavaScript exception catching, which can't be
+mixed with -fwasm-exceptions (mame/build.sh passes it in ARCHOPTS). For OSD=retro those options
+go; the link options too, since mame/build.sh links the module itself. On asmjs:
+- the libretro target is a static archive instead of a shared library (GENie's archive of it
+  comes out empty, so mame/build.sh links the target's objects directly);
+- no -fPIC: position-independent wasm reaches every global through the GOT, for nothing.
+retroprefix.h keyed SDLMAME_EMSCRIPTEN (single-threaded work queues, osd_get_num_processors = 1)
+on EMSCRIPTEN, which Emscripten no longer defines under -std=c++20; __EMSCRIPTEN__ now (and the
+_IO_FILE stub only for the old macro: today's libc defines it). running_machine's Emscripten main
+loop (emscripten_set_main_loop) is upstream's web page, not the libretro core's frame loop.
+
+diff --git a/scripts/genie.lua b/scripts/genie.lua
+index b2f8da65..f65df91d 100644
+--- a/scripts/genie.lua
++++ b/scripts/genie.lua
+@@ -590,7 +590,7 @@ dofile ("toolchain.lua")
+ 
+ -- RETRO HACK
+ if _OPTIONS["osd"]=="retro" then
+-	if string.sub(_ACTION,1,4) ~= "vs20" then
++	if string.sub(_ACTION,1,4) ~= "vs20" and _OPTIONS["targetos"] ~= "asmjs" then
+ 		buildoptions {
+ 			"-fPIC"
+ 		}
+@@ -1167,17 +1167,24 @@ configuration { "asmjs" }
+ 	buildoptions {
+ 		"-std=gnu89",
+ 		"-Wno-implicit-function-declaration",
++	}
++	if _OPTIONS["osd"]~="retro" then
++	buildoptions {
+ 		"-s USE_SDL_TTF=3",
+ 		"-Wno-experimental",  -- sdl3 experimental for emcc
+ 	}
+ 	buildoptions_cpp {
+-		"-std=c++20",
+ 		"-s EXCEPTION_CATCHING_ALLOWED=\"['_ZN15running_machine17start_all_devicesEv','_ZN8chd_file11open_commonEb','_ZN8chd_file13read_metadataEjjRNSt3__212basic_stringIcNS0_11char_traitsIcEENS0_9allocatorIcEEEE','_ZN8chd_file13read_metadataEjjRNSt3__26vectorIhNS0_9allocatorIhEEEE','_ZNK19netlist_mame_device19base_validity_checkER16validity_checker']\"",
+ 	}
++	end
++	buildoptions_cpp {
++		"-std=c++20",
++	}
+ 	defines {
+ 		"ASIO_HAS_PTHREADS",
+ 		"SOUND_DISABLE_THREADING",
+ 	}
++	if _OPTIONS["osd"]~="retro" then
+ 	linkoptions {
+ 		"-Wl,--start-group",
+ 		"-s USE_SDL=3",
+@@ -1237,6 +1244,7 @@ configuration { "asmjs" }
+ 			"-s INITIAL_MEMORY=24MB",
+ 		}
+ 	end
++	end
+ 	archivesplit_size "20"
+ 
+ configuration { "android*" }
+diff --git a/scripts/src/main.lua b/scripts/src/main.lua
+index e51b5704..9c0e046c 100644
+--- a/scripts/src/main.lua
++++ b/scripts/src/main.lua
+@@ -173,10 +173,8 @@ end
+  				"SDLMAME_ARM=1",
+ 			}
+ 		elseif _OPTIONS["targetos"]=="asmjs" then
++			kind "StaticLib"
+ 			targetsuffix "_libretro_emscripten"
+-			linkoptions {
+-				 "-s DISABLE_EXCEPTION_CATCHING=2",
+-				 "-s EXCEPTION_CATCHING_WHITELIST='[\"__ZN15running_machine17start_all_devicesEv\",\"__ZN12cli_frontend7executeEiPPc\"]'",			}
+ 		elseif _OPTIONS["targetos"]=="ios-arm" or _OPTIONS["LIBRETRO_IOS"]=="1" then
+ 			targetsuffix "_libretro_ios"
+ 			targetextension ".dylib"
+diff --git a/scripts/src/osd/retro.lua b/scripts/src/osd/retro.lua
+index ac40740a..3a9ae8e9 100644
+--- a/scripts/src/osd/retro.lua
++++ b/scripts/src/osd/retro.lua
+@@ -74,7 +74,7 @@ project ("osd_" .. _OPTIONS["osd"])
+ --	kind (LIBTYPE)
+ 	kind "StaticLib"
+ 
+-	if string.sub(_ACTION,1,4) ~= "vs20" then
++	if string.sub(_ACTION,1,4) ~= "vs20" and _OPTIONS["targetos"] ~= "asmjs" then
+ 		buildoptions {
+ 			"-fPIC"
+ 		}
+@@ -129,7 +129,7 @@ project ("ocore_" .. _OPTIONS["osd"])
+ 
+ 	dofile("retro_cfg.lua")
+ 
+-	if string.sub(_ACTION,1,4) ~= "vs20" then
++	if string.sub(_ACTION,1,4) ~= "vs20" and _OPTIONS["targetos"] ~= "asmjs" then
+ 		buildoptions {
+ 			"-fPIC"
+ 		}
+diff --git a/scripts/toolchain.lua b/scripts/toolchain.lua
+index 61b45a14..95fb37e3 100644
+--- a/scripts/toolchain.lua
++++ b/scripts/toolchain.lua
+@@ -628,7 +628,7 @@ function toolchain(_buildDir, _subDir)
+ 		end
+ 
+ 		-- MS and Apple don't need -fPIC, but pretty much everything else does.
+-		if _OPTIONS["targetos"] ~= "windows" and _OPTIONS["targetos"] ~= "macosx" then
++		if _OPTIONS["targetos"] ~= "windows" and _OPTIONS["targetos"] ~= "macosx" and _OPTIONS["targetos"] ~= "asmjs" then
+ 			buildoptions { "-fPIC" }
+ 			linkoptions { "-fPIC" }
+ 		end
+diff --git a/src/emu/machine.cpp b/src/emu/machine.cpp
+index 8468b6d9..61661c1c 100644
+--- a/src/emu/machine.cpp
++++ b/src/emu/machine.cpp
+@@ -400,7 +406,7 @@ int running_machine::run(bool quiet)
+ 
+ 		export_http_api();
+ 
+-#if defined(__EMSCRIPTEN__)
++#if defined(__EMSCRIPTEN__) && !defined(__LIBRETRO__)
+ 		// break out to our async javascript loop and halt
+ 		emscripten_set_running_machine(this);
+ #endif
+diff --git a/src/emu/machine.h b/src/emu/machine.h
+index 9f6dbf4d..91ca95fd 100644
+--- a/src/emu/machine.h
++++ b/src/emu/machine.h
+@@ -350,7 +350,7 @@ private:
+ 	// string formatting buffer
+ 	mutable util::ovectorstream m_string_buffer;
+ 
+-#if defined(__EMSCRIPTEN__)
++#if defined(__EMSCRIPTEN__) && !defined(__LIBRETRO__)
+ private:
+ 	static running_machine *emscripten_running_machine;
+ 	static void emscripten_main_loop();
+diff --git a/src/osd/libretro/retroprefix.h b/src/osd/libretro/retroprefix.h
+index 89099ef0..d2a8caf8 100644
+--- a/src/osd/libretro/retroprefix.h
++++ b/src/osd/libretro/retroprefix.h
+@@ -66,9 +66,11 @@
+ #define SDLMAME_NO64BITIO 1
+ #endif
+ 
+-#if defined(EMSCRIPTEN)
++#if defined(EMSCRIPTEN) || defined(__EMSCRIPTEN__)
+ #define SDLMAME_EMSCRIPTEN 1
+ #define SDLMAME_NO64BITIO 1
++#endif
++#if defined(EMSCRIPTEN)
+ struct _IO_FILE {};  //_IO_FILE is an opaque type in the emscripten libc which makes clang cranky
+ #endif
+ 

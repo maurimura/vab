@@ -1,0 +1,394 @@
+{
+  "version": 1,
+  "skin": "tekken3",
+  "rom": "tekken3je1",
+  "title": "TEKKEN 3 / GRAY CONVERSION UPRIGHT",
+  "variant": "Photographed gray-sided Namco Tekken 3 operator conversion, orange/black marquee, brown deck and black/red sticks; exact shell manufacturer/region unknown, not a claimed dedicated factory Jin cabinet.",
+  "renderer": "upright",
+  "shell": "upright",
+  "size": [
+    32,
+    48
+  ],
+  "players": 2,
+  "control_stations": 2,
+  "buttons_per_player": 4,
+  "stations": [
+    10.5,
+    5.5
+  ],
+  "station_colors": [
+    [
+      24,
+      25,
+      28
+    ],
+    [
+      224,
+      32,
+      33
+    ]
+  ],
+  "buttons": [
+    {
+      "name": "Left Punch",
+      "position": [
+        11,
+        -1.3
+      ],
+      "color": [
+        31,
+        130,
+        213
+      ],
+      "color_by_station": [
+        [
+          31,
+          130,
+          213
+        ],
+        [
+          219,
+          34,
+          37
+        ]
+      ]
+    },
+    {
+      "name": "Right Punch",
+      "position": [
+        11,
+        -2.3
+      ],
+      "color": [
+        219,
+        34,
+        37
+      ]
+    },
+    {
+      "name": "Left Kick",
+      "position": [
+        12.2,
+        -1.3
+      ],
+      "color": [
+        235,
+        209,
+        40
+      ]
+    },
+    {
+      "name": "Right Kick",
+      "position": [
+        12.2,
+        -2.3
+      ],
+      "color": [
+        235,
+        209,
+        40
+      ]
+    }
+  ],
+  "game_actions": [
+    "Left Punch",
+    "Right Punch",
+    "Left Kick",
+    "Right Kick"
+  ],
+  "colors": {
+    "body": [
+      177,
+      177,
+      169
+    ],
+    "side": [
+      52,
+      63,
+      76
+    ],
+    "trim": [
+      26,
+      30,
+      34
+    ],
+    "stick": [
+      24,
+      25,
+      28
+    ],
+    "bezel": [
+      13,
+      17,
+      22
+    ],
+    "deck": [
+      69,
+      58,
+      36
+    ],
+    "back": [
+      49,
+      57,
+      68
+    ]
+  },
+  "preview_note": "32 x 48 | photographed conversion | 2 sticks / 8 actions | no invented character sides",
+  "hardware": "Namco System 12, two-player fighting game; conversion art does not change the existing tekken3je1 MAME entry.",
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/98203",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/tekken3.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Selected gray conversion: shell, orange/black marquee, unprinted visible gray side, brown deck, controls, gray coin-door front and actual Tekken 3 photographed game display.",
+      "rights": "Underlying artwork Namco / licensors. Third-party archive, not publisher authorization. Photographer/scan author, replacement-print status and redistribution permission are unknown.",
+      "sha256": "ba57bdfc19bec3e110b43668d6b3584d64414fb841c7e33e80578d210c663b2a",
+      "download_sha256": "ba57bdfc19bec3e110b43668d6b3584d64414fb841c7e33e80578d210c663b2a",
+      "download_size": [
+        522,
+        1000
+      ],
+      "processing": "Original downloaded PNG retained without resizing; measured rectification and sprite-scale BOX filtering are recipe texture adaptations."
+    },
+    "controls_alternative": {
+      "file": "controls.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/6091",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/tekken3.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Research only: alternative lightning Namco overlay corroborates two stations / four punch-kick actions. Not mixed into the chosen brown-deck cabinet.",
+      "rights": "Underlying artwork Namco / licensors. Third-party archive, not publisher authorization. Photographer/scan author, replacement-print status and redistribution permission are unknown.",
+      "sha256": "6e1115bccb3cafe7256b0e353c7a349c324296d0bb7f9262e003d6dabd3fa9f0",
+      "download_sha256": "6e1115bccb3cafe7256b0e353c7a349c324296d0bb7f9262e003d6dabd3fa9f0",
+      "download_size": [
+        1000,
+        552
+      ],
+      "processing": "Original downloaded PNG retained without resizing; measured rectification and sprite-scale BOX filtering are recipe texture adaptations."
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/88419",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadeflyers168/tekken3.png",
+      "kind": "original-print-scan",
+      "purpose": "Original-design Namco promotional print corroborating Tekken 3 identity; Jin poster is not substituted for unseen side art.",
+      "rights": "Underlying artwork Namco / licensors. Third-party archive, not publisher authorization. Photographer/scan author, replacement-print status and redistribution permission are unknown.",
+      "sha256": "39040b4a82123f8bb34c42c8aaad16cd9dd3623d4de35dca265a0f8efbfcf627",
+      "download_sha256": "39040b4a82123f8bb34c42c8aaad16cd9dd3623d4de35dca265a0f8efbfcf627",
+      "download_size": [
+        1029,
+        736
+      ],
+      "processing": "Original downloaded PNG retained without resizing; measured rectification and sprite-scale BOX filtering are recipe texture adaptations."
+    },
+    "instructions": {
+      "file": "artwork.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/100922",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcartmore168/tekken3.png",
+      "kind": "original-art-scan",
+      "purpose": "Original-design English operator instruction strip with Tekken 3 logo, four punch/kick actions and Namco copyright; scan/restoration authenticity unverified.",
+      "rights": "Underlying artwork Namco / licensors. Third-party archive, not publisher authorization. Photographer/scan author, replacement-print status and redistribution permission are unknown.",
+      "sha256": "5b4a9feb364115f7161eb0fc53e71210bc0b0f63623364d1b7da2000f3ad1036",
+      "download_sha256": "5b4a9feb364115f7161eb0fc53e71210bc0b0f63623364d1b7da2000f3ad1036",
+      "download_size": [
+        4000,
+        535
+      ],
+      "processing": "Original downloaded PNG retained without resizing; measured rectification and sprite-scale BOX filtering are recipe texture adaptations."
+    },
+    "alternative": {
+      "file": "alternative.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/98204",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/tekken3ab.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Research only: dark conversion variant with same orange/black marquee and brown panel; not combined with gray shell.",
+      "rights": "Underlying artwork Namco / licensors. Third-party archive, not publisher authorization. Photographer/scan author, replacement-print status and redistribution permission are unknown.",
+      "sha256": "e2b5285796445bb2eb39f330ff5d4edbb440b8f178ca3da67707cddd9a113fec",
+      "download_sha256": "e2b5285796445bb2eb39f330ff5d4edbb440b8f178ca3da67707cddd9a113fec",
+      "download_size": [
+        183,
+        400
+      ],
+      "processing": "Original downloaded PNG retained without resizing; measured rectification and sprite-scale BOX filtering are recipe texture adaptations."
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "cabinet",
+      "quad": [
+        [
+          105,
+          18
+        ],
+        [
+          498,
+          48
+        ],
+        [
+          497,
+          164
+        ],
+        [
+          104,
+          142
+        ]
+      ],
+      "rectified_size": [
+        320,
+        96
+      ],
+      "size": [
+        16,
+        6
+      ]
+    },
+    "controls": {
+      "source": "cabinet",
+      "quad": [
+        [
+          116,
+          641
+        ],
+        [
+          447,
+          603
+        ],
+        [
+          491,
+          680
+        ],
+        [
+          152,
+          744
+        ]
+      ],
+      "rectified_size": [
+        256,
+        96
+      ],
+      "size": [
+        16,
+        9
+      ]
+    },
+    "panel": {
+      "source": "cabinet",
+      "quad": [
+        [
+          148,
+          731
+        ],
+        [
+          490,
+          674
+        ],
+        [
+          478,
+          708
+        ],
+        [
+          143,
+          761
+        ]
+      ],
+      "rectified_size": [
+        256,
+        32
+      ],
+      "size": [
+        16,
+        4
+      ]
+    },
+    "screen": {
+      "source": "cabinet",
+      "quad": [
+        [
+          117,
+          332
+        ],
+        [
+          361,
+          323
+        ],
+        [
+          398,
+          526
+        ],
+        [
+          145,
+          550
+        ]
+      ],
+      "rectified_size": [
+        256,
+        192
+      ],
+      "size": [
+        12,
+        12
+      ],
+      "fit": "contain",
+      "brightness": 1.5
+    },
+    "bezel": {
+      "canvas": [
+        16,
+        16
+      ],
+      "fill": [
+        13,
+        17,
+        22
+      ],
+      "size": [
+        16,
+        16
+      ],
+      "patches": [
+        {
+          "source": "instructions",
+          "placement": [
+            0,
+            0,
+            16,
+            2
+          ]
+        },
+        {
+          "source": "instructions",
+          "placement": [
+            0,
+            14,
+            16,
+            2
+          ]
+        }
+      ]
+    },
+    "front": {
+      "canvas": [
+        16,
+        24
+      ],
+      "fill": [
+        177,
+        177,
+        169
+      ],
+      "size": [
+        16,
+        24
+      ]
+    }
+  },
+  "uncertainties": [
+    "Archive scans/photos are not publisher-hosted masters or redistribution permission. Exact shell, region and restoration status are unverified.",
+    "Selected documented conversion, not a fabricated dedicated Tekken 3 cabinet. The visible side is plain gray; no Jin poster or unseen side print is inferred.",
+    "Marquee, brown deck and Tekken 3 screen are rectified from the same chosen cabinet. The separate lightning overlay is research only. Instruction scan supplies two narrow bezel strips.",
+    "Photographed real game screen, not a local emulation capture: perspective is rectified, aspect preserved and brightness increased 1.5x for tiny sprite visibility. Reflections and photo detail remain limited.",
+    "Two ball-top sticks, four physical actions per station follow this conversion: left blue/red punches, right red punches, yellow kicks. White Start buttons remain photographed, not additional raised actions.",
+    "Shared stepped upright geometry is a low-resolution approximation of the gray shell; side/gray front colors and coin door are modeled. ROM/core/player count and map remain unchanged."
+  ]
+}

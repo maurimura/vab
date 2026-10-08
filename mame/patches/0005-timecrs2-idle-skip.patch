@@ -1,0 +1,66 @@
+Time Crisis II's idle loops cost the R4650 almost nothing.
+
+The game spends ~99% of the R4650's 166 MHz waiting for the next frame in a three-instruction
+loop at 0x800005f8 (lw $v0,0x74f4($gp) = 0x802ced14 / beqz / nop), and while it boots in two
+loops polling the C361's vblank bit (0x80025c10, 0x80025c30). MAME's MIPS III recompiler has
+hotspots for exactly this (vegas.cpp uses them): each pass through the loop costs extra cycles,
+so far fewer passes run in the same emulated time. 1000 cycles (6 us) each here; the CPU core
+checks the opcode at the address, so other programs (other sets, other games) are untouched.
+The interpreter takes hotspots too now (mips3drc_add_hotspot no longer requires -drc), so both
+mame_drc settings get them. A frame in attract mode went from ~60 ms (recompiler) / ~95 ms
+(interpreter) to 13-17 ms in Node on an M1 Max (mame/README.md).
+
+diff --git a/src/devices/cpu/mips/mips3.cpp b/src/devices/cpu/mips/mips3.cpp
+index 9fec975f..bb389f9c 100644
+--- a/src/devices/cpu/mips/mips3.cpp
++++ b/src/devices/cpu/mips/mips3.cpp
+@@ -5408,6 +5408,12 @@ void mips3_device::execute_run()
+ 			continue;
+ 		}
+ 
++		/* hotspots (mips3drc_add_hotspot, a game's idle loop) cost their extra cycles here
++		   too, as in the recompiler */
++		for (uint32_t hotnum = 0; hotnum < m_hotspot_select; hotnum++)
++			if (m_hotspot[hotnum].pc == m_ppc && m_hotspot[hotnum].opcode == op)
++				m_core->icount -= m_hotspot[hotnum].cycles;
++
+ 		/* adjust for next PC */
+ 		if (m_nextpc != ~0)
+ 		{
+diff --git a/src/devices/cpu/mips/mips3drc.cpp b/src/devices/cpu/mips/mips3drc.cpp
+index ca0bc821..94ad5277 100644
+--- a/src/devices/cpu/mips/mips3drc.cpp
++++ b/src/devices/cpu/mips/mips3drc.cpp
+@@ -200,7 +200,7 @@ void mips3_device::add_fastram(offs_t start, offs_t end, uint8_t readonly, void
+ 
+ void mips3_device::mips3drc_add_hotspot(offs_t pc, uint32_t opcode, uint32_t cycles)
+ {
+-	if (!allow_drc()) return;
++	// (the interpreter takes hotspots too)
+ 	if (m_hotspot_select < std::size(m_hotspot))
+ 	{
+ 		m_hotspot[m_hotspot_select].pc = pc;
+diff --git a/src/mame/namco/namcos23.cpp b/src/mame/namco/namcos23.cpp
+--- a/src/mame/namco/namcos23.cpp
++++ b/src/mame/namco/namcos23.cpp
+@@ -7090,6 +7090,20 @@
+ 	m_c361.timer->adjust(attotime::never);
+ 
+ 	m_maincpu->add_fastram(0, m_mainram.bytes()-1, false, reinterpret_cast<u32 *>(memshare("mainram")->ptr()));
++
++	// The arcade bar: Time Crisis II (US, TSS3 Ver.B) waits for the next frame in a
++	// three-instruction loop at 0x800005f8, lw $v0,0x74f4($gp) (0x802ced14, set by its vblank
++	// handler) / beqz $v0 / nop: ~99% of the R4650's 166 MHz in attract mode. While it boots it
++	// waits for vblank on the C361 instead, polling bit 0 of 0x0682000c until it sets
++	// (0x80025c10) and until it clears (0x80025c30): lhu $v0,0($v1) / sh / lhu / andi / branch.
++	// Each pass through those loops costs 1000 more cycles (6 us), so the CPU core runs a
++	// hundred times fewer of them (it checks the opcode there, so other programs run as before).
++	if (!strncmp(machine().system().name, "timecrs2", 8))
++	{
++		m_maincpu->mips3drc_add_hotspot(0x800005f8, 0x8f8274f4, 1000);
++		m_maincpu->mips3drc_add_hotspot(0x80025c10, 0x94620000, 1000);
++		m_maincpu->mips3drc_add_hotspot(0x80025c30, 0x94620000, 1000);
++	}
+ 
+ 	m_subcpu_scanline_on_timer = timer_alloc(FUNC(namcos23_state::subcpu_scanline_on_tick), this);
+ 	m_subcpu_scanline_off_timer = timer_alloc(FUNC(namcos23_state::subcpu_scanline_off_tick), this);

@@ -5,8 +5,10 @@
 //! Leave at one (emulator.rs). The game's own controls are here: the pad, with its buttons under the
 //! right thumb, laid out like the keys and named as the game names them, and a d-pad under the
 //! left. The d-pad stays put, unlike the stick in the bar, so that each way is always in the
-//! same place to tap twice or roll through, as a fighting game's moves ask. The chat is the
-//! page's, as a canvas can't bring up a phone's keyboard.
+//! same place to tap twice or roll through, as a fighting game's moves ask. A lightgun game has
+//! no d-pad: a finger on the game aims there and holds the trigger while it's down
+//! (emulator.rs), and the pad keeps the game's buttons (Time Crisis II's trigger and pedal), Coin
+//! and Start. The chat is the page's, as a canvas can't bring up a phone's keyboard.
 
 use bevy::input::InputSystems;
 use bevy::prelude::*;
@@ -69,6 +71,8 @@ pub enum TouchButton {
 #[derive(Resource, Default)]
 pub struct Touch {
     on: bool,
+    /// At a lightgun game: the finger off the buttons aims, and walks nothing.
+    gun: bool,
     thumb: Option<Thumb>,
     /// Buttons with a finger on them, and those a finger landed on this frame.
     held: Vec<TouchButton>,
@@ -96,7 +100,7 @@ impl Touch {
     }
 
     /// Where the finger that landed off the buttons is, while it's down: the stick in the bar,
-    /// the cue at the pool table.
+    /// the cue at the pool table, the gun at a lightgun game.
     pub fn finger(&self) -> Option<Vec2> {
         self.thumb.as_ref().map(|thumb| thumb.at)
     }
@@ -121,7 +125,12 @@ impl Touch {
 
     /// The RetroPad mask of the d-pad, as a cabinet's 8-way stick, and the pad's buttons.
     pub fn pad(&self) -> u16 {
-        let stick = self.stick().normalize_or_zero();
+        // A lightgun game's finger aims instead.
+        let stick = if self.gun {
+            Vec2::ZERO
+        } else {
+            self.stick().normalize_or_zero()
+        };
         // Each way takes the 135 degrees around it, so two share the 45 of a diagonal.
         let lean = 22.5_f32.to_radians().sin();
         let ways = [
@@ -165,6 +174,7 @@ impl Plugin for TouchPlugin {
                         .run_if(in_state(Mode::Playing).and_then(resource_changed::<GameButtons>)),
                 ),
             )
+            .add_systems(OnEnter(Mode::Playing), aim_with_fingers)
             .add_systems(OnExit(Mode::Playing), remove_pad);
     }
 }
@@ -333,10 +343,11 @@ fn show_stick(
 ) {
     for (part, mut node, mut visibility) in &mut parts {
         // The d-pad shows itself, and at the pool table the finger aims the cue instead, as at
-        // the air hockey table it moves the paddle, and at the shuffleboard table and the
-        // dartboard it throws.
+        // the air hockey table it moves the paddle, at the shuffleboard table and the
+        // dartboard it throws, and at a lightgun game it aims (with a crosshair, emulator.rs).
         let Some(thumb) = touch.thumb.as_ref().filter(|thumb| {
             !thumb.on_dpad
+                && !touch.gun
                 && !matches!(
                     mode.get(),
                     Mode::Pool | Mode::Hockey | Mode::Shuffleboard | Mode::Darts
@@ -377,9 +388,9 @@ fn lay_out_pad(
     for pad in &pads {
         commands.entity(pad).despawn();
     }
-    if game.is_none_or(|game| game.watching) {
+    let Some(game) = game.filter(|game| !game.watching) else {
         return;
-    }
+    };
     let named = |id: u16| {
         buttons
             .0
@@ -429,6 +440,10 @@ fn lay_out_pad(
                 });
             }
         });
+    // A lightgun game is played on the screen itself.
+    if game.gun {
+        return;
+    }
     commands
         .spawn((
             Pad,
@@ -513,10 +528,16 @@ fn light_dpad(touch: Res<Touch>, mut arms: Query<(&DpadArm, &mut BackgroundColor
     }
 }
 
+/// At a lightgun game, the finger off the buttons aims (not when watching).
+fn aim_with_fingers(mut touch: ResMut<Touch>, game: Option<Res<PlayingGame>>) {
+    touch.gun = game.is_some_and(|game| game.aims());
+}
+
 fn remove_pad(mut commands: Commands, mut touch: ResMut<Touch>, pads: Query<Entity, With<Pad>>) {
     for pad in &pads {
         commands.entity(pad).despawn();
     }
-    // A thumb still on the d-pad doesn't walk the bar from there.
+    // A thumb still on the d-pad (or aiming) doesn't walk the bar from there.
     touch.thumb = None;
+    touch.gun = false;
 }

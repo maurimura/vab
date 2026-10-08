@@ -168,7 +168,7 @@ const WORKER_PROBE = `(() => {
   if (od && od.set) Object.defineProperty(globalThis, "onmessage", { configurable: true, get() { return od.get.call(globalThis); },
     set(fn) { od.set.call(globalThis, W.handler = (ev) => {
       const m = ev.data;
-      if (m && m.type === "input") W.inputLog.push([W.runs.length, m.mask]);
+      if (m && m.type === "input") W.inputLog.push([W.runs.length, m.input]);
       if (m && m.type && m.type !== "input" && m.type !== "lab-echo" && m.type !== "watch-inputs") W.msgs.push({ t: abs(), type: m.type, bytes: size(m.state) || size(m.bytes), to: m.to, epoch: m.epoch, view: m.view, roundTrip: m.roundTrip });
       if (m && m.type === "online" && W.forceRtt) { m.roundTrip = W.forceRtt; W.events.push("rtt forced " + W.forceRtt); }
       return fn(ev); }); } });
@@ -241,7 +241,7 @@ const WORKER_PROBE = `(() => {
     const time = (name, arr, after) => { const f = ex[name]; out[name] = function (...a) { const t0 = performance.now(); try { return f.apply(this, a); } finally { arr.push(performance.now() - t0); after && after(t0); } }; };
     time("${EXPORTS.run}", W.runs, () => {
       W.runsAt.push(abs()); if (cur) cur.runs++;
-      if (W.replay && W.handler) for (const n = W.runs.length; W.replayAt < W.replay.length && W.replay[W.replayAt][0] <= n; W.replayAt++) W.handler({ data: { type: "input", mask: W.replay[W.replayAt][1] } });
+      if (W.replay && W.handler) for (const n = W.runs.length; W.replayAt < W.replay.length && W.replay[W.replayAt][0] <= n; W.replayAt++) W.handler({ data: { type: "input", input: W.replay[W.replayAt][1] } });
       if (W.poke && W.runs.length === W.poke) { const ptr = ex["${EXPORTS.ram}"](2); new Uint8Array(mem.buffer)[ptr + ${POKE_AT}] ^= 0xff; W.poked = W.runs.length; W.pokedAt = abs(); }
     });
     time("${EXPORTS.save}", W.saves, () => W.savesAt.push(abs()));

@@ -19,14 +19,23 @@ function getIceServers() {
 
 // Binary messages through the room, after its [player id: u32] address: a kind byte, then a
 // game packet, a piece of something bigger, [id: u32][index: u16][count: u16][bytes] (a game
-// handed over, its id the epoch, or a watch state, its id the stream), watch inputs,
-// [stream: u32][frame: u32][a u16 mask per controller port per frame], or an arcade game's
-// watch frames, [stream: u32][frame: u32][bytes] (web/emulator/worker.js says what's in them).
+// handed over, its id the epoch, or a watch state, its id the stream), or a watched game's
+// frames, all little-endian, which say what they hold by their kind:
+// - WATCH_INPUTS, [stream: u32][frame: u32] then a u32 input per controller port (4) for each
+//   frame from `frame` on: the RetroPad mask in its low 16 bits, a lightgun's aim in its high
+//   16 (web/emulator/worker.js);
+// - WATCH_FRAMES, an arcade game's cabinet (Daytona USA), for one watcher: [stream: u32]
+//   [frame: u32] then the frames it ran from `frame` on (web/emulator/worker.js says what's in
+//   them);
+// - WATCH_LINK, a linked board's (Time Crisis II, web/emulator/linked.js): [stream: u32] then
+//   for each frame [frame: u32][input: u32][length: u16][the link bytes the board was handed
+//   before the frame], one after another.
 const PACKET = 0;
 const HANDOVER = 1;
 const WATCH_STATE = 2;
 const WATCH_INPUTS = 3;
 const WATCH_FRAMES = 4;
+const WATCH_LINK = 5;
 const PIECE = 256 * 1024; // the room takes messages up to 1 MiB
 /** The address of everyone watching our cabinet. */
 const WATCHERS = 0;
@@ -62,9 +71,9 @@ export class Room {
    * @param events welcome(name), moved(id, x, y, flip, name), left(id), said(id, name, text),
    *   seats(cabinet, players), full(cabinet), watchers(cabinet, players), message(from, data)
    *   from another player at our cabinet, handover(from, epoch, bytes) a game handed over (see
-   *   handOver), watchState(from, stream, bytes), watchInputs(from, stream, frame, inputs) and
-   *   watchFrames(from, stream, frame, bytes) the game we watch (see watchState, watchInputs
-   *   and watchFrames)
+   *   handOver), watchState(from, stream, bytes), watchInputs(from, stream, frame, inputs),
+   *   watchFrames(from, stream, frame, bytes) and watchLink(from, stream, records) the game we
+   *   watch (see watchState, watchInputs, watchFrames and watchLink)
    * @param name this player's name, if they set one before; else the room gives one
    */
   constructor(url, events, name) {
@@ -188,13 +197,24 @@ export class Room {
     this.#sendBinary(to, new Uint8Array(header.buffer), bytes);
   }
 
-  /** Inputs for everyone watching our cabinet: a Uint16Array, a mask per port per frame. */
+  /** Inputs for everyone watching our cabinet: a Uint32Array, an input per port per frame. */
   watchInputs(stream, frame, inputs) {
     const header = new DataView(new ArrayBuffer(9));
     header.setUint8(0, WATCH_INPUTS);
     header.setUint32(1, stream, true);
     header.setUint32(5, frame, true);
     this.#sendBinary(WATCHERS, new Uint8Array(header.buffer), new Uint8Array(inputs.buffer, inputs.byteOffset, inputs.byteLength));
+  }
+
+  /**
+   * A linked board's frames for everyone watching our cabinet: the bytes worker.js encodes
+   * (linked.js encodeRecords), each frame numbered.
+   */
+  watchLink(stream, records) {
+    const header = new DataView(new ArrayBuffer(5));
+    header.setUint8(0, WATCH_LINK);
+    header.setUint32(1, stream, true);
+    this.#sendBinary(WATCHERS, new Uint8Array(header.buffer), records);
   }
 
   #sendPieces(to, kind, id, bytes) {
@@ -325,8 +345,13 @@ export class Room {
     }
     const id = view.getUint32(5, true);
     if (kind === WATCH_INPUTS) {
-      // Copied: a Uint16Array can't start at an odd offset.
-      this.#events.watchInputs(from, id, view.getUint32(9, true), new Uint16Array(message.slice(13)));
+      // Copied: a Uint32Array can't start at offset 13. Whole frames only (4 ports of 4 bytes).
+      const inputs = message.slice(13);
+      if (inputs.byteLength % 16 === 0) this.#events.watchInputs(from, id, view.getUint32(9, true), new Uint32Array(inputs));
+      return;
+    }
+    if (kind === WATCH_LINK) {
+      this.#events.watchLink(from, id, new Uint8Array(message.slice(9)));
       return;
     }
     if (kind === WATCH_FRAMES) {

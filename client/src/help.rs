@@ -14,7 +14,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::Mode;
 use crate::chat::type_in_chat;
-use crate::emulator::{KEYS, PlayingGame};
+use crate::emulator::{KEYS, PEDAL, PlayingGame, TRIGGER};
 use crate::touch::{Touch, read_touches};
 
 /// How long a game's card stays up, in seconds.
@@ -256,15 +256,18 @@ fn span(content: &str, color: Color) -> impl Bundle {
 /// A key and what it does, the keys lined up in a column `key_width` wide.
 fn row(parent: &mut ChildSpawnerCommands, key: &str, what: &str, key_width: f32, size: f32) {
     parent.spawn(Node::default()).with_children(|row| {
+        // Each on one line: measured wrapped, a two-word key ("Right click") or the card's
+        // longest line leaves a blank line under its row.
         row.spawn((
             text(key, size, KEY_COLOR),
+            TextLayout::no_wrap(),
             Node {
                 width: Val::Px(key_width),
                 flex_shrink: 0.0,
                 ..default()
             },
         ));
-        row.spawn(text(what, size, Color::WHITE));
+        row.spawn((text(what, size, Color::WHITE), TextLayout::no_wrap()));
     });
 }
 
@@ -334,7 +337,13 @@ fn list_buttons(
             .find(|(button, _)| *button == id)
             .map(|(_, name)| name.as_str())
     };
-    let title = game.map(|game| game.title.clone()).unwrap_or_default();
+    let title = game
+        .as_ref()
+        .map(|game| game.title.clone())
+        .unwrap_or_default();
+    let gun = game.is_some_and(|game| game.aims());
+    // Wide enough for "Right click".
+    let key_width = if gun { 96.0 } else { 70.0 };
     let arrow = |key: KeyCode| {
         matches!(
             key,
@@ -350,8 +359,16 @@ fn list_buttons(
             // Coin and Start first, then the stick, then the buttons.
             for (key, id) in KEYS.into_iter().filter(|(key, _)| coin_or_start(*key)) {
                 if let Some(name) = named(id) {
-                    row(card, key_name(key), name, 70.0, 13.0);
+                    row(card, key_name(key), name, key_width, 13.0);
                 }
+            }
+            // A lightgun game: the mouse is the gun (emulator.rs).
+            if gun {
+                row(card, "Mouse", "Aim", key_width, 13.0);
+                let trigger = named(TRIGGER).unwrap_or("Trigger");
+                row(card, "Click", trigger, key_width, 13.0);
+                let pedal = format!("{} (or Space)", named(PEDAL).unwrap_or("Pedal"));
+                row(card, "Right click", &pedal, key_width, 13.0);
             }
             // Sunset Riders has no Start: a coin, then a button, joins.
             let first_button = KEYS
@@ -359,7 +376,7 @@ fn list_buttons(
                 .find(|(key, id)| !arrow(*key) && !coin_or_start(*key) && named(*id).is_some());
             if let (None, Some((key, _))) = (named(START), first_button) {
                 let join = format!("No Start: coin, then {}", key_name(key));
-                row(card, "", &join, 70.0, 13.0);
+                row(card, "", &join, key_width, 13.0);
             }
             // The arrows move, unless the game names all four for something else (Daytona
             // USA: steer, accelerate, brake): then each gets a row.
@@ -373,21 +390,21 @@ fn list_buttons(
                 .all(|(key, name)| name.eq_ignore_ascii_case(key_name(*key)));
             if arrows.len() == 4 && !directions {
                 for (key, name) in arrows {
-                    row(card, key_name(key), name, 70.0, 13.0);
+                    row(card, key_name(key), name, key_width, 13.0);
                 }
             } else if !arrows.is_empty() {
-                row(card, "Arrows", "Move", 70.0, 13.0);
+                row(card, "Arrows", "Move", key_width, 13.0);
             }
             for (key, id) in KEYS
                 .into_iter()
                 .filter(|(key, _)| !arrow(*key) && !coin_or_start(*key))
             {
                 if let Some(name) = named(id) {
-                    row(card, key_name(key), name, 70.0, 13.0);
+                    row(card, key_name(key), name, key_width, 13.0);
                 }
             }
-            row(card, "Esc", "Stand up", 70.0, 13.0);
-            row(card, "Y", "Chat", 70.0, 13.0);
+            row(card, "Esc", "Stand up", key_width, 13.0);
+            row(card, "Y", "Chat", key_width, 13.0);
         });
     game_buttons.0 = buttons;
     if !touch.is_on() {

@@ -32,13 +32,14 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             "/ice",
             |_req, ctx| async move { ice_servers(&ctx.env).await },
         )
-        // FBNeo cores (/fbneo/<core>/fbneo.wasm), the Sega cores (/supermodel/supermodel.wasm for
-        // Model 3, /daytona/daytona.wasm for Daytona USA) and ROM sets (/roms/mk2.zip) live in R2,
-        // each with the content type it was uploaded with (Makefile).
+        // FBNeo cores (/fbneo/<core>/fbneo.wasm), the cores built on their own (/supermodel/supermodel.wasm
+        // for the Sega Model 3, /daytona/daytona.wasm for Daytona USA, /mame/mame.wasm for MAME) and ROM
+        // sets (/roms/mk2.zip) live in R2, each with the content type it was uploaded with (Makefile).
         .get_async("/fbneo/*file", |req, ctx| serve_from_r2(req, ctx, "fbneo"))
         .get_async("/supermodel/*file", |req, ctx| {
             serve_from_r2(req, ctx, "supermodel")
         })
+        .get_async("/mame/*file", |req, ctx| serve_from_r2(req, ctx, "mame"))
         .get_async("/daytona/*file", |req, ctx| {
             serve_from_r2(req, ctx, "daytona")
         })

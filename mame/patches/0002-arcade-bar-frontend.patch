@@ -1,0 +1,1013 @@
+The libretro frontend as the arcade bar (web/emulator/libretro.js) drives it.
+
+- Core options: the bar answers GET_VARIABLE only for the keys it sets; for every other key the
+  fork used its C variables' initial values, which disagree with its own option table (empty
+  joystick deadzone strings, no softlist/media type, so a game was started as a system "roms").
+  Unanswered options now take the table's defaults, and the defaults are the bar's: thread mode
+  off, lightgun mode "lightgun", mouse off, per-game button profiles on (Tekken 3's punches on
+  Y X, kicks on B A, like its panel and the bar's keys A S / Z X); throttle, boot to OSD/BIOS,
+  config read/write, auto save and cheats off, as before.
+- Input descriptors: the loaded game's own, from MAME's input fields (named fields by their
+  names, Tekken 3's unnamed four as Left/Right Punch/Kick), RetroPad and, for a lightgun game,
+  lightgun; ordered stick, buttons, Start, Coin. The fork's generic "A"/"B"/... list goes.
+- RETRO_MEMORY_SYSTEM_RAM: the main CPU's work RAM (a RAM device under it, else the largest RAM
+  in its program map: System 23's 16 MB at 0). The fork's heuristic returned the base of whatever
+  memory bank came first.
+- mame_drc (default disabled): MAME's -drc / -nodrc, for CPUs with a recompiler (System 23's
+  R4650). WebAssembly has only the recompiler's C backend, which in Chrome is slower than the
+  interpreter (mame/README.md has the numbers). Both boards of a link use the same setting.
+- Pixels: RGBA8888 (the bar's format 100, bytes R G B A, opaque) when the frontend takes it,
+  XRGB8888 otherwise. GET_AUDIO_VIDEO_ENABLE without video: the frame isn't rendered or sent.
+- Determinism for rollback netplay: every retro_run runs exactly one frame (MAME's start-up text
+  updated the video while loading, so the first call ran nothing and a machine that loaded a
+  state before its first frame ran a frame behind); the machine's first frame runs inside
+  retro_load_game (until then, what reset left for the next time slice, such as a sub-CPU or
+  DSP held in reset, sits in anonymous timers that states leave out); inputs are read at the
+  start of every frame from the first (the fork waited 5 frames, for the hiscore plugin); retro_reset happens at the
+  start of the next frame and a state loaded before then cancels it (it used to happen a frame
+  later, after the state); no RetroPad combination opens MAME's menu (Select + Button 3) or quits
+  (Select + Start).
+- A failed load returns false without the 1 s busy-wait, and later loads in that instance return
+  false too (a second load after a failure crashed). serialize_size is 0 until a game is loaded.
+- mame_state_layout(): offset, size and name of every saved item, for diagnosing states (not
+  exported by default).
+
+diff --git a/src/osd/libretro/libretro-internal/libretro.cpp b/src/osd/libretro/libretro-internal/libretro.cpp
+index b5370dfd..faf2f99c 100755
+--- a/src/osd/libretro/libretro-internal/libretro.cpp
++++ b/src/osd/libretro/libretro-internal/libretro.cpp
+@@ -20,12 +20,40 @@
+ #include "libretro_core_options.h"
+ #include "libretro_vfs.h"
+ 
++#include "machine/ram.h"
++
++#include <algorithm>
++#include <string>
++#include <vector>
++
++/* The arcade bar's frontend (web/emulator/libretro.js) answers GET_VARIABLE only for the keys it
++ * sets. Every other option takes its default from option_defs_us, as RetroArch would; the C
++ * variables' own initial values are never used. */
++static bool retro_get_variable(struct retro_variable *var)
++{
++   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, var) && var->value)
++      return true;
++   for (const struct retro_core_option_v2_definition *def = option_defs_us; def->key; def++)
++   {
++      if (!strcmp(def->key, var->key))
++      {
++         var->value = def->default_value;
++         return var->value != NULL;
++      }
++   }
++   return false;
++}
++
+ /* forward decls / externs / prototypes */
+ 
+ extern void retro_finish();
+ extern void retro_main_loop();
+ 
+-int POSTNOTIFY     = 5; /* See retro_loop() */
++/* See retro_loop(). The fork waits 5 frames (for the hiscore plugin) before reading the inputs at
++ * the start of each frame; meanwhile they are read at the end of the frame before. A machine
++ * that loads another's state in those first frames would then run them on different input
++ * than the machine that made it: so from the first frame on. */
++int POSTNOTIFY     = 0;
+ int RLOOP          = 1;
+ int ENDEXEC        = 0;
+ int retro_pause    = 0;
+@@ -51,6 +79,8 @@ int video_changed  = VIDEO_CHANGED_NONE;
+ int screen_configured = 0;
+ 
+ static bool draw_this_frame = true;
++bool retro_skip_draw = false; /* GET_AUDIO_VIDEO_ENABLE said not to show this frame */
++bool retro_rgba = false;      /* frames are RGBA8888 (the bar's format), else XRGB8888 */
+ static int maincpu_overclock = 100;
+ static int soundcpu_overclock = 100;
+ 
+@@ -385,28 +415,28 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_joystick_deadzone";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       strcpy(joystick_deadzone, var.value);
+    }
+ 
+    var.key   = CORE_NAME "_joystick_saturation";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       strcpy(joystick_saturation, var.value);
+    }
+ 
+    var.key   = CORE_NAME "_joystick_threshold";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       strcpy(joystick_threshold, var.value);
+    }
+ 
+    var.key   = CORE_NAME "_mame_4way_enable";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       mame_4way_enable = true;
+       if (!strcmp(var.value, "disabled"))
+@@ -421,7 +451,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_buttons_profiles";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "disabled"))
+          buttons_profiles = false;
+@@ -431,7 +461,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_mouse_enable";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "disabled"))
+          mouse_enable = false;
+@@ -441,7 +471,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_lightgun_mode";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "touchscreen"))
+          lightgun_mode = RETRO_SETTING_LIGHTGUN_MODE_POINTER;
+@@ -453,7 +483,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_lightgun_offscreen_mode";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "free"))
+          lightgun_offscreen_mode = RETRO_SETTING_LIGHTGUN_OFFSCREEN_MODE_FREE;
+@@ -465,7 +495,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_rotation_mode";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "libretro"))
+          rotation_mode = ROTATION_MODE_LIBRETRO;
+@@ -481,7 +511,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_alternate_renderer";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       char alternate_renderer_prev = alternate_renderer;
+ 
+@@ -498,7 +528,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_altres";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (alternate_renderer)
+       {
+@@ -545,7 +575,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_cpu_overclock";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       maincpu_overclock = 100;
+       if (strcmp(var.value, "default"))
+@@ -554,7 +584,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_cpu_sound_overclock";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       soundcpu_overclock = 100;
+       if (strcmp(var.value, "default"))
+@@ -563,7 +593,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_autoloadfastforward";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "disabled"))
+          autoloadfastforward = false;
+@@ -573,14 +603,19 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_coin_limit";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       coin_limit = atoi(var.value);
+    }
+ 
++   var.key   = CORE_NAME "_drc";
++   var.value = NULL;
++   if (retro_get_variable(&var) && var.value)
++      drc_enable = !strcmp(var.value, "enabled");
++
+    var.key   = CORE_NAME "_thread_mode";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "enabled"))
+          thread_mode = 1;
+@@ -590,7 +625,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_cheats_enable";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "disabled"))
+          cheats_enable = false;
+@@ -600,7 +635,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_throttle";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "disabled"))
+          throttle_enable = false;
+@@ -610,7 +645,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_boot_to_bios";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "enabled"))
+          boot_to_bios_enable = true;
+@@ -620,7 +655,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_boot_to_osd";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "enabled"))
+          boot_to_osd_enable = true;
+@@ -630,7 +665,7 @@ static void check_variables(void)
+ 
+    var.key = CORE_NAME "_read_config";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "disabled"))
+          read_config_enable = false;
+@@ -640,7 +675,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_write_config";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "disabled"))
+          write_config_enable = false;
+@@ -650,7 +685,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_mame_paths_enable";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "enabled"))
+          mame_paths_enable = true;
+@@ -660,7 +695,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_saves";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "game"))
+          game_specific_saves_enable = true;
+@@ -670,7 +705,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_auto_save";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "disabled"))
+          auto_save_enable = false;
+@@ -681,7 +716,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_softlists_enable";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "enabled"))
+          softlist_enable = true;
+@@ -691,7 +726,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_softlists_auto_media";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       if (!strcmp(var.value, "enabled"))
+          softlist_auto = true;
+@@ -701,7 +736,7 @@ static void check_variables(void)
+ 
+    var.key   = CORE_NAME "_media_type";
+    var.value = NULL;
+-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
++   if (retro_get_variable(&var) && var.value)
+    {
+       sprintf(mediaType,"-%s",var.value);
+    }
+@@ -807,48 +842,19 @@ void retro_init(void)
+       retro_save_directory = retro_system_directory;
+    }
+ 
+-   if (!environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
++#ifndef M16B
++   /* The arcade bar's own format: bytes R, G, B, A, which its page takes as they are. Any
++    * other frontend refuses it and gets XRGB8888. */
++   enum retro_pixel_format rgba = (enum retro_pixel_format)RETRO_PIXEL_FORMAT_RGBA8888_BAR;
++   retro_rgba = environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &rgba);
++#endif
++   if (!retro_rgba && !environ_cb(RETRO_ENVIRONMENT_SET_PIXEL_FORMAT, &fmt))
+    {
+       log_cb(RETRO_LOG_ERROR, "pixel format not supported\n");
+       exit(0);
+    }
+ 
+-   #define input_descriptor_macro(c) \
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_LEFT,   "Joy Left" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_RIGHT,  "Joy Right" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_UP,     "Joy Up" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_DOWN,   "Joy Down" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_A,      "A" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_B,      "B" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X,      "X" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y,      "Y" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L,      "L" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R,      "R" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_SELECT, "Select" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_START,  "Start" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2,     "L2" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L3,     "L3" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2,     "R2" },\
+-      { c, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3,     "R3" },\
+-      { c, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X, "Left Stick X" },\
+-      { c, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_Y, "Left Stick Y" },\
+-      { c, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X, "Right Stick X" },\
+-      { c, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_Y, "Right Stick Y" },
+-
+-   struct retro_input_descriptor input_descriptors[] =
+-   {
+-      input_descriptor_macro(0)
+-      input_descriptor_macro(1)
+-      input_descriptor_macro(2)
+-      input_descriptor_macro(3)
+-      input_descriptor_macro(4)
+-      input_descriptor_macro(5)
+-      input_descriptor_macro(6)
+-      input_descriptor_macro(7)
+-      { 0 },
+-   };
+-   #undef input_descriptor_macro
+-   environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, input_descriptors);
++   /* Input descriptors: the loaded game's own, from retro_load_game(). */
+ 
+    if (environ_cb(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
+       libretro_supports_bitmasks = true;
+@@ -883,6 +889,7 @@ void retro_deinit(void)
+ 
+ void retro_reset(void)
+ {
++   /* Done at the start of the next frame (retro_run). A state loaded before then replaces it. */
+    mame_reset = 1;
+    coin_inserted = 0;
+ }
+@@ -897,6 +904,21 @@ void retro_run(void)
+       update_runtime_variables(false);
+    }
+ 
++   /* Frames re-run after a rollback aren't shown: MAME then skips drawing its frame (the
++    * machine itself runs the same). */
++   int av_enable = 3;
++   retro_skip_draw = environ_cb(RETRO_ENVIRONMENT_GET_AUDIO_VIDEO_ENABLE, &av_enable) && !(av_enable & 1);
++
++   if (mame_reset == 1 && retro_load_ok && mame_machine_manager::instance()->machine())
++   {
++      mame_machine_manager::instance()->machine()->schedule_soft_reset();
++      mame_reset = -1;
++   }
++
++   /* Every call runs one frame: up to the next video update. MAME also updates the video while
++    * it loads (the "Initializing..." text), which used to leave the first call with nothing to
++    * run, so a machine that loaded a state before its first frame ran a frame behind. */
++   RLOOP = 1;
+    if (!retro_pause)
+       retro_main_loop();
+    RLOOP = 1;
+@@ -920,7 +942,7 @@ void retro_run(void)
+ #if defined(HAVE_OPENGL) || defined(HAVE_OPENGLES)
+    do_glflush();
+ #else
+-   if (draw_this_frame)
++   if (draw_this_frame && !retro_skip_draw)
+       video_cb(videoBuffer, fb_width, fb_height, fb_width << LOG_PIXEL_BYTES);
+    else
+       video_cb(NULL, fb_width, fb_height, fb_width << LOG_PIXEL_BYTES);
+@@ -933,8 +955,139 @@ void retro_run(void)
+       update_geometry();
+ }
+ 
++/* Input descriptors for the loaded game, from MAME's own input fields: each field that a RetroPad
++ * (or light gun) button reaches, by the name the game gives it. The bar's page shows port 0's
++ * on its controls card. Buttons MAME leaves unnamed get their cabinet's names here. */
++extern int button_mapping[];
++
++static const struct
++{
++   const char *game;
++   const char *buttons[6];
++} game_button_names[] =
++{
++   { "tekken3", { "Left Punch", "Right Punch", "Left Kick", "Right Kick", NULL, NULL } },
++};
++
++static void retro_set_game_descriptors(running_machine &machine)
++{
++   struct entry { unsigned port, device, id, order; std::string label; };
++   static std::vector<std::string> labels;
++   std::vector<entry> entries;
++   std::vector<struct retro_input_descriptor> descriptors;
++   const char *const *names = NULL;
++   const game_driver &system = machine.system();
++   bool gun = false;
++
++   for (const auto &e : game_button_names)
++      if (!strcmp(system.name, e.game) || !strcmp(system.parent, e.game))
++         names = e.buttons;
++
++   auto add = [&] (unsigned port, unsigned device, unsigned id, unsigned order, std::string label)
++   {
++      for (const auto &e : entries)
++         if (e.port == port && e.device == device && e.id == id)
++            return;
++      entries.push_back({ port, device, id, order, std::move(label) });
++   };
++
++   for (auto &port : machine.ioport().ports())
++      for (ioport_field &field : port.second->fields())
++         if (field.type() == IPT_LIGHTGUN_X || field.type() == IPT_LIGHTGUN_Y)
++            gun = true;
++   gun = gun && lightgun_mode == RETRO_SETTING_LIGHTGUN_MODE_LIGHTGUN;
++
++   /* Order within a port: the stick, Button 1-6, Start, Coin; then the gun's. */
++   for (auto &port : machine.ioport().ports())
++   {
++      for (ioport_field &field : port.second->fields())
++      {
++         const ioport_type type = field.type();
++         unsigned player = field.player();
++         const char *specific = field.specific_name();
++         unsigned id, order;
++         int gun_id = -1;
++         std::string label;
++
++         if (type >= IPT_BUTTON1 && type <= IPT_BUTTON6)
++         {
++            const int n = type - IPT_BUTTON1;
++            id = button_mapping[n];
++            order = 10 + n;
++            if (specific)
++               label = specific;
++            else if (names && names[n])
++               label = names[n];
++            else
++               label = "Button " + std::to_string(n + 1);
++            if (n == 0)
++               gun_id = RETRO_DEVICE_ID_LIGHTGUN_TRIGGER;
++            else if (n == 1)
++               gun_id = RETRO_DEVICE_ID_LIGHTGUN_AUX_A;
++         }
++         else if (type == IPT_JOYSTICK_UP)    { id = RETRO_DEVICE_ID_JOYPAD_UP;    order = 0; label = "Up"; }
++         else if (type == IPT_JOYSTICK_DOWN)  { id = RETRO_DEVICE_ID_JOYPAD_DOWN;  order = 1; label = "Down"; }
++         else if (type == IPT_JOYSTICK_LEFT)  { id = RETRO_DEVICE_ID_JOYPAD_LEFT;  order = 2; label = "Left"; }
++         else if (type == IPT_JOYSTICK_RIGHT) { id = RETRO_DEVICE_ID_JOYPAD_RIGHT; order = 3; label = "Right"; }
++         else if (type >= IPT_START1 && type <= IPT_START4)
++         {
++            player = type - IPT_START1;
++            id = RETRO_DEVICE_ID_JOYPAD_START;
++            order = 20;
++            label = "Start";
++            gun_id = RETRO_DEVICE_ID_LIGHTGUN_START;
++         }
++         else if (type >= IPT_COIN1 && type <= IPT_COIN4)
++         {
++            player = type - IPT_COIN1;
++            id = RETRO_DEVICE_ID_JOYPAD_SELECT;
++            order = 21;
++            label = "Coin";
++            gun_id = RETRO_DEVICE_ID_LIGHTGUN_SELECT;
++         }
++         else if (gun && (type == IPT_LIGHTGUN_X || type == IPT_LIGHTGUN_Y))
++         {
++            if (player < 4)
++               add(player, RETRO_DEVICE_LIGHTGUN,
++                     type == IPT_LIGHTGUN_X ? RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X : RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y,
++                     type == IPT_LIGHTGUN_X ? 30 : 31, type == IPT_LIGHTGUN_X ? "Aim X" : "Aim Y");
++            continue;
++         }
++         else
++            continue;
++
++         if (player >= 4)
++            continue;
++         add(player, RETRO_DEVICE_JOYPAD, id, order, label);
++         if (gun && gun_id >= 0)
++            add(player, RETRO_DEVICE_LIGHTGUN, gun_id, 40 + order, label);
++      }
++   }
++
++   std::stable_sort(entries.begin(), entries.end(), [] (const entry &a, const entry &b)
++         { return a.port != b.port ? a.port < b.port : a.order < b.order; });
++   labels.clear();
++   labels.reserve(entries.size()); /* descriptors point into it */
++   for (const auto &e : entries)
++   {
++      labels.push_back(e.label);
++      descriptors.push_back({ e.port, e.device, 0, e.id, labels.back().c_str() });
++   }
++   descriptors.push_back({ 0, 0, 0, 0, NULL });
++   environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, descriptors.data());
++}
++
+ bool retro_load_game(const struct retro_game_info *info)
+ {
++   /* A load that failed leaves MAME's machine manager half torn down, and a second load in the
++    * same instance then crashes: one try per instance (the arcade bar makes a new one). */
++   static bool tried = false;
++   if (tried && !retro_load_ok)
++   {
++      log_cb(RETRO_LOG_ERROR, "A failed load leaves this core unusable: load in a new instance\n");
++      return false;
++   }
++   tried = true;
+    retro_load_ok = false;
+ 
+    check_variables();
+@@ -974,16 +1127,34 @@ bool retro_load_game(const struct retro_game_info *info)
+ 
+    if (res != 0)
+    {
++#ifndef __EMSCRIPTEN__
+       /* Must wait a bit for failure to finish properly */
+       log_cb(RETRO_LOG_DEBUG, "%s osd_sleep\n", __func__);
+       osd_sleep(osd_ticks_per_second());
+       log_cb(RETRO_LOG_DEBUG, "%s osd_sleep done\n", __func__);
++#endif
+       return false;
+    }
+ 
+    retro_load_ok = true;
+    update_runtime_variables(true);
+ 
++   /* The machine's first frame runs here, the same on every machine. Until it has run, what
++    * MAME's reset left for the next time slice (input line changes such as a sub-CPU or DSP
++    * held in reset) is pending in anonymous timers that save states leave out, so
++    * a state saved before it made a different machine wherever it was loaded. */
++   if (mame_machine_manager::instance() != NULL && mame_machine_manager::instance()->machine() != NULL)
++   {
++      RLOOP = 1;
++      retro_main_loop();
++      RLOOP = 1;
++      output_audio_buffer.size = 0;
++      audio_ready = false;
++   }
++
++   if (mame_machine_manager::instance() != NULL && mame_machine_manager::instance()->machine() != NULL)
++      retro_set_game_descriptors(*mame_machine_manager::instance()->machine());
++
+    return true;
+ }
+ 
+@@ -1001,7 +1172,8 @@ void retro_unload_game(void)
+ 
+ size_t retro_serialize_size(void)
+ {
+-   if (     mame_machine_manager::instance() != NULL
++   if (     retro_load_ok
++         && mame_machine_manager::instance() != NULL
+ 	      && mame_machine_manager::instance()->machine() != NULL
+ 	      && ram_state::get_size(mame_machine_manager::instance()->machine()->save()) > 0)
+       return ram_state::get_size(mame_machine_manager::instance()->machine()->save());
+@@ -1011,7 +1183,8 @@ size_t retro_serialize_size(void)
+ bool retro_serialize(void *data, size_t size)
+ {
+    save_error error = STATERR_NOT_FOUND;
+-   if (     mame_machine_manager::instance() != NULL
++   if (     retro_load_ok
++         && mame_machine_manager::instance() != NULL
+ 	      && mame_machine_manager::instance()->machine() != NULL
+ 	      && ram_state::get_size(mame_machine_manager::instance()->machine()->save()) > 0)
+       error = mame_machine_manager::instance()->machine()->save().write_buffer((u8*)data, size);
+@@ -1023,113 +1196,120 @@ bool retro_serialize(void *data, size_t size)
+ bool retro_unserialize(const void *data, size_t size)
+ {
+    save_error error = STATERR_NOT_FOUND;
+-   if (     mame_machine_manager::instance() != NULL
++   if (     retro_load_ok
++         && mame_machine_manager::instance() != NULL
+          && mame_machine_manager::instance()->machine() != NULL
+          &&	ram_state::get_size(mame_machine_manager::instance()->machine()->save()) > 0)
+       error = mame_machine_manager::instance()->machine()->save().read_buffer((u8*)data, size);
+ 
+    if (error != STATERR_NONE)
+       log_cb(RETRO_LOG_ERROR, "State load error %d.\n", error);
++   else
++      mame_reset = -1; /* the state replaces a reset still to happen */
+    return (error == STATERR_NONE);
+ }
+ 
+ unsigned retro_get_region (void) { return RETRO_REGION_NTSC; }
+ 
+-void *find_mame_bank_base(offs_t start, address_space &space)
+-{
+-   for (auto &bank : mame_machine_manager::instance()->machine()->memory().banks())
+-      // if ( bank.second->addrstart() == start)
+-         return bank.second->base();
+-   return NULL;
+-}
++/* RETRO_MEMORY_SYSTEM_RAM: the main CPU's work RAM, which the arcade bar hashes to notice two
++ * players' machines drifting apart. A RAM device under the main CPU (the PlayStation-based
++ * System 12's 4 MB) if there is one, otherwise the largest RAM in the main CPU's program map
++ * (System 23's 16 MB "mainram" at 0, where the R4650 runs the game; not its 16 KB link RAM).
++ * Found once per loaded game. */
++static void *system_ram_ptr = NULL;
++static size_t system_ram_size = 0;
++static running_machine *system_ram_machine = NULL;
+ 
+-void *retro_get_memory_data(unsigned type)
++static void find_system_ram(void)
+ {
+-   void *best_match1 = NULL;
+-   void *best_match2 = NULL;
+-   void *best_match3 = NULL;
+-   int space_index   = 0;
+-
+-   /* Eventually the RA cheat system can be updated to accommodate multiple memory
+-    * locations, but for now this does a pretty good job for MAME since most of the machines
+-    * have a single primary RAM segment that is marked read/write as AMH_RAM.
+-    *
+-    * This will find a best match based on certain qualities of the address_map_entry objects.
+-    */
+-   if (     type == RETRO_MEMORY_SYSTEM_RAM
+-         && mame_machine_manager::instance() != NULL
+-         && mame_machine_manager::instance()->machine() != NULL)
++   running_machine *machine = mame_machine_manager::instance() ? mame_machine_manager::instance()->machine() : NULL;
++   if (machine == system_ram_machine)
++      return;
++   system_ram_machine = machine;
++   system_ram_ptr = NULL;
++   system_ram_size = 0;
++   if (!machine || !retro_load_ok)
++   {
++      system_ram_machine = NULL;
++      return;
++   }
++
++   device_t *cpu = machine->root_device().subdevice("maincpu");
++   for (device_t &device : device_enumerator(machine->root_device()))
++      if (!cpu && dynamic_cast<cpu_device *>(&device) != nullptr)
++         cpu = &device;
++   if (!cpu)
++      return;
++
++   ram_device *ram = cpu->subdevice<ram_device>("ram");
++   if (ram && ram->pointer() && ram->size())
++   {
++      system_ram_ptr = ram->pointer();
++      system_ram_size = ram->size();
++   }
++   else
+    {
+-      memory_interface_enumerator iter(mame_machine_manager::instance()->machine()->root_device());
+-      for (device_memory_interface &memory : iter)
++      device_memory_interface *memory;
++      if (cpu->interface(memory) && memory->has_space(AS_PROGRAM) && memory->space(AS_PROGRAM).map())
+       {
+-         for (space_index = 0; space_index < memory.num_spaces(); space_index++)
++         address_space &space = memory->space(AS_PROGRAM);
++         size_t best = 0;
++         for (address_map_entry &entry : space.map()->m_entrylist)
+          {
+-            if (memory.has_space(space_index))
++            if (entry.m_read.m_type != AMH_RAM || entry.m_write.m_type != AMH_RAM)
++               continue;
++            size_t size = space.address_to_byte(entry.m_addrend - entry.m_addrstart + 1);
++            void *ptr = space.get_write_ptr(entry.m_addrstart);
++            if (ptr && size > best)
+             {
+-               auto &space = memory.space(space_index);
+-               for (address_map_entry &entry : space.map()->m_entrylist)
+-               {
+-                  if (entry.m_read.m_type == AMH_RAM)
+-                  {
+-                     if (entry.m_write.m_type == AMH_RAM)
+-                     {
+-                        if (entry.m_share == NULL)
+-                           best_match1 = find_mame_bank_base(entry.m_addrstart, space);
+-                        else
+-                           best_match2 = find_mame_bank_base(entry.m_addrstart, space);
+-                     }
+-                     else
+-                        best_match3 = find_mame_bank_base(entry.m_addrstart, space);
+-                  }
+-               }
++               best = size;
++               system_ram_ptr = ptr;
++               system_ram_size = size;
+             }
+          }
+       }
+    }
+-   return (best_match1 != NULL ? best_match1 : (best_match2 != NULL) ? best_match2 : best_match3);
++   log_cb(RETRO_LOG_INFO, "System RAM: %u bytes of %s\n", (unsigned)system_ram_size, cpu->tag());
++}
++
++void *retro_get_memory_data(unsigned type)
++{
++   if (type != RETRO_MEMORY_SYSTEM_RAM)
++      return NULL;
++   find_system_ram();
++   return system_ram_ptr;
+ }
+ 
+ size_t retro_get_memory_size(unsigned type)
+ {
+-   size_t best_match1 = 0;
+-   size_t best_match2 = 0;
+-   size_t best_match3 = 0;
+-   int space_index    = 0;
++   if (type != RETRO_MEMORY_SYSTEM_RAM)
++      return 0;
++   find_system_ram();
++   return system_ram_size;
++}
+ 
+-   if (     type == RETRO_MEMORY_SYSTEM_RAM
+-         && mame_machine_manager::instance() != NULL
+-         && mame_machine_manager::instance()->machine() != NULL)
++/* Diagnostics (not exported by mame/build.sh; a debug link can add _mame_state_layout): where
++ * each item MAME saves sits in a state, "offset size name" per line. */
++extern "C" const char *mame_state_layout(void)
++{
++   static std::string out;
++   out.clear();
++   running_machine *machine = mame_machine_manager::instance() ? mame_machine_manager::instance()->machine() : NULL;
++   if (!machine || !retro_load_ok)
++      return "";
++   size_t offset = 32; /* save.cpp's HEADER_SIZE */
++   for (int i = 0; ; i++)
+    {
+-      memory_interface_enumerator iter(mame_machine_manager::instance()->machine()->root_device());
+-      for (device_memory_interface &memory : iter)
+-      {
+-         for (space_index = 0; space_index < memory.num_spaces(); space_index++)
+-         {
+-            if (memory.has_space(space_index))
+-            {
+-               auto &space = memory.space(space_index);
+-               for (address_map_entry &entry : space.map()->m_entrylist)
+-               {
+-                  if (entry.m_read.m_type == AMH_RAM)
+-                  {
+-                     if (entry.m_write.m_type == AMH_RAM)
+-                     {
+-                        if (entry.m_share == NULL)
+-                           best_match1 = entry.m_addrend - entry.m_addrstart + 1;
+-                        else
+-                           best_match2 = entry.m_addrend - entry.m_addrstart + 1;
+-                     }
+-                     else
+-                        best_match3 = entry.m_addrend - entry.m_addrstart + 1;
+-                  }
+-               }
+-            }
+-         }
+-      }
++      void *base;
++      u32 valsize, valcount, blockcount, stride;
++      const char *name = machine->save().indexed_item(i, base, valsize, valcount, blockcount, stride);
++      if (!name)
++         break;
++      const size_t size = size_t(valsize) * valcount * blockcount;
++      out += std::to_string(offset) + " " + std::to_string(size) + " " + name + "\n";
++      offset += size;
+    }
+-
+-   return (best_match1 != 0 ? best_match1 : (best_match2 != 0) ? best_match2 : best_match3);
++   return out.c_str();
+ }
+ 
+ bool retro_load_game_special(unsigned game_type, const struct retro_game_info *info, size_t num_info) { return false; }
+diff --git a/src/osd/libretro/libretro-internal/libretro_core_options.h b/src/osd/libretro/libretro-internal/libretro_core_options.h
+index 7b95d4f6..1e154043 100644
+--- a/src/osd/libretro/libretro-internal/libretro_core_options.h
++++ b/src/osd/libretro/libretro-internal/libretro_core_options.h
+@@ -83,6 +83,24 @@ struct retro_core_option_v2_category option_cats_us[] = {
+ };
+ 
+ struct retro_core_option_v2_definition option_defs_us[] = {
++   {
++      /* The arcade bar: MAME's -drc / -nodrc, for the CPUs that have a recompiler (System 23's
++       * R4650). In WebAssembly the recompiler's only backend is the C one, which interprets
++       * MAME's intermediate code; in Chrome the interpreter is the faster (mame/README.md).
++       * Both boards of a link, and all players of a netplay game, must use the same setting. */
++      CORE_NAME "_drc",
++      "Dynamic Recompiler",
++      NULL,
++      "",
++      NULL,
++      "system",
++      {
++         { "disabled", NULL },
++         { "enabled",  NULL },
++         { NULL, NULL },
++      },
++      "disabled"
++   },
+    {
+       CORE_NAME "_thread_mode",
+       "Thread Mode",
+@@ -95,7 +113,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
+          { "enabled",  NULL },
+          { NULL, NULL },
+       },
+-      "enabled"
++      "disabled"
+    },
+    {
+       CORE_NAME "_cheats_enable",
+@@ -396,7 +414,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
+          { "enabled",  NULL },
+          { NULL, NULL },
+       },
+-      "disabled"
++      "enabled"
+    },
+    {
+       CORE_NAME "_mouse_enable",
+@@ -410,7 +428,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
+          { "enabled",  NULL },
+          { NULL, NULL },
+       },
+-      "enabled"
++      "disabled"
+    },
+    {
+       CORE_NAME "_lightgun_mode",
+@@ -425,7 +443,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
+          { "touchscreen", "Touchscreen" },
+          { NULL, NULL },
+       },
+-      "none"
++      "lightgun"
+    },
+    {
+       CORE_NAME "_lightgun_offscreen_mode",
+diff --git a/src/osd/libretro/libretro-internal/libretro_shared.h b/src/osd/libretro/libretro-internal/libretro_shared.h
+index 0e29a2f1..9a2bdf9a 100644
+--- a/src/osd/libretro/libretro-internal/libretro_shared.h
++++ b/src/osd/libretro/libretro-internal/libretro_shared.h
+@@ -117,6 +117,7 @@ extern float view_aspect;
+ extern float retro_fps;
+ extern int rotation_mode;
+ extern int thread_mode;
++extern bool drc_enable;
+ extern int screen_configured;
+ extern unsigned coin_inserted;
+ extern unsigned coin_limit;
+@@ -138,6 +139,12 @@ extern void extract_directory(char *buf, const char *path, size_t size);
+ 
+ void retro_frame_draw_enable(bool enable);
+ 
++/* The arcade bar (web/emulator/libretro.js): its own pixel format, RGBA8888 as bytes R, G, B, A,
++ * which the core asks for first; and whether this frame is drawn (GET_AUDIO_VIDEO_ENABLE). */
++#define RETRO_PIXEL_FORMAT_RGBA8888_BAR 100
++extern bool retro_rgba;
++extern bool retro_skip_draw;
++
+ void *retro_get_fb_ptr(void);
+ 
+ #ifdef __cplusplus
+diff --git a/src/osd/libretro/libretro-internal/retro_init.cpp b/src/osd/libretro/libretro-internal/retro_init.cpp
+index 855bb7d4..49d7c56a 100755
+--- a/src/osd/libretro/libretro-internal/retro_init.cpp
++++ b/src/osd/libretro/libretro-internal/retro_init.cpp
+@@ -78,6 +78,7 @@ int rotation_mode = ROTATION_MODE_LIBRETRO;
+ int libretro_rotation_allow = 0;
+ int internal_rotation_allow = 0;
+ int thread_mode = 0;
++bool drc_enable = false; /* the arcade bar: mame_drc */
+ 
+ // rom file name and path
+ char g_rom_dir[RETRO_PATH_MAX];
+@@ -545,6 +546,9 @@ static void Set_Default_Option(void)
+    }
+ 
+    Add_Option("-update_in_pause");
++
++   /* the arcade bar: the recompiler on or off (mame_drc) */
++   Add_Option(drc_enable ? "-drc" : "-nodrc");
+ }
+ 
+ static void Set_Path_Option(void)
+diff --git a/src/osd/libretro/retromain.cpp b/src/osd/libretro/retromain.cpp
+index 042ac900..43c69918 100644
+--- a/src/osd/libretro/retromain.cpp
++++ b/src/osd/libretro/retromain.cpp
+@@ -404,6 +404,17 @@ void retro_osd_interface::customize_input_type_list(std::vector<input_type_entry
+ 				entry.defseq(SEQ_TYPE_STANDARD).set(KEYCODE_6, input_seq::or_code, JOYCODE_SELECT_INDEXED(1), input_seq::or_code, GUNCODE_BUTTON6_INDEXED(1));
+ 				break;
+ 
++#if defined(__EMSCRIPTEN__)
++			// The arcade bar: coin + a button would open MAME's menu (pausing one player's
++			// machine) and coin + start would quit the game, so the menu and exit are
++			// keyboard-only (and the bar sends no keys).
++			case IPT_UI_MENU:
++				entry.defseq(SEQ_TYPE_STANDARD).set(KEYCODE_TAB);
++				break;
++			case IPT_UI_CANCEL:
++				entry.defseq(SEQ_TYPE_STANDARD).set(KEYCODE_ESC);
++				break;
++#else
+ 			// Select + X
+ 			case IPT_UI_MENU:
+ 				entry.defseq(SEQ_TYPE_STANDARD).set(KEYCODE_TAB, input_seq::or_code, JOYCODE_SELECT, JOYCODE_BUTTON3);
+@@ -413,6 +424,7 @@ void retro_osd_interface::customize_input_type_list(std::vector<input_type_entry
+ 			case IPT_UI_CANCEL:
+ 				entry.defseq(SEQ_TYPE_STANDARD).set(KEYCODE_ESC, input_seq::or_code, JOYCODE_SELECT, JOYCODE_START);
+ 				break;
++#endif
+ 
+ 			// leave everything else alone
+ 			default:
+diff --git a/src/osd/libretro/video.cpp b/src/osd/libretro/video.cpp
+index d53387d0..efb0e4c2 100644
+--- a/src/osd/libretro/video.cpp
++++ b/src/osd/libretro/video.cpp
+@@ -106,8 +106,9 @@ void retro_osd_interface::update(bool skip_redraw)
+ 	
+ 	osd_common_t::update(skip_redraw);
+ 
+-	// if we're not skipping this redraw, update all windows
+-	if (!skip_redraw)
++	// if we're not skipping this redraw, update all windows (frames re-run after a rollback
++	// aren't shown: retro_skip_draw)
++	if (!skip_redraw && !retro_skip_draw)
+ 	{
+ 		retro_frame_draw_enable(true);
+ 		for (auto const &window : osd_common_t::window_list())
+diff --git a/src/osd/modules/render/drawretro.cpp b/src/osd/modules/render/drawretro.cpp
+index a305ec9c..642d561f 100644
+--- a/src/osd/modules/render/drawretro.cpp
++++ b/src/osd/modules/render/drawretro.cpp
+@@ -77,7 +77,16 @@ int renderer_retro::draw(const int update)
+ 
+ 	// draw the primitives to the bitmap
+ 	window().m_primlist->acquire_lock();
+-	software_renderer<uint32_t, 0,0,0, 16,8,0>::draw_primitives(*window().m_primlist, m_bmdata, width, height, width);
++	if (retro_rgba)
++	{
++		// the arcade bar's RGBA8888: bytes R, G, B, A (opaque)
++		software_renderer<uint32_t, 0,0,0, 0,8,16>::draw_primitives(*window().m_primlist, m_bmdata, width, height, width);
++		uint32_t *pixel = reinterpret_cast<uint32_t *>(m_bmdata);
++		for (size_t i = 0, n = size_t(width) * height; i < n; i++)
++			pixel[i] |= 0xff000000;
++	}
++	else
++		software_renderer<uint32_t, 0,0,0, 16,8,0>::draw_primitives(*window().m_primlist, m_bmdata, width, height, width);
+ 	window().m_primlist->release_lock();
+ 
+ 	return 0;

@@ -1,19 +1,23 @@
 // Games cabinets can run (a cabinet's `game` in maps/bar.ron is a `rom` from this list).
 // `rom` is the ROM set in R2 (/roms/<rom>.zip, plus the optional <rom>.state), `core` the FBNeo
-// core that runs it (emulator/build.sh), "supermodel" for a Sega Model 3 game (supermodel/) or
-// "daytona" for Daytona USA (Sega Model 2, daytona/), and `bios` a BIOS set loaded next to it.
-// `players` is how many play at once (2 if not said, up to 4, or 8 in arcade mode); `turns`
-// games take turns on player 1's controls; `lockstep` games play online without rollback (a
-// Sega core's save state is too big to take every frame). `arcade` games are linked cabinets,
-// as in an arcade: every player's browser runs only their own cabinet, from a state for their
-// seat (/roms/<rom>.seat<n>.state, n from 0), and the cabinets talk through their link boards,
-// so the game's own rules say who races whom (Daytona USA: up to 8, joining at the circuit
-// select). `options` are settings for the core, made before the game loads (the `_<core>_set`
-// its module exports; an arcade game's also get `seat`, from the player's seat); with a `view`
-// among them one machine has a screen per seat, and each player sees their own.
-// `cabinets` names the cabinet skins drawn for the game (tiles/objects/cabinet_<skin>_*): the
-// editor gives a cabinet in one of them the game. A game without a skin yet stands in a plain
-// cabinet, its game picked in the editor.
+// core that runs it (emulator/build.sh), "supermodel" for a Sega Model 3 game (supermodel/),
+// "daytona" for Daytona USA (Sega Model 2, daytona/) or "mame" for one MAME runs (mame/), and
+// `bios` a BIOS set loaded next to it. `players` is how many play at once (2 if not said, up to
+// 4, or 8 in arcade mode; 1 and the next to press E watches); `turns` games take turns on player
+// 1's controls; `lockstep` games play online without rollback (a Sega core's save state is too
+// big to take every frame); `gun` games are played with a lightgun: the mouse or a finger aims,
+// with a crosshair on the screen; `linked` games are a twin cabinet, two boards joined by the
+// game's own link, one per player and browser (Time Crisis II's co-op; both games start over
+// when the second player sits). `arcade` games are linked cabinets, as in an arcade: every
+// player's browser runs only their own cabinet, from a state for their seat
+// (/roms/<rom>.seat<n>.state, n from 0), and the cabinets talk through their link boards, so the
+// game's own rules say who races whom (Daytona USA: up to 8, joining at the circuit select).
+// `options` are settings for the core, made before the game loads (the `_<core>_set` its module
+// exports; an arcade game's also get `seat`, from the player's seat); with a `view` among them
+// one machine has a screen per seat, and each player sees their own. `cabinets` names the
+// cabinet skins drawn for the game (tiles/objects/cabinet_<skin>_*): the editor gives a cabinet
+// in one of them the game. A game without a skin yet stands in a plain cabinet, its game picked
+// in the editor.
 [
     (rom: "mk2", core: "midway", title: "mkII", cabinets: ["mk2_v2"]),
     (rom: "umk3", core: "midway", title: "Ultimate Mortal Kombat 3", cabinets: ["umk3"]),
@@ -35,4 +39,6 @@
     (rom: "term2", core: "midway", title: "Terminator 2: Judgment Day", cabinets: ["term2"]),
     (rom: "vs298", core: "supermodel", title: "Virtua Striker 2 '98", lockstep: true, cabinets: ["vs298"]),
     (rom: "daytona", core: "daytona", title: "Daytona USA", arcade: true, players: 8, options: {"cabinets": "1", "link_topology": "star", "link_pace": "1"}, cabinets: ["daytona"]),
+    (rom: "tekken3je1", core: "mame", title: "Tekken 3", lockstep: true, cabinets: ["tekken3"]),
+    (rom: "timecrs2", core: "mame", title: "Time Crisis II", players: 2, gun: true, linked: true, cabinets: ["timecrs2"]),
 ]

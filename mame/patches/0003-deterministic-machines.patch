@@ -1,0 +1,147 @@
+Deterministic machines, for rollback netplay: two players' machines must stay identical, and a
+machine that loads another's state must go on exactly as the one that saved it.
+
+- running_machine: the base time the clock chips start from is fixed (1998-01-01 00:00:00 UTC)
+  instead of the host's clock, and system_time's "local" time is UTC (localtime follows the
+  browser's time zone). Tekken 3 reads an RTC4543.
+- device_rtc_interface: the clock's registers go in the save state. Chips rebuild their
+  registers from them every tick, so a machine that loaded a state went back to its own time.
+- PSX root counters and SIO: their post-load re-armed their timers from the current count (whole
+  counter ticks) or from now, moving them; the timers are in the save state as they were.
+- screen: the fork's shortcut in configure() (skip when nothing changed, after 10 calls) counts
+  calls outside the save state, so it behaved differently on a machine that loaded a state.
+- sound: the fork's periodic sound update ran at retro_fps^2 Hz, retro_fps being host state
+  (each machine's own history of screen modes); its timer splits the CPUs' time slices, so now a
+  fixed 3600 Hz (the same 60 chunks per 60 Hz frame).
+
+diff --git a/src/devices/cpu/psx/rcnt.cpp b/src/devices/cpu/psx/rcnt.cpp
+index 0a9b03f8..c2d67725 100644
+--- a/src/devices/cpu/psx/rcnt.cpp
++++ b/src/devices/cpu/psx/rcnt.cpp
+@@ -29,8 +29,9 @@ void psxrcnt_device::device_reset()
+ 
+ void psxrcnt_device::device_post_load()
+ {
+-	for (int n = 0; n < 3; n++)
+-		root_timer_adjust(n);
++	// The counters' timers are in the save state, exactly as they were. Re-arming them here
++	// from the count (whole counter ticks) moved each one a little, so a machine that loaded a
++	// state ran differently from the one that saved it (rollback netplay, the arcade bar).
+ }
+ 
+ void psxrcnt_device::device_start()
+diff --git a/src/devices/cpu/psx/sio.cpp b/src/devices/cpu/psx/sio.cpp
+index 07f7bd93..80712c70 100644
+--- a/src/devices/cpu/psx/sio.cpp
++++ b/src/devices/cpu/psx/sio.cpp
+@@ -42,7 +42,8 @@ psxsio_device::psxsio_device(const machine_config &mconfig, device_type type, co
+ 
+ void psxsio_device::device_post_load()
+ {
+-	sio_timer_adjust();
++	// The timer is in the save state as it was; re-arming it from now (a whole bit period
++	// later) made a machine that loaded a state differ from the one that saved it.
+ }
+ 
+ void psxsio_device::device_start()
+diff --git a/src/emu/dirtc.cpp b/src/emu/dirtc.cpp
+index bf1a9366..6eaa195c 100644
+--- a/src/emu/dirtc.cpp
++++ b/src/emu/dirtc.cpp
+@@ -35,6 +35,20 @@ device_rtc_interface::device_rtc_interface(const machine_config &mconfig, device
+ }
+ 
+ 
++//-------------------------------------------------
++//  interface_post_start - the clock itself goes in
++//  save states: the chips rebuild their registers
++//  from it every tick, so a machine that loaded a
++//  state went back to its own time (rollback
++//  netplay in the arcade bar)
++//-------------------------------------------------
++
++void device_rtc_interface::interface_post_start()
++{
++	device().save_item(m_register, "rtc_interface_register");
++}
++
++
+ //-------------------------------------------------
+ //  ~device_rtc_interface - destructor
+ //-------------------------------------------------
+diff --git a/src/emu/dirtc.h b/src/emu/dirtc.h
+index e76a8d3d..1134b451 100644
+--- a/src/emu/dirtc.h
++++ b/src/emu/dirtc.h
+@@ -56,6 +56,9 @@ public:
+ 	bool has_battery() const { return rtc_battery_backed(); }
+ 
+ protected:
++	// device_interface overrides
++	virtual void interface_post_start() override;
++
+ 	static u8 convert_to_bcd(int val);
+ 	static int bcd_to_integer(u8 val);
+ 
+diff --git a/src/emu/machine.cpp b/src/emu/machine.cpp
+index 8468b6d9..61661c1c 100644
+--- a/src/emu/machine.cpp
++++ b/src/emu/machine.cpp
+@@ -167,7 +167,13 @@ void running_machine::start()
+ 	m_ui->set_startup_text("Initializing...", true);
+ 
+ 	// initialize the base time (needed for doing record/playback)
++#if defined(__LIBRETRO__) && defined(__EMSCRIPTEN__)
++	// The arcade bar: players' machines must be identical, so the clock chips (Tekken 3's
++	// RTC4543) start at a fixed moment instead of the host's clock: 1998-01-01 00:00:00 UTC.
++	m_base_time = 883612800;
++#else
+ 	::time(&m_base_time);
++#endif
+ 
+ 	// initialize the input system and input ports for the game
+ 	// this must be done before memory_init in order to allow specifying
+@@ -1360,7 +1366,12 @@ void system_time::set(time_t t)
+ {
+ 	// FIXME: this crashes if localtime or gmtime returns nullptr
+ 	time = t;
++#if defined(__LIBRETRO__) && defined(__EMSCRIPTEN__)
++	// the same in every time zone (localtime follows the browser's)
++	local_time.set(*gmtime(&t));
++#else
+ 	local_time.set(*localtime(&t));
++#endif
+ 	utc_time.set(*gmtime(&t));
+ }
+ 
+diff --git a/src/emu/screen.cpp b/src/emu/screen.cpp
+index c773df68..82118a7d 100644
+--- a/src/emu/screen.cpp
++++ b/src/emu/screen.cpp
+@@ -1016,7 +1016,7 @@ void screen_device::configure(int width, int height, const rectangle &visarea, a
+ 	else
+ 		m_vblank_period = m_scantime * (height - visarea.height());
+ 
+-#ifdef __LIBRETRO__
++#if defined(__LIBRETRO__) && !defined(__EMSCRIPTEN__)
+ 	/* Performance hack fix for "pong" and "breakout" */
+ 	if (screen_configured > 10
+ 			&& width == m_width
+diff --git a/src/emu/sound.cpp b/src/emu/sound.cpp
+index 5a560da4..66924f87 100644
+--- a/src/emu/sound.cpp
++++ b/src/emu/sound.cpp
+@@ -2690,7 +2690,12 @@ void sound_manager::update(s32)
+ 
+ 	m_last_sync_time = machine().time();
+ 
+-#ifdef __LIBRETRO__
++#if defined(__LIBRETRO__) && defined(__EMSCRIPTEN__)
++	/* The arcade bar: the fork's small chunks (60 per frame at 60 Hz), at a fixed rate. Its
++	 * timer splits the CPUs' time slices, so its period must not follow retro_fps, which each
++	 * player's machine sets from its own history (a machine that loaded a state differs). */
++	m_update_timer->adjust(attotime::from_hz(3600), 0, attotime::from_hz(3600));
++#elif defined(__LIBRETRO__)
+ 	/* Adjust sound timer for minimal latency and chunk size,
+ 	 * Runahead will break on startup if this is readjusted on change only */
+ 	m_update_timer->adjust(attotime::from_hz(retro_fps * retro_fps), 0, attotime::from_hz(retro_fps * retro_fps));

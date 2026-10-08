@@ -1,0 +1,388 @@
+{
+  "version": 1,
+  "skin": "timecrs2",
+  "rom": "timecrs2",
+  "title": "TIME CRISIS II / RED-BLUE TWIN",
+  "variant": "Namco red/blue twin-screen upright, yellow shared title, white edging, central coin/instruction tower, two holstered feedback pistols and two floor pedals; selected photo has cyan P1 and pink P2 pistols.",
+  "renderer": "twin-gun",
+  "shell": "twin-upright",
+  "size": [
+    64,
+    64
+  ],
+  "players": 2,
+  "control_stations": 2,
+  "control_kind": "holstered-guns",
+  "buttons_per_player": 1,
+  "pedals": 2,
+  "stations": [
+    13,
+    3
+  ],
+  "station_colors": [
+    [
+      222,
+      42,
+      26
+    ],
+    [
+      28,
+      86,
+      185
+    ]
+  ],
+  "gun_colors": [
+    [
+      51,
+      182,
+      200
+    ],
+    [
+      224,
+      121,
+      183
+    ]
+  ],
+  "buttons": [
+    {
+      "name": "Trigger"
+    }
+  ],
+  "game_actions": [
+    "Gun trigger",
+    "Action pedal"
+  ],
+  "colors": {
+    "body": [
+      19,
+      23,
+      28
+    ],
+    "hood": [
+      20,
+      35,
+      68
+    ],
+    "trim": [
+      236,
+      234,
+      216
+    ],
+    "red": [
+      225,
+      46,
+      25
+    ]
+  },
+  "preview_note": "64 x 64 | two linked screens / holstered pistols / floor pedals | photographed Namco twin",
+  "hardware": "Namco System 23; two physically linked boards with one screen, feedback lightgun and action pedal per player. Flyer states twin screen action / 2 player interactive / feedback gun controls.",
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/98329",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/timecrs2.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Selected twin photograph: common yellow marquee, red P1 / blue P2 monitor surround and deck, blue right side print, white lower side, central tower, pedals, cyan/pink pistols and independent actual Time Crisis II attract screens.",
+      "rights": "Underlying artwork Namco / licensors. Third-party archive, not publisher authorization. Photographer/scan author, replacement-print status and redistribution permission are unknown.",
+      "sha256": "76efd9115efd1838154d6c17f1bbda6d286421880ee022bce3510a3129c71c22",
+      "download_sha256": "76efd9115efd1838154d6c17f1bbda6d286421880ee022bce3510a3129c71c22",
+      "download_size": [
+        723,
+        1000
+      ],
+      "processing": "Original downloaded PNG retained without resizing; measured rectification and sprite-scale BOX filtering are recipe texture adaptations."
+    },
+    "controls": {
+      "file": "controls.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/6129",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/timecrs2.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Control photograph corroborates two holstered tethered pistols, molded red/blue cradles and white center instruction plaque. Pistols are swapped relative to selected cabinet photo; only center printed plaque is extracted.",
+      "rights": "Underlying artwork Namco / licensors. Third-party archive, not publisher authorization. Photographer/scan author, replacement-print status and redistribution permission are unknown.",
+      "sha256": "e1ef7392c17e7b6b383981ee7e95464bddb3a5426b7c7d44463e39c9d50b14f3",
+      "download_sha256": "e1ef7392c17e7b6b383981ee7e95464bddb3a5426b7c7d44463e39c9d50b14f3",
+      "download_size": [
+        1000,
+        480
+      ],
+      "processing": "Original downloaded PNG retained without resizing; measured rectification and sprite-scale BOX filtering are recipe texture adaptations."
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/88485",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadeflyers168/timecrs2.png",
+      "kind": "original-print-scan",
+      "purpose": "Original-design Namco Europe flyer documents System 23, twin screens, two-player interactive feedback guns, pedal shape and 1500mm width / 1510mm depth / 2090mm height. Photo remains primary for selected gun colors and blue side.",
+      "rights": "Underlying artwork Namco / licensors. Third-party archive, not publisher authorization. Photographer/scan author, replacement-print status and redistribution permission are unknown.",
+      "sha256": "b4b11f1c23d0535c10fe6f1a456553ca11bd19c74f3c37335391a005a62c795a",
+      "download_sha256": "b4b11f1c23d0535c10fe6f1a456553ca11bd19c74f3c37335391a005a62c795a",
+      "download_size": [
+        850,
+        1217
+      ],
+      "processing": "Original downloaded PNG retained without resizing; measured rectification and sprite-scale BOX filtering are recipe texture adaptations."
+    },
+    "alternative": {
+      "file": "alternative.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/98330",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/timecrs2v2b.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Research only: alternate twin/projector cabinet arrangement, not mixed into selected molded red/blue CRT twin.",
+      "rights": "Underlying artwork Namco / licensors. Third-party archive, not publisher authorization. Photographer/scan author, replacement-print status and redistribution permission are unknown.",
+      "sha256": "7f173cd169e5f62d31886bcbf9432ae454860580a7c416985b974a98b9336b3f",
+      "download_sha256": "7f173cd169e5f62d31886bcbf9432ae454860580a7c416985b974a98b9336b3f",
+      "download_size": [
+        380,
+        402
+      ],
+      "processing": "Original downloaded PNG retained without resizing; measured rectification and sprite-scale BOX filtering are recipe texture adaptations."
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "cabinet",
+      "quad": [
+        [
+          157,
+          51
+        ],
+        [
+          645,
+          4
+        ],
+        [
+          643,
+          151
+        ],
+        [
+          159,
+          168
+        ]
+      ],
+      "rectified_size": [
+        512,
+        128
+      ],
+      "size": [
+        32,
+        7
+      ]
+    },
+    "screen1": {
+      "source": "cabinet",
+      "quad": [
+        [
+          212,
+          269
+        ],
+        [
+          368,
+          267
+        ],
+        [
+          350,
+          417
+        ],
+        [
+          201,
+          402
+        ]
+      ],
+      "rectified_size": [
+        192,
+        144
+      ],
+      "size": [
+        14,
+        14
+      ],
+      "fit": "contain",
+      "brightness": 1.2
+    },
+    "screen2": {
+      "source": "cabinet",
+      "quad": [
+        [
+          437,
+          276
+        ],
+        [
+          623,
+          281
+        ],
+        [
+          607,
+          443
+        ],
+        [
+          409,
+          421
+        ]
+      ],
+      "rectified_size": [
+        192,
+        144
+      ],
+      "size": [
+        14,
+        14
+      ],
+      "fit": "contain",
+      "brightness": 1.2
+    },
+    "deck1": {
+      "source": "cabinet",
+      "quad": [
+        [
+          186,
+          430
+        ],
+        [
+          348,
+          450
+        ],
+        [
+          318,
+          483
+        ],
+        [
+          142,
+          459
+        ]
+      ],
+      "rectified_size": [
+        256,
+        80
+      ],
+      "size": [
+        14,
+        6
+      ]
+    },
+    "deck2": {
+      "source": "cabinet",
+      "quad": [
+        [
+          404,
+          440
+        ],
+        [
+          613,
+          462
+        ],
+        [
+          586,
+          515
+        ],
+        [
+          353,
+          487
+        ]
+      ],
+      "rectified_size": [
+        256,
+        80
+      ],
+      "size": [
+        14,
+        6
+      ]
+    },
+    "instructions": {
+      "source": "controls",
+      "quad": [
+        [
+          422,
+          14
+        ],
+        [
+          550,
+          14
+        ],
+        [
+          575,
+          161
+        ],
+        [
+          398,
+          164
+        ]
+      ],
+      "rectified_size": [
+        128,
+        160
+      ],
+      "size": [
+        8,
+        10
+      ]
+    },
+    "left": {
+      "source": "cabinet",
+      "quad": [
+        [
+          651,
+          168
+        ],
+        [
+          721,
+          216
+        ],
+        [
+          689,
+          742
+        ],
+        [
+          634,
+          819
+        ]
+      ],
+      "rectified_size": [
+        192,
+        512
+      ],
+      "size": [
+        18,
+        48
+      ]
+    },
+    "right": {
+      "source": "cabinet",
+      "quad": [
+        [
+          651,
+          168
+        ],
+        [
+          721,
+          216
+        ],
+        [
+          689,
+          742
+        ],
+        [
+          634,
+          819
+        ]
+      ],
+      "rectified_size": [
+        192,
+        512
+      ],
+      "size": [
+        18,
+        48
+      ]
+    }
+  },
+  "uncertainties": [
+    "Archive images retain Namco/licensor copyrights; photographer/scan and original/restored print status remain unknown. Archive hosting is not deployment or redistribution authorization.",
+    "Selected red/blue CRT twin from cabinet photo, not alternate projection cabinet. Flyer corroborates hardware and pedal/twin geometry, but its black guns and red left-side artwork are not mixed into the selected cyan/pink-gun blue-side reference.",
+    "One blue photographed side is repeated readably on both sides; the unseen opposite factory print is unverified, not invented. Small text is only an impression at sprite resolution.",
+    "Two actual Time Crisis II photographed attract displays are individually rectified and letterboxed, not substituted gameplay or claimed local captures. Photo reflections and fine screen detail persist.",
+    "Two holstered/tethered pistols, two modeled trigger details and two separate floor pedals are physical art geometry, not mounted machine guns or joystick/button panels. Cords and tread are simplified at native scale; recoil and pedal motion are not animated.",
+    "The control reference has opposite pink/cyan placement; only its original-design center instruction plaque is used. Selected cabinet photo determines cyan P1 / pink P2 gun color.",
+    "64x64 canvas accommodates the wider twin. Floor depth is compressed 0.55x and station width 0.9x about the shared cell center to keep projecting pedals within the existing bottom-center anchor in all rotations; proportions are a sprite-scale adaptation, not dimensionally exact. Both boards/screens share one editor object; leave neighboring floor space. No map placement, emulation changes or uploads."
+  ]
+}
