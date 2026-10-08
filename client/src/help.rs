@@ -24,8 +24,9 @@ const DIM: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
 
 /// What to press, and what it does. Short enough not to wrap: keys are padded into a column
 /// (the font is monospaced).
-const IN_THE_BAR: [(&str, &str); 8] = [
+const IN_THE_BAR: [(&str, &str); 9] = [
     ("Arrows / W A S D", "Walk"),
+    ("Shift", "Run"),
     ("E", "Play the cabinet or table you're next to"),
     ("F", "Watch the game being played there"),
     ("M", "Your microphone, playing with others"),

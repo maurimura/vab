@@ -1,17 +1,16 @@
 # Arcade Bar
 
 The page shows the bar from `assets/maps/bar.ron` (made with the editor, see [Dev
-tools](#dev-tools)) and a placeholder player: arrows or WASD walk, and floor tiles without an
-object are walkable. Everyone on the page is in the same bar room and sees the others walk around
-(`?room=<name>` opens a separate one). E next to a cabinet sits you at it: you start its game, or
-join the one being played there (see [Online play](#online-play)); next to a table (pool, air
-hockey, shuffleboard, darts, below) it sits you at that. F watches the game being played there,
+tools](#dev-tools)) and a placeholder player: arrows or WASD walk (Shift runs), and floor tiles
+without an object are walkable. Everyone on the page is in the same bar room and sees the others
+walk around (`?room=<name>` opens a separate one). E next to a cabinet sits you at it: you start its
+game, or join the one being played there (see [Online play](#online-play)); next to a table (pool,
+air hockey, shuffleboard, darts, below) it sits you at that. F watches the game being played there,
 at a cabinet, a table or the dartboard, as does E once every seat is taken (see
 [Watching](#watching)). Players sitting together can talk (see [Voice](#voice)). Esc stands up. Y
-opens the chat for everyone in the room; `/name <name>` there sets the name shown above your
-head, and a cookie keeps it. The controls show on a first visit and with `/help`; when a game
-starts, a card lists its buttons as the game names them (the core reports them, e.g. "Z  Low
-Punch").
+opens the chat for everyone in the room; `/name <name>` there sets the name shown above your head,
+and a cookie keeps it. The controls show on a first visit and with `/help`; when a game starts, a
+card lists its buttons as the game names them (the core reports them, e.g. "Z  Low Punch").
 
 E next to the pool table plays 8-ball: the table seen from above, the cue following the mouse
 (or a finger) around the cue ball. Holding the button pulls the cue back, further the longer
