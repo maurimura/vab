@@ -30,8 +30,11 @@ const KEPT_FRAMES: usize = 256;
 struct Cabinet;
 
 impl Config for Cabinet {
-    /// A RetroPad mask: bit (1 << id) per held button.
-    type Input = u16;
+    /// A player's controls: the RetroPad mask in the low 16 bits (bit (1 << id) per held
+    /// button), and for a lightgun game where it aims in the high 16, x in bits 16-23 (0 the
+    /// left edge of the screen, 255 the right) and y in bits 24-31 (0 the top, 255 the bottom).
+    /// Other games leave the high half 0.
+    type Input = u32;
     type InputPredictor = PredictRepeatLast;
     /// The save slot in the core's memory that holds a frame.
     type State = u32;
@@ -78,7 +81,7 @@ extern "C" {
     /// Runs one frame with every player's input, in handle order. `present` is false for
     /// frames re-run after a rollback, which aren't shown or heard.
     #[wasm_bindgen(method)]
-    fn run(this: &Machine, inputs: Vec<u16>, present: bool);
+    fn run(this: &Machine, inputs: Vec<u32>, present: bool);
 
     /// Sends packets to the other players, as `outgoing` returns them. Called from `advance`
     /// just before a frame runs, so the input GGRS registered for it doesn't wait out the frame.
@@ -94,7 +97,7 @@ pub struct Session {
     players: usize,
     slots: i32,
     /// The inputs each recent frame last ran with, in handle order, at `frame % KEPT_FRAMES`.
-    ran: Vec<(i32, [u16; 4])>,
+    ran: Vec<(i32, [u32; 4])>,
     /// `confirmedFrame`, as of the end of the last `advance`.
     confirmed: i32,
 }
@@ -191,7 +194,7 @@ impl Session {
     /// Every player's input (in handle order) for each frame from `from` to `confirmedFrame`,
     /// one after another. Frames older than the last few seconds are gone: empty then.
     #[wasm_bindgen(js_name = confirmedInputs)]
-    pub fn confirmed_inputs(&self, from: i32) -> Vec<u16> {
+    pub fn confirmed_inputs(&self, from: i32) -> Vec<u32> {
         let to = self.confirmed_frame();
         let mut inputs = Vec::new();
         for frame in from.max(0)..=to {
@@ -251,7 +254,7 @@ impl Session {
 
     /// Adds the local player's input and runs the frames GGRS asks for on `machine`. False when
     /// another player is too far behind to keep predicting: try again on the next tick.
-    pub fn advance(&mut self, input: u16, machine: &Machine) -> Result<bool, JsError> {
+    pub fn advance(&mut self, input: u32, machine: &Machine) -> Result<bool, JsError> {
         self.ggrs.add_local_input(self.local, input)?;
         let requests = match self.ggrs.advance_frame() {
             // Lockstep waiting for the others' input: nothing to do yet (the input stays queued).
@@ -280,7 +283,7 @@ impl Session {
                     at = frame;
                 }
                 GgrsRequest::AdvanceFrame { inputs } => {
-                    let inputs: Vec<u16> = inputs.iter().map(|(input, _)| *input).collect();
+                    let inputs: Vec<u32> = inputs.iter().map(|(input, _)| *input).collect();
                     let mut kept = [0; 4];
                     kept[..inputs.len()].copy_from_slice(&inputs);
                     self.ran[at as usize % KEPT_FRAMES] = (at, kept);

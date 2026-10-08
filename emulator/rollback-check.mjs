@@ -5,8 +5,9 @@
 //   node emulator/rollback-check.mjs <core.mjs> <rom.zip> [state] [bios.zip ...]
 //   node emulator/rollback-check.mjs emulator/dist/midway/fbneo.mjs ~/Downloads/mk2.zip emulator/dist/mk2.state
 //
-// FRAMES (default 1200) and ROLLBACK (default 8) env vars change the run. Rerun after
-// rebuilding the cores: determinism is a property of the core build.
+// FRAMES (default 1200) and ROLLBACK (default 8) env vars change the run, TURNS=1 is for a
+// turn-based game and GUN=1 for a lightgun game (the core's lightgun follows each player's
+// random aim). Rerun after rebuilding the cores: determinism is a property of the core build.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
@@ -24,6 +25,7 @@ async function boot() {
   const core = await Core.create(createFBNeo, { onFrame() {}, onAudio() {} });
   core.netplay = true;
   core.turns = process.env.TURNS === '1';
+  core.gun = process.env.GUN === '1';
   for (const path of biosPaths) core.addFile(basename(path), readFileSync(path));
   const { fps } = core.loadGame(basename(romPath), readFileSync(romPath));
   if (statePath) core.unserialize(readFileSync(statePath));
@@ -32,7 +34,8 @@ async function boot() {
 }
 
 // Human-ish input: random buttons and directions (diagonals and opposites too) held for
-// 2-20 frames. Leaves out SELECT (coin) and L3/R3.
+// 2-20 frames, and somewhere to aim (the high 16 bits, read by lightgun games only). Leaves
+// out SELECT (coin) and L3/R3.
 function inputs(seed) {
   let s = seed;
   const random = () => {
@@ -47,7 +50,7 @@ function inputs(seed) {
   let hold = 0;
   for (let f = 0; f < FRAMES; f++) {
     if (hold-- <= 0) {
-      mask = Math.floor(random() * 0x10000) & USABLE;
+      mask = ((Math.floor(random() * 0x10000) & USABLE) | (Math.floor(random() * 0x10000) << 16)) >>> 0;
       hold = 2 + Math.floor(random() * 18);
     }
     out.push(mask);

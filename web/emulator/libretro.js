@@ -1,5 +1,6 @@
-// Minimal libretro frontend for the FBNeo Emscripten cores (emulator/build.sh).
-// Runs wherever the core runs: the Web Worker (worker.js) or Node.
+// Minimal libretro frontend for the Emscripten cores: FBNeo (emulator/build.sh), Supermodel
+// (supermodel/) and MAME (mame/). Runs wherever the core runs: the Web Worker (worker.js) or
+// Node.
 
 import { controllerRouting, routedButton } from './controller-routing.js';
 
@@ -21,20 +22,73 @@ const ENV = {
 const SAVESTATE_CONTEXT = { NORMAL: 0, ROLLBACK_NETPLAY: 3 };
 const MEMORY_SYSTEM_RAM = 2;
 
-// Core options we override; the rest keep FBNeo's defaults.
+// Core options we override; the rest keep the core's defaults. Each core only asks for its own.
 const OPTIONS = {
   // The default opens the service menu when Start is held for a second, counting frames outside
   // the savestate, so a rollback could open it on one player's machine only.
   "fbneo-diagnostic-input": "None",
+  // MAME (mame/), set here whatever its defaults: no thread mode, no throttling (the worker
+  // paces frames), no menu or BIOS on boot, no configuration or states read or written behind
+  // our back, no cheats, the usual renderer. Its lightgun reads RETRO_DEVICE_LIGHTGUN (see
+  // #inputState; its default, "none", reads nothing), and no mouse.
+  mame_thread_mode: "disabled",
+  mame_lightgun_mode: "lightgun",
+  mame_mouse_enable: "disabled",
+  mame_throttle: "disabled",
+  mame_boot_to_osd: "disabled",
+  mame_boot_to_bios: "disabled",
+  mame_read_config: "disabled",
+  mame_write_config: "disabled",
+  mame_auto_save: "disabled",
+  mame_cheats_enable: "disabled",
+  mame_alternate_renderer: "disabled",
 };
 // RGBA8888 is ours, not libretro's: bytes R, G, B, A as the page wants them, so a core that draws
 // with WebGL (Supermodel) hands its frame over without a conversion on either side.
 const PIXEL_FORMAT = { RGB1555: 0, XRGB8888: 1, RGB565: 2, RGBA8888: 100 };
-const DEVICE_JOYPAD = 1;
+const DEVICE = { JOYPAD: 1, LIGHTGUN: 4, POINTER: 6 };
+/**
+ * A lightgun's buttons (libretro.h RETRO_DEVICE_ID_LIGHTGUN_*) and the RetroPad buttons that
+ * press them: the trigger is B (key Z, the left mouse button), Aux A is A (key X, the right
+ * mouse button, Space: Time Crisis II's pedal), and so on.
+ */
+const GUN_BUTTONS = new Map([
+  [2, 0], // TRIGGER: B
+  [3, 8], // AUX_A: A
+  [4, 9], // AUX_B: X
+  [16, 1], // RELOAD (a shot off the screen): Y
+  [6, 3], // START
+  [7, 2], // SELECT: a coin
+  [9, 4], // DPAD_UP
+  [10, 5], // DPAD_DOWN
+  [11, 6], // DPAD_LEFT
+  [12, 7], // DPAD_RIGHT
+]);
+const GUN_X = 13; // RETRO_DEVICE_ID_LIGHTGUN_SCREEN_X: -0x8000 the left edge .. 0x7fff the right
+const GUN_Y = 14; // RETRO_DEVICE_ID_LIGHTGUN_SCREEN_Y: -0x8000 the top .. 0x7fff the bottom
+const POINTER = { X: 0, Y: 1, PRESSED: 2, COUNT: 3 };
+/** Room for a tick's link bytes in the core's memory (a tick carries ~1.4 KB at most). */
+const LINK_BUFFER = 64 * 1024;
+/** mame_link_status's words, in order (mame/README.md, "API"). */
+const LINK_STATUS = ["linked", "side", "txFrames", "rxFrames", "txBytes", "rxBytes", "mode", "keepalive", "counter", "pending", "patches", "dsw"];
+/** The 8-bit aim in a port's input, 0..255 across the screen, as libretro's -0x8000..0x7fff. */
+const gunAxis = (aim) => aim * 257 - 0x8000;
+/** ...and as a pointer's -0x7fff..0x7fff (-0x8000 means no pointer). */
+const pointerAxis = (aim) => Math.round((aim * 0xfffe) / 255) - 0x7fff;
 
 export class Core {
-  /** Per-port RetroPad masks: bit (1 << id) per held button, ids from libretro.h. */
-  inputs = new Uint16Array(4);
+  /**
+   * Each controller port's input: the RetroPad mask in the low 16 bits, bit (1 << id) per held
+   * button (ids from libretro.h), and for a lightgun game where it aims in the high 16: x in
+   * bits 16-23 (0 the left edge of the screen, 255 the right), y in bits 24-31 (0 the top).
+   */
+  inputs = new Uint32Array(4);
+  /**
+   * A lightgun game (Time Crisis II): the core's lightgun (and pointer) reads are answered from
+   * each port's aim and buttons. Otherwise they read nothing: MAME also maps a lightgun's
+   * buttons onto a game's Button 1-4, which would press a second button in Tekken 3.
+   */
+  gun = false;
   /** Sequential seats share the physical upright's gameplay controls. */
   turns = false;
   /**
@@ -49,10 +103,13 @@ export class Core {
   present = true;
 
   /**
-   * What the game calls player 1's RetroPad buttons, from the core: RetroPad id -> name, e.g.
-   * 0 -> "Fire" (B). Known once the game is loaded.
+   * What the game calls player 1's buttons, from the core: RetroPad id -> name, e.g. 0 -> "Fire"
+   * (B). Known once the game is loaded. A lightgun game's names for its gun's buttons win,
+   * under the RetroPad buttons that press them (GUN_BUTTONS).
    */
-  buttons = new Map();
+  get buttons() {
+    return this.gun ? new Map([...this.#padNames, ...this.#gunNames]) : this.#padNames;
+  }
 
   #m;
   #slots = [];
@@ -60,6 +117,9 @@ export class Core {
   #pixelFormat = PIXEL_FORMAT.RGB1555;
   #rotation = 0; // quarter turns counter-clockwise, for vertical games like Pac-Man
   #routing = { sharedCoin: false, secondStart: undefined };
+  /** Player 1's button names from the core's descriptors, for the RetroPad and for a lightgun. */
+  #padNames = new Map();
+  #gunNames = new Map();
   #onFrame;
   #onAudio;
   #onLog;
@@ -89,8 +149,7 @@ export class Core {
     m._retro_set_audio_sample(m.addFunction((l, r) => this.#onAudio(Int16Array.of(l, r)), "vii"));
     m._retro_set_audio_sample_batch(m.addFunction((data, frames) => this.#audio(data, frames), "iii"));
     m._retro_set_input_poll(m.addFunction(() => {}, "v"));
-    m._retro_set_input_state(m.addFunction((port, device, _index, id) =>
-      device === DEVICE_JOYPAD ? routedButton(this.inputs, port, id, this.#routing, this.turns) : 0, "iiiii"));
+    m._retro_set_input_state(m.addFunction((port, device, _index, id) => this.#inputState(port, device, id), "iiiii"));
     m._retro_init();
   }
 
@@ -111,8 +170,10 @@ export class Core {
     const loaded = m._retro_load_game(info);
     m._free(info);
     if (!loaded) throw new Error(`The core could not load ${fileName}`);
+    // A RetroPad on each port, a lightgun game's too: MAME reads its lightgun whatever the
+    // port's device (its retro_set_controller_port_device does nothing).
     for (let port = 0; port < this.inputs.length; port++) {
-      m._retro_set_controller_port_device(port, DEVICE_JOYPAD);
+      m._retro_set_controller_port_device(port, DEVICE.JOYPAD);
     }
 
     // struct retro_system_av_info { geometry { u32 w, h, max_w, max_h; f32 aspect } timing { f64 fps, sample_rate } }
@@ -204,6 +265,66 @@ export class Core {
     return this.#m.HEAPU8.subarray(ptr, ptr + this.#slotSize);
   }
 
+  /**
+   * Whether the core emulates Time Crisis II's link between two boards (MAME's
+   * `mame_link_*`, mame/README.md "Linked cabinets"); the link calls below need it.
+   */
+  get hasLink() {
+    return typeof this.#m._mame_link_set === "function";
+  }
+
+  /**
+   * Plugs the link cable in (on this board's `side`, 0 Left/Red or 1 Right/Blue) or out. Before
+   * `loadGame`, or between two frames; not part of states, so before loading one made linked.
+   */
+  linkSet(enabled, side = 0) {
+    this.#m._mame_link_set(enabled ? 1 : 0, side);
+  }
+
+  /** What the board transmitted on the link since the last call (opaque bytes for the other board). */
+  linkOutgoing() {
+    const m = this.#m;
+    let size = m._mame_link_outgoing(this.#linkBuffer(), this.#linkSize);
+    if (size > this.#linkSize) {
+      this.#linkBuffer(size); // more than the buffer: it took nothing, so again with room for it
+      size = m._mame_link_outgoing(this.#linkBuffer(), this.#linkSize);
+    }
+    return m.HEAPU8.slice(this.#linkPtr, this.#linkPtr + size);
+  }
+
+  /** Hands the board what the other board transmitted (`linkOutgoing`'s bytes), between frames. */
+  linkIncoming(bytes) {
+    if (!bytes.length) return;
+    const ptr = this.#linkBuffer(bytes.length);
+    this.#m.HEAPU8.set(bytes, ptr);
+    this.#m._mame_link_incoming(ptr, bytes.length);
+  }
+
+  /**
+   * The link as the game and the core see it: whether it's plugged in, the side, frames and
+   * bytes each way, the game's link mode word (2: linked gameplay), its keepalive word, its
+   * link state machine's counter, bytes waiting to be taken, the code patches and the DIPs.
+   */
+  linkStatus() {
+    const m = this.#m;
+    const ptr = this.#linkBuffer();
+    const count = m._mame_link_status(ptr, LINK_STATUS.length);
+    const words = new Uint32Array(m.HEAPU8.buffer, ptr, count);
+    return Object.fromEntries(LINK_STATUS.slice(0, count).map((key, i) => [key, words[i]]));
+  }
+
+  /** The staging area link bytes go through in the core's memory, at least `size` bytes. */
+  #linkPtr = 0;
+  #linkSize = 0;
+  #linkBuffer(size = 0) {
+    if (this.#linkSize < Math.max(size, LINK_BUFFER)) {
+      if (this.#linkPtr) this.#m._free(this.#linkPtr);
+      this.#linkSize = Math.max(size, LINK_BUFFER);
+      this.#linkPtr = this.#m._malloc(this.#linkSize);
+    }
+    return this.#linkPtr;
+  }
+
   #environment(cmd, data) {
     const m = this.#m;
     switch (cmd) {
@@ -222,16 +343,19 @@ export class Core {
       case ENV.SET_INPUT_DESCRIPTORS: {
         // struct retro_input_descriptor { unsigned port, device, index, id; const char *description; }[],
         // ended by one without a description.
-        this.buttons.clear();
+        this.#padNames = new Map();
+        this.#gunNames = new Map();
         const descriptors = Array.from({ length: this.inputs.length }, () => new Map());
         for (let at = data; ; at += 20) {
           const description = m.getValue(at + 16, "i32");
           if (!description) break;
           const [port, device, index, id] = [0, 4, 8, 12].map((offset) => m.getValue(at + offset, "i32"));
-          if (device === DEVICE_JOYPAD && index === 0 && descriptors[port]) {
+          if (device === DEVICE.JOYPAD && index === 0 && descriptors[port]) {
             const label = m.UTF8ToString(description);
             descriptors[port].set(id, label);
-            if (port === 0) this.buttons.set(id, label);
+            if (port === 0) this.#padNames.set(id, label);
+          } else if (device === DEVICE.LIGHTGUN && port === 0 && GUN_BUTTONS.has(id)) {
+            this.#gunNames.set(GUN_BUTTONS.get(id), m.UTF8ToString(description));
           }
         }
         this.#routing = controllerRouting(descriptors);
@@ -274,6 +398,37 @@ export class Core {
       default:
         return 0;
     }
+  }
+
+  /**
+   * The core asks about a control (retro_input_state). A RetroPad's buttons come from the low
+   * 16 bits of the port's input (controller-routing.js shares an upright's panel). A lightgun
+   * game's gun (MAME asks every frame, for every port) is where the port aims, from the high 16
+   * bits, with GUN_BUTTONS for its buttons; as a pointer (MAME's "touchscreen" lightgun mode)
+   * the trigger is a press, the pedal a second finger.
+   */
+  #inputState(port, device, id) {
+    if (device === DEVICE.JOYPAD) {
+      return id < 16 ? routedButton(this.inputs, port, id, this.#routing, this.turns) : 0;
+    }
+    if (!this.gun || port >= this.inputs.length) return 0;
+    const input = this.inputs[port];
+    const held = (bit) => (input >>> bit) & 1;
+    const x = (input >>> 16) & 0xff;
+    const y = input >>> 24;
+    if (device === DEVICE.LIGHTGUN) {
+      if (id === GUN_X) return gunAxis(x);
+      if (id === GUN_Y) return gunAxis(y);
+      return GUN_BUTTONS.has(id) ? held(GUN_BUTTONS.get(id)) : 0; // IS_OFFSCREEN, AUX_C: 0
+    }
+    if (device === DEVICE.POINTER) {
+      if (id === POINTER.X) return pointerAxis(x);
+      if (id === POINTER.Y) return pointerAxis(y);
+      if (id === POINTER.PRESSED) return held(0);
+      // MAME presses its gun's button (count - 1): 1 the trigger, 2 Aux A, the pedal.
+      if (id === POINTER.COUNT) return held(8) ? 2 : held(0);
+    }
+    return 0;
   }
 
   #video(data, width, height, pitch) {

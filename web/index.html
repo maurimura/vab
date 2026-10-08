@@ -158,8 +158,9 @@
       let myName = "";
       const list = (items) => (items.length < 2 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`);
 
-      /** Where a game's core is: an FBNeo core, or Supermodel for the Sega Model 3 games. */
-      const coreUrl = (core) => (core === "supermodel" ? "/supermodel/supermodel.mjs" : `/fbneo/${core}/fbneo.mjs`);
+      /** Where a game's core is: an FBNeo core, Supermodel for the Sega Model 3 games, or MAME. */
+      const coreUrl = (core) =>
+        core === "supermodel" ? "/supermodel/supermodel.mjs" : core === "mame" ? "/mame/mame.mjs" : `/fbneo/${core}/fbneo.mjs`;
 
       // Who this player muted: by id while they're here, and by name for next time (a cookie,
       // the latest 50). Whether their own microphone is off is remembered too.
@@ -372,6 +373,12 @@
        * there. When the players change, the lowest seat among those playing captures the game
        * and hands it to everyone, and all go on from there together (web/emulator/worker.js).
        * The lowest seat playing also streams the game to whoever watches the cabinet.
+       *
+       * A `linked` game (Time Crisis II) is a twin cabinet: each player plays their own board,
+       * the two joined by the game's link (web/emulator/linked.js), seat 0 the red one and seat
+       * 1 the blue. Its link is set at power-on, so nothing is handed over: when a second
+       * player sits down, both boards start over from their side's start-up state, linked; when
+       * one leaves, the other starts over alone.
        */
       class Play {
         seat;
@@ -380,7 +387,8 @@
         #game;
         #worker;
         #packets;
-        #mask = 0;
+        /** The player's controls, as Bevy last sent them (a u32: buttons, and a lightgun's aim). */
+        #input = 0;
         #status = "";
         /** Our machine runs the game (not waiting to be handed one). */
         #playing = false;
@@ -404,6 +412,8 @@
         constructor(game) {
           this.#game = game;
           this.cabinet = game.cabinet;
+          /** A lightgun game: the right mouse button is part of the game (client/src/emulator.rs). */
+          this.gun = game.gun;
           this.voice = new Voice(game.cabinet);
         }
 
@@ -431,9 +441,9 @@
           if (this.#playing) this.#show(this.#status);
         }
 
-        input(mask) {
-          this.#mask = mask;
-          this.#worker?.postMessage({ type: "input", mask });
+        input(input) {
+          this.#input = input;
+          this.#worker?.postMessage({ type: "input", input });
         }
 
         stop() {
@@ -448,10 +458,10 @@
          * Another player at our cabinet said whether their microphone is on, or handed us a
          * game: its players (and its bytes, below).
          */
-        message(from, { cabinet, epoch, players, voice }) {
+        message(from, { cabinet, epoch, players, linked, voice }) {
           if (cabinet !== this.cabinet) return;
           if (voice) return this.voice.heard(from, voice);
-          this.#handovers.set(epoch, { ...this.#handovers.get(epoch), players: new Map(players) });
+          this.#handovers.set(epoch, { ...this.#handovers.get(epoch), players: new Map(players), linked });
           this.#join(epoch);
         }
 
@@ -469,6 +479,7 @@
             if (data.type === "netplay") this.#netplay(data);
             if (data.type === "watch-state") room.watchState(data.to, data.stream, data.bytes);
             if (data.type === "watch-inputs") room.watchInputs(data.stream, data.frame, data.inputs);
+            if (data.type === "watch-link") room.watchLink(data.stream, data.records);
           }));
           // Game packets between our worker and the other players' ([seat, packet]).
           const packets = (this.#packets = new MessageChannel());
@@ -477,7 +488,7 @@
 
           // Cores, ROM sets, BIOS sets and start-up states (emulator/snapshot.mjs) come from R2.
           // Alone we start the game; otherwise the others hand theirs over.
-          const { core, rom, bios, turns, lockstep } = this.#game;
+          const { core, rom, bios, turns, lockstep, gun, linked } = this.#game;
           const alone = this.#seated.size === 1;
           const start = {
             type: "start",
@@ -488,11 +499,15 @@
             seat,
             turns,
             lockstep,
+            gun,
+            linked,
+            // A linked game's board for this seat, linked (mame/link-states.mjs).
+            linkState: linked ? `/roms/${rom}-link${seat}.state` : undefined,
             port: packets.port2,
             hold: !alone,
           };
           worker.postMessage(start, [packets.port2]);
-          worker.postMessage({ type: "input", mask: this.#mask });
+          worker.postMessage({ type: "input", input: this.#input });
           if (alone) {
             this.#nowPlaying(new Map([[seat, room.id]]));
           } else {
@@ -519,9 +534,19 @@
             return;
           }
           const joined = [...this.#seated.keys()].filter((seat) => !this.#players.has(seat));
-          this.#show(joined.length ? `Player ${joined[0] + 1} is joining...` : "Someone left, going on without them...");
           this.#players = new Map(this.#seated);
           this.#epoch++;
+          if (this.#game.linked) {
+            // Linked boards: everyone starts over, each from their own board's start-up state.
+            this.#show(`Player ${this.seat + 1}. Linking up with ${this.#others()}: both games start over...`);
+            const players = [...this.#players].sort(([a], [b]) => a - b);
+            for (const [, id] of players) {
+              if (id !== room.id) room.message(id, { cabinet: this.cabinet, epoch: this.#epoch, players, linked: true });
+            }
+            this.#goOnline(this.#epoch);
+            return;
+          }
+          this.#show(joined.length ? `Player ${joined[0] + 1} is joining...` : "Someone left, going on without them...");
           this.#worker.postMessage({ type: "capture", epoch: this.#epoch });
           this.#stream();
         }
@@ -552,10 +577,13 @@
           this.#goOnline(epoch);
         }
 
-        /** Joins a handed-over game once both its message and its bytes are here. */
+        /**
+         * Joins a handed-over game once both its message and its bytes are here (a linked
+         * game's message alone: each board starts over from its own start-up state).
+         */
         #join(epoch) {
-          const { players, bytes } = this.#handovers.get(epoch);
-          if (!players || !bytes || epoch <= this.#epoch || players.get(this.seat) !== room.id) return;
+          const { players, bytes, linked } = this.#handovers.get(epoch);
+          if (!players || !(bytes || linked) || epoch <= this.#epoch || players.get(this.seat) !== room.id) return;
           for (const older of this.#handovers.keys()) if (older <= epoch) this.#handovers.delete(older);
           this.#epoch = epoch;
           this.#players = players;
@@ -589,7 +617,12 @@
           this.#linkPlayers();
           this.#stream();
           const seats = this.#game.players;
-          this.#show(`Player ${this.seat + 1}.${seats > 1 ? " Anyone who sits at this cabinet joins you." : ""}`);
+          const joins = this.#game.linked
+            ? " Anyone who sits here too gets the twin cabinet's other screen, linked with yours (both games start over then)."
+            : seats > 1
+              ? " Anyone who sits at this cabinet joins you."
+              : "";
+          this.#show(`Player ${this.seat + 1}.${joins}`);
         }
 
         /** A link to each other player: the lower seat offers WebRTC. */
@@ -602,7 +635,9 @@
           }
           for (const [seat, id] of others) {
             if (this.#links.has(id)) continue;
-            const link = room.link(id, this.seat < seat, `${this.cabinet}/${Math.min(id, room.id)}/${Math.max(id, room.id)}`, this.#game.lockstep);
+            // Lockstep inputs and linked boards' bytes must all arrive: a reliable channel.
+            const reliable = this.#game.lockstep || this.#game.linked;
+            const link = room.link(id, this.seat < seat, `${this.cabinet}/${Math.min(id, room.id)}/${Math.max(id, room.id)}`, reliable);
             link.onpacket = (packet) => {
               const from = [...this.#players].find(([, player]) => player === id)?.[0];
               if (from !== undefined) this.#packets.port1.postMessage([from, packet], [packet]);
@@ -638,8 +673,20 @@
           return seats.length === 1 ? `player ${seats[0]}` : `players ${seats.slice(0, -1).join(", ")} and ${seats.at(-1)}`;
         }
 
-        #netplay({ event, seat, ping, frame, delay, rollback, fps, stalls }) {
+        #netplay({ event, seat, ping, frame, delay, rollback, fps, stalls, link, lost }) {
           const me = `Player ${this.seat + 1}`;
+          if (this.#game.linked && event === "synchronized") return this.#show(`${me}, linked with ${this.#others()}`);
+          if (link && event === "stats") {
+            // A linked board: its own game, and the other's D frames later (worker.js).
+            if (!link.heard) return this.#show(`${me}. Waiting for ${this.#others()}'s cabinet to start...`);
+            const direct = [...this.#links.values()].every((link) => link.direct);
+            const waits = stalls ? `, ${stalls} wait${stalls === 1 ? "" : "s"}` : "";
+            this.#show(
+              `${me}, linked with ${this.#others()}, ${delay} frames of delay, ${ping ?? "?"} ms, ${fps ?? "?"} fps${waits}, ` +
+                `${direct ? "direct" : "through the server"}${lost ? ". Link lost: stand up and sit again to link up" : ""}`,
+            );
+            return;
+          }
           if (event === "synchronized" || event === "resumed") this.#show(`${me}, online with ${this.#others()}`);
           if (event === "interrupted") this.#show(`${me}. Waiting for player ${seat + 1}'s connection...`);
           if (event === "desync") {
@@ -667,7 +714,9 @@
       /**
        * Watching the game at a cabinet: one of its players streams it here and our own worker
        * runs it a little behind them (web/emulator/worker.js). The room hears we watch once the
-       * game is loaded, and the streaming player then sends us a state to start from.
+       * game is loaded, and the streaming player then sends us a state to start from. At a
+       * linked game that's the lowest seat's own board (the red one while both play), with the
+       * link bytes it was handed each frame.
        */
       class Watch {
         #worker;
@@ -675,7 +724,7 @@
         #source;
         #seated = [];
 
-        constructor({ core, rom, bios, turns, cabinet }) {
+        constructor({ core, rom, bios, turns, gun, linked, cabinet }) {
           this.cabinet = cabinet;
           this.#worker = emulatorWorker((data) => {
             if (data.type === "frame") push_frame(data.rgba, data.width, data.height);
@@ -687,6 +736,9 @@
             rom: `/roms/${rom}.zip`,
             files: bios ? [`/roms/${bios}.zip`] : [],
             turns,
+            gun,
+            // The streamed board's state says whether it's linked, and on which side.
+            linked,
             hold: true,
           });
         }
@@ -699,13 +751,20 @@
 
         watchState(from, stream, bytes) {
           this.#source = `${from}/${stream}`;
-          this.#worker.postMessage({ type: "watch-state", bytes }, [bytes.buffer]);
+          // The worker knows a second state of the stream it plays by its name (worker.js).
+          this.#worker.postMessage({ type: "watch-state", bytes, stream: this.#source }, [bytes.buffer]);
           this.#show();
         }
 
         watchInputs(from, stream, frame, inputs) {
           if (`${from}/${stream}` !== this.#source) return;
           this.#worker.postMessage({ type: "watch-inputs", frame, inputs }, [inputs.buffer]);
+        }
+
+        /** A linked board's frames: its player's input and the link bytes it was handed. */
+        watchLink(from, stream, records) {
+          if (`${from}/${stream}` !== this.#source) return;
+          this.#worker.postMessage({ type: "watch-link", records }, [records.buffer]);
         }
 
         input() {}
@@ -723,9 +782,9 @@
       }
 
       let play;
-      window.emulatorPlay = async (core, rom, bios, cabinet, turns, players, lockstep) => {
+      window.emulatorPlay = async (core, rom, bios, cabinet, turns, players, lockstep, gun, linked) => {
         play?.stop();
-        const current = (play = new Play({ core, rom, bios, turns, players, cabinet, lockstep }));
+        const current = (play = new Play({ core, rom, bios, turns, players, cabinet, lockstep, gun, linked }));
         stayAwake(true);
         game_status("Taking a seat...");
         await joined;
@@ -733,9 +792,9 @@
         room.sit(cabinet, players);
         current.watchers(room.watchers.get(cabinet) ?? []);
       };
-      window.emulatorWatch = (core, rom, bios, cabinet, turns) => {
+      window.emulatorWatch = (core, rom, bios, cabinet, turns, gun, linked) => {
         play?.stop();
-        const current = (play = new Watch({ core, rom, bios, turns, cabinet }));
+        const current = (play = new Watch({ core, rom, bios, turns, gun, linked, cabinet }));
         stayAwake(true);
         game_status("Watching. Loading the game...");
         joined.then(() => play === current && current.seated(room.seats.get(cabinet) ?? []));
@@ -746,7 +805,9 @@
         stayAwake(false);
         room?.stand();
       };
-      window.emulatorInput = (mask) => play?.input(mask);
+      // The player's controls (client/src/emulator.rs): a u32, the RetroPad mask in the low 16
+      // bits and, at a lightgun game, where it aims in the high 16 (web/emulator/worker.js).
+      window.emulatorInput = (input) => play?.input(input);
 
       // Pointer lock, for the air hockey table and the dartboard (client/src/pointer_lock.rs): the
       // paddle or the dart moves with the mouse, and the pointer stays put. Browsers only lock it from a click, so a click on
@@ -771,6 +832,8 @@
       });
       document.addEventListener("pointerlockerror", () => (lockFailed ||= ++lockRefusals >= 3));
       document.addEventListener("pointerlockchange", () => document.pointerLockElement && (lockRefusals = 0));
+      // At a lightgun game the right button works the pedal: no browser menu over the game.
+      bevyCanvas.addEventListener("contextmenu", (event) => play?.gun && event.preventDefault());
 
       // Tables players sit at together, the pool, air hockey and shuffleboard tables and the
       // dartboard (client/src/seats.rs): a place with seats in the room, as a cabinet is
@@ -887,6 +950,7 @@
         handover: (from, epoch, bytes) => play?.handover?.(from, epoch, bytes),
         watchState: (from, stream, bytes) => play?.watchState?.(from, stream, bytes),
         watchInputs: (from, stream, frame, inputs) => play?.watchInputs?.(from, stream, frame, inputs),
+        watchLink: (from, stream, records) => play?.watchLink?.(from, stream, records),
       }, cookie("name"));
       // First visit: the controls.
       if (!cookie("welcomed")) {

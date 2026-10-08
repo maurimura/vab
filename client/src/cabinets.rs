@@ -160,7 +160,11 @@ fn play(
         emulator::play(*cell, game);
     }
     let title = game.title.clone();
-    commands.insert_resource(emulator::PlayingGame { title, watching });
+    commands.insert_resource(emulator::PlayingGame {
+        title,
+        watching,
+        gun: game.gun,
+    });
     mode.set(Mode::Playing);
 }
 

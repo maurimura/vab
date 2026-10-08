@@ -13,8 +13,9 @@
 //   PLAYERS=4 node emulator/netplay-check.mjs emulator/dist/konami/fbneo.mjs ~/Downloads/ssriders.zip emulator/dist/ssriders.state
 //
 // Env: PLAYERS (2), SECONDS per stage (10), LATENCY one way in ms (40), JITTER ms (10), LOSS
-// fraction (0.02), TURNS=1 for turn-based games, BREAK=1 hands the last player the start-up
-// state instead of the game (must desync). Needs the netplay module built: make netplay.
+// fraction (0.02), TURNS=1 for turn-based games, GUN=1 for lightgun games, BREAK=1 hands the
+// last player the start-up state instead of the game (must desync). Needs the netplay module
+// built: make netplay.
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -23,6 +24,15 @@ import { MessageChannel, Worker, isMainThread, parentPort, workerData } from "no
 if (!isMainThread) {
   // Enough of a browser worker for worker.js: postMessage/onmessage, and fetch for file URLs.
   globalThis.postMessage = (message, transfer) => parentPort.postMessage(message, transfer);
+  // The worker's frame clock (Alarm) wakes itself with messages to itself. A browser runs each
+  // as its own task, between the page's messages; Node's MessagePort runs up to a thousand of
+  // them in one go, holding everything else back while frames take their time. One per turn.
+  globalThis.MessageChannel = class {
+    constructor() {
+      this.port1 = { onmessage: null };
+      this.port2 = { postMessage: (data) => setImmediate(() => this.port1.onmessage?.({ data })) };
+    }
+  };
   globalThis.onmessage = null;
   parentPort.on("message", (data) => globalThis.onmessage?.({ data }));
   globalThis.fetch = async (url) => {
@@ -67,19 +77,31 @@ if (!isMainThread) {
     rom: url(romPath),
     files: biosPaths.map(url),
     turns: process.env.TURNS === '1',
+    gun: process.env.GUN === '1',
     hold: true,
   });
-  // In order, each LATENCY ± JITTER ms after the one before at the earliest.
+  // In order, each LATENCY ± JITTER ms after the one before at the earliest. One timer at a
+  // time: Node doesn't keep timers of different lengths that come due together in order.
+  const queue = [];
+  const deliver = () => {
+    while (queue.length && queue[0].at <= performance.now()) {
+      const { message, transfer } = queue.shift();
+      watcher.worker.postMessage(message, transfer);
+    }
+    if (queue.length) setTimeout(deliver, queue[0].at - performance.now());
+  };
   const toWatcher = (message, transfer) => {
     const delay = Math.max(0, LATENCY + (Math.random() * 2 - 1) * JITTER);
     watcher.arrives = Math.max(watcher.arrives, performance.now() + delay);
-    setTimeout(() => watcher.worker.postMessage(message, transfer), watcher.arrives - performance.now());
+    queue.push({ message, transfer, at: watcher.arrives });
+    if (queue.length === 1) setTimeout(deliver, watcher.arrives - performance.now());
   };
   const { default: createFBNeo } = await import(url(corePath));
   const boot = async () => {
     const core = await Core.create(createFBNeo, { onFrame() {}, onAudio() {} });
     core.netplay = true;
     core.turns = process.env.TURNS === '1';
+    core.gun = process.env.GUN === '1';
     for (const path of biosPaths) core.addFile(basename(path), await readFile(path));
     core.loadGame(basename(romPath), await readFile(romPath));
     core.present = false;
@@ -113,8 +135,9 @@ if (!isMainThread) {
         check.mismatched++;
         console.log(`state for frame ${frame}, but the stream got to ${check.frame}`);
       }
+      // Named as the page names it, so the watcher passes over a second state of its stream.
       if (message.to === undefined || message.to === WATCHER) {
-        toWatcher({ type: "watch-state", bytes: message.bytes }, [message.bytes.buffer]);
+        toWatcher({ type: "watch-state", bytes: message.bytes, stream: `0/${message.stream}` }, [message.bytes.buffer]);
       }
     }
     if (message.type === "watch-inputs") {
@@ -160,6 +183,7 @@ if (!isMainThread) {
         state: statePath && url(statePath),
         seat,
         turns: process.env.TURNS === '1',
+        gun: process.env.GUN === '1',
         port: inside,
         hold,
       },
@@ -187,13 +211,16 @@ if (!isMainThread) {
     }
   }
 
-  // Button mashing: a random mask held for 2-20 frames, per player.
+  // Button mashing: a random mask held for 2-20 frames, per player, and somewhere to aim (the
+  // high 16 bits, which only a lightgun game reads; the rest carry it all the same).
   const USABLE = 0b0000_1111_1111_1011; // B Y START UP DOWN LEFT RIGHT A X L R
   const mashing = setInterval(() => {
     for (const player of seated()) {
       if (--player.hold > 0) continue;
       player.hold = 2 + Math.floor(Math.random() * 18);
-      player.worker.postMessage({ type: "input", mask: Math.floor(Math.random() * 0x10000) & USABLE });
+      const buttons = Math.floor(Math.random() * 0x10000) & USABLE;
+      const aim = Math.floor(Math.random() * 0x10000) << 16;
+      player.worker.postMessage({ type: "input", input: (buttons | aim) >>> 0 });
     }
   }, 1000 / 60);
 

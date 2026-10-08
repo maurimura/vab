@@ -4,12 +4,20 @@
 //! `push_frame` and fill the screen, a status line (who you play with, the connection) through
 //! `game_status`, the player's buttons go out through `emulatorInput`, and Esc stops the game
 //! and returns to the bar. On a touch screen the buttons are on the screen (touch.rs).
+//!
+//! At a lightgun game (Time Crisis II) the mouse aims, over the game's screen, where a crosshair
+//! shows instead of the pointer: a click is the trigger and the right button or Space the
+//! other (Time Crisis II's pedal). On a touch screen a finger on the game aims and shoots there.
+//! The aim goes out with the buttons, in the high half of the same u32. Two players at its twin
+//! cabinet (`linked`) each aim on their own screen: each browser runs that player's own board.
 
 use std::cell::RefCell;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::ui::UiGlobalTransform;
+use bevy::window::{CursorOptions, PrimaryWindow};
 use wasm_bindgen::prelude::*;
 use world::Game;
 
@@ -34,6 +42,13 @@ pub const KEYS: [(KeyCode, u16); 12] = [
     (KeyCode::KeyX, 8),   // A
     (KeyCode::KeyC, 11),  // R
 ];
+/// The RetroPad buttons a lightgun game's mouse presses, which press its gun's
+/// (web/emulator/libretro.js): the trigger is B, as Z, and Aux A (Time Crisis II's pedal) is A,
+/// as X.
+pub const TRIGGER: u16 = 0;
+pub const PEDAL: u16 = 8;
+/// The crosshair across, in logical pixels.
+const CROSSHAIR: f32 = 22.0;
 
 thread_local! {
     static LATEST_FRAME: RefCell<Option<(UVec2, Vec<u8>)>> = const { RefCell::new(None) };
@@ -56,7 +71,9 @@ pub fn game_status(text: String) {
 #[wasm_bindgen]
 extern "C" {
     /// Sits the player at `cabinet` ("x,y") and starts its game, for up to `players` at once;
-    /// `lockstep` games don't roll back online (world::Game).
+    /// `lockstep` games don't roll back online, `gun` games answer the core's lightgun from
+    /// the aim, and `linked` games give each player their own board, linked to the others'
+    /// (world::Game).
     #[wasm_bindgen(js_name = emulatorPlay)]
     fn emulator_play(
         core: &str,
@@ -66,15 +83,28 @@ extern "C" {
         turns: bool,
         players: u32,
         lockstep: bool,
+        gun: bool,
+        linked: bool,
     );
-    /// Watches the game at `cabinet` ("x,y"), streamed from one of its players.
+    /// Watches the game at `cabinet` ("x,y"), streamed from one of its players (at a `linked`
+    /// game, the lowest seat's own board).
     #[wasm_bindgen(js_name = emulatorWatch)]
-    fn emulator_watch(core: &str, rom: &str, bios: Option<String>, cabinet: &str, turns: bool);
+    fn emulator_watch(
+        core: &str,
+        rom: &str,
+        bios: Option<String>,
+        cabinet: &str,
+        turns: bool,
+        gun: bool,
+        linked: bool,
+    );
     #[wasm_bindgen(js_name = emulatorStop)]
     fn emulator_stop();
-    /// Sends the player's RetroPad mask to the worker, for their seat's controller.
+    /// Sends the player's controls to the worker, for their seat's controller: the RetroPad
+    /// mask in the low 16 bits, and at a lightgun game where it aims in the high 16, x in bits
+    /// 16-23 (0 the screen's left edge, 255 its right) and y in bits 24-31 (0 the top).
     #[wasm_bindgen(js_name = emulatorInput)]
-    fn emulator_input(mask: u16);
+    fn emulator_input(input: u32);
 }
 
 /// The game being played or watched, while `Mode::Playing`.
@@ -82,6 +112,15 @@ extern "C" {
 pub struct PlayingGame {
     pub title: String,
     pub watching: bool,
+    /// A lightgun game: the player aims (world::Game).
+    pub gun: bool,
+}
+
+impl PlayingGame {
+    /// The player aims a lightgun at the game (not when watching).
+    pub fn aims(&self) -> bool {
+        self.gun && !self.watching
+    }
 }
 
 /// Starts the game at the cabinet in `cell`; switch to `Mode::Playing` to show it.
@@ -98,6 +137,8 @@ pub fn play(cell: IVec2, game: &Game) {
         game.turns,
         game.players,
         game.lockstep,
+        game.gun,
+        game.linked,
     );
 }
 
@@ -107,7 +148,15 @@ pub fn watch(cell: IVec2, game: &Game) {
     LATEST_STATUS.set(None);
     let cabinet = cabinet_id(cell);
     let bios = game.bios.clone();
-    emulator_watch(&game.core, &game.rom, bios, &cabinet, game.turns);
+    emulator_watch(
+        &game.core,
+        &game.rom,
+        bios,
+        &cabinet,
+        game.turns,
+        game.gun,
+        game.linked,
+    );
 }
 
 /// How the page and the room name a cabinet: its cell, "x,y".
@@ -119,14 +168,17 @@ pub struct EmulatorPlugin;
 
 impl Plugin for EmulatorPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(Mode::Playing), show_screen)
+        app.init_resource::<Aim>()
+            .init_resource::<Sent>()
+            .add_systems(OnEnter(Mode::Playing), show_screen)
             .add_systems(
                 Update,
                 (
                     show_latest_frame,
                     fit_screen,
                     show_status,
-                    send_input,
+                    aim.after(fit_screen),
+                    send_input.after(aim),
                     leave.run_if(chat_closed),
                 )
                     .run_if(in_state(Mode::Playing)),
@@ -147,7 +199,54 @@ struct Screen;
 #[derive(Component)]
 struct Status;
 
-fn show_screen(mut commands: Commands, mut images: ResMut<Assets<Image>>, touch: Res<Touch>) {
+/// Where a lightgun game's gun points, over the screen.
+#[derive(Component)]
+struct Crosshair;
+
+/// Where the player aims at a lightgun game: 0 to 255 across the screen and down it, and
+/// whether the pointer (or a finger) is on the screen now, where a click (or the finger) shoots.
+#[derive(Resource)]
+struct Aim {
+    x: u8,
+    y: u8,
+    on_screen: bool,
+    /// A finger aims, which also holds the trigger.
+    finger: bool,
+}
+
+impl Default for Aim {
+    /// The middle of the screen, until the player points.
+    fn default() -> Self {
+        Self {
+            x: 128,
+            y: 128,
+            on_screen: false,
+            finger: false,
+        }
+    }
+}
+
+impl Aim {
+    /// The aim in the high half of an input (web/emulator/worker.js).
+    fn bits(&self) -> u32 {
+        (self.x as u32) << 16 | (self.y as u32) << 24
+    }
+}
+
+/// The controls last sent to this game's worker, none yet at first.
+#[derive(Resource, Default)]
+struct Sent(Option<u32>);
+
+fn show_screen(
+    mut commands: Commands,
+    mut images: ResMut<Assets<Image>>,
+    touch: Res<Touch>,
+    game: Option<Res<PlayingGame>>,
+    mut aim: ResMut<Aim>,
+    mut sent: ResMut<Sent>,
+) {
+    *aim = Aim::default();
+    sent.0 = None;
     let mut overlay = commands.spawn((
         Overlay,
         Node {
@@ -202,6 +301,38 @@ fn show_screen(mut commands: Commands, mut images: ResMut<Assets<Image>>, touch:
             ),
         ],
     ));
+    if game.is_some_and(|game| game.aims()) {
+        // A ring with a dot, white edged in black so it shows on any picture; placed by `aim`.
+        let edge = Outline::new(Val::Px(1.0), Val::ZERO, Color::BLACK);
+        overlay.with_child((
+            Crosshair,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Px(CROSSHAIR),
+                height: Val::Px(CROSSHAIR),
+                border: UiRect::all(Val::Px(2.0)),
+                border_radius: BorderRadius::MAX,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            BorderColor::all(Color::WHITE),
+            edge,
+            // Over the game.
+            ZIndex(1),
+            Visibility::Hidden,
+            children![(
+                Node {
+                    width: Val::Px(4.0),
+                    height: Val::Px(4.0),
+                    border_radius: BorderRadius::MAX,
+                    ..default()
+                },
+                BackgroundColor(Color::WHITE),
+                edge,
+            )],
+        ));
+    }
     if touch.is_on() {
         // In the corner, left of the page's Chat button (web/index.html).
         overlay.with_child((
@@ -294,29 +425,120 @@ fn show_latest_frame(
 
 fn show_status(mut status: Single<&mut Text, With<Status>>) {
     if let Some(text) = LATEST_STATUS.take() {
+        // For browser tests (testing.rs): the line as shown.
+        #[cfg(feature = "test-hooks")]
+        crate::testing::report("game_status", serde_json::Value::String(text.clone()));
         status.0 = text;
     }
 }
 
+/// At a lightgun game, follows the mouse (or a finger) over the screen: where it aims, the
+/// crosshair there, and the pointer hidden over the screen.
+fn aim(
+    game: Option<Res<PlayingGame>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
+    touch: Res<Touch>,
+    screen: Single<(&ComputedNode, &UiGlobalTransform), With<Screen>>,
+    mut crosshair: Query<(&mut Node, &mut Visibility), With<Crosshair>>,
+    mut aim: ResMut<Aim>,
+) {
+    if !game.is_some_and(|game| game.aims()) {
+        return;
+    }
+    let (computed, transform) = *screen;
+    let size = computed.size();
+    let pointer = if touch.is_on() {
+        touch.finger()
+    } else {
+        window.cursor_position()
+    };
+    // Where the pointer is on the screen, 0 to 1 across and down (physical pixels, as UI
+    // nodes are laid out in, from the screen's middle).
+    let on = pointer
+        .filter(|_| size.min_element() > 0.0)
+        .and_then(|at| {
+            Some(
+                transform
+                    .try_inverse()?
+                    .transform_point2(at * window.scale_factor()),
+            )
+        })
+        .map(|from_middle| from_middle / size + Vec2::splat(0.5));
+    aim.on_screen = on.is_some_and(|at| at.cmpge(Vec2::ZERO).all() && at.cmple(Vec2::ONE).all());
+    aim.finger = touch.is_on() && aim.on_screen;
+    // The mouse off the screen aims at its nearest edge; a finger off it (on the black around
+    // the game) doesn't aim.
+    if let Some(at) = on.filter(|_| aim.on_screen || !touch.is_on()) {
+        let at = at.clamp(Vec2::ZERO, Vec2::ONE);
+        aim.x = (at.x * 255.0).round() as u8;
+        aim.y = (at.y * 255.0).round() as u8;
+    }
+    if let Ok((mut node, mut visibility)) = crosshair.single_mut() {
+        let at = Vec2::new(aim.x as f32, aim.y as f32) / 255.0 - Vec2::splat(0.5);
+        let middle = transform.transform_point2(at * size) * computed.inverse_scale_factor();
+        let (left, top) = (
+            Val::Px(middle.x - CROSSHAIR / 2.0),
+            Val::Px(middle.y - CROSSHAIR / 2.0),
+        );
+        if node.left != left || node.top != top {
+            node.left = left;
+            node.top = top;
+        }
+        visibility.set_if_neq(if aim.on_screen {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+    }
+    // The crosshair stands in for the pointer over the screen; off it, the pointer is back.
+    if let Ok(mut cursor) = cursor.single_mut()
+        && cursor.visible == aim.on_screen
+        && !touch.is_on()
+    {
+        cursor.visible = !aim.on_screen;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn send_input(
     keys: Res<ButtonInput<KeyCode>>,
+    mouse: Res<ButtonInput<MouseButton>>,
     chat: Res<Chat>,
     settings: Res<Settings>,
     touch: Res<Touch>,
-    mut sent: Local<u16>,
+    game: Option<Res<PlayingGame>>,
+    aim: Res<Aim>,
+    mut sent: ResMut<Sent>,
 ) {
     // While typing in the chat or tuning settings, the player's hands are off the controls.
     // Shift with a number mutes a player (voice.rs), so it isn't Start or a coin.
     let busy = chat.is_open() || settings.is_open();
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let mask = KEYS
+    let mut mask = KEYS
         .iter()
         .filter(|(key, _)| !busy && keys.pressed(*key))
         .filter(|(key, _)| !(shift && matches!(key, KeyCode::Digit1 | KeyCode::Digit5)))
         .fold(touch.pad(), |mask, (_, id)| mask | 1 << id);
-    if mask != *sent {
-        emulator_input(mask);
-        *sent = mask;
+    let mut input = 0;
+    if game.is_some_and(|game| game.aims()) {
+        // A click shoots where it aims, on the screen only; a finger on it shoots for as long
+        // as it's down.
+        let shoot = aim.finger || (aim.on_screen && mouse.pressed(MouseButton::Left));
+        let pedal = mouse.pressed(MouseButton::Right) || keys.pressed(KeyCode::Space);
+        if shoot && !busy {
+            mask |= 1 << TRIGGER;
+        }
+        if pedal && !busy {
+            mask |= 1 << PEDAL;
+        }
+        input = aim.bits();
+    }
+    input |= mask as u32;
+    // A new game's worker starts with nothing pressed, aiming nowhere.
+    if sent.0 != Some(input) && (sent.0.is_some() || input != 0) {
+        emulator_input(input);
+        sent.0 = Some(input);
     }
 }
 
@@ -326,10 +548,20 @@ fn leave(keys: Res<ButtonInput<KeyCode>>, touch: Res<Touch>, mut mode: ResMut<Ne
     }
 }
 
-fn stop(mut commands: Commands, overlays: Query<Entity, With<Overlay>>) {
+fn stop(
+    mut commands: Commands,
+    overlays: Query<Entity, With<Overlay>>,
+    mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
+) {
     emulator_stop();
     LATEST_FRAME.set(None);
     for overlay in &overlays {
         commands.entity(overlay).despawn();
+    }
+    // The pointer, if a lightgun game hid it.
+    if let Ok(mut cursor) = cursor.single_mut()
+        && !cursor.visible
+    {
+        cursor.visible = true;
     }
 }

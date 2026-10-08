@@ -1,11 +1,15 @@
 // Games cabinets can run (a cabinet's `game` in maps/bar.ron is a `rom` from this list).
 // `rom` is the ROM set in R2 (/roms/<rom>.zip, plus the optional <rom>.state), `core` the FBNeo
-// core that runs it (emulator/build.sh) or "supermodel" for a Sega Model 3 game (supermodel/),
-// and `bios` a BIOS set loaded next to it. `players` is how many play at once (2 if not said,
-// up to 4); `turns` games take turns on player 1's controls; `lockstep` games play online
-// without rollback (Supermodel's save state is too big to take every frame). `cabinets` names
-// the cabinet skins drawn for the game (tiles/objects/cabinet_<skin>_*): the editor gives a
-// cabinet in one of them the game.
+// core that runs it (emulator/build.sh), "supermodel" for a Sega Model 3 game (supermodel/) or
+// "mame" for one MAME runs (mame/), and `bios` a BIOS set loaded next to it. `players` is how
+// many play at once (2 if not said, up to 4; 1 and the next to press E watches); `turns` games
+// take turns on player 1's controls; `lockstep` games play online without rollback
+// (Supermodel's save state is too big to take every frame); `gun` games are played with a
+// lightgun: the mouse or a finger aims, with a crosshair on the screen; `linked` games are a
+// twin cabinet, two boards joined by the game's own link, one per player and browser (Time
+// Crisis II's co-op; both games start over when the second player sits). `cabinets` names the
+// cabinet skins drawn for the game (tiles/objects/cabinet_<skin>_*): the editor gives a cabinet
+// in one of them the game. A game without one yet runs on a plain cabinet set to it.
 [
     (rom: "mk2", core: "midway", title: "mkII", cabinets: ["mk2_v2"]),
     (rom: "umk3", core: "midway", title: "Ultimate Mortal Kombat 3", cabinets: ["umk3"]),
@@ -26,4 +30,6 @@
     (rom: "s1945", core: "psikyo", title: "Strikers 1945", cabinets: ["s1945"]),
     (rom: "term2", core: "midway", title: "Terminator 2: Judgment Day", cabinets: ["term2"]),
     (rom: "vs298", core: "supermodel", title: "Virtua Striker 2 '98", lockstep: true, cabinets: ["vs298"]),
+    (rom: "tekken3je1", core: "mame", title: "Tekken 3", lockstep: true, cabinets: []),
+    (rom: "timecrs2", core: "mame", title: "Time Crisis II", players: 2, gun: true, linked: true, cabinets: []),
 ]

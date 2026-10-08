@@ -1,5 +1,5 @@
-// Runs an FBNeo core off the main thread for one cabinet. Posts each frame to the page (which
-// hands it to Bevy) and streams audio to the AudioWorklet (audio.js).
+// Runs a cabinet's core (FBNeo, Supermodel or MAME) off the main thread. Posts each frame to
+// the page (which hands it to Bevy) and streams audio to the AudioWorklet (audio.js).
 //
 // Alone, the local player's buttons drive their seat's controller port. Online, every seated
 // player's machine runs the same game in step with rollback (netplay/src/lib.rs): GGRS guesses
@@ -20,44 +20,75 @@
 // When players join or leave, one machine (the page picks it) captures the game as it is and
 // every player starts a new session from that capture.
 //
+// A `linked` game (Time Crisis II) is two boards joined by the game's serial link, one per
+// player, as its twin cabinet is (linked.js): each player's controls go to their own board
+// only, on port 0, and what each board transmits goes to the other D frames later (D from the
+// round trip, fixed for the session). Seat 0 is the Left/Red board, seat 1 the Right/Blue. The
+// link is set at power-on, so a game can't become linked midway: when the second player sits
+// down both boards start over from their side's start-up state (linked, in attract mode, with
+// credits), and when one leaves the other starts over alone from the game's own start-up
+// state. No GGRS: a LinkedSession, paced as lockstep is.
+//
 // People watching the cabinet run the game too, a little behind: one player's machine (the page
 // picks it) streams them a state and then every player's input for each frame from there on,
 // only frames no rollback can change anymore. The watchers' machines play those frames as they
-// come in, keeping a few in hand so they play evenly.
+// come in, keeping a few in hand so they play evenly. A linked board streams its own frames
+// instead, each its player's input and the link bytes the board was handed before it, and the
+// watcher's board, linked on the same side, is handed the same.
 //
-// In:  { type: "start", core, rom, files, state, seat, turns, lockstep, port, hold }
+// Each player's controls for a frame are a u32 (the "input"): the RetroPad mask in the low 16
+// bits, and for a `gun` game where the lightgun aims in the high 16, x in bits 16-23 (0 the
+// left edge of the screen, 255 the right) and y in bits 24-31 (0 the top, 255 the bottom).
+//
+// In:  { type: "start", core, rom, files, state, seat, turns, lockstep, gun, linked, linkState,
+//        port, hold }
 //        Loads the game. `files` (a BIOS) and `state` are optional: skipped if missing. Plays
 //        alone right away, or with `hold` waits for "online" (joining a game in progress) or
-//        "watch-state" (watching; no `seat` or `port` then).
+//        "watch-state" (watching; no `seat` or `port` then). `linkState`, for a linked game's
+//        player: their side's start-up state for linked play (mame/link-states.mjs).
 //      { type: "capture", epoch } Stops and captures the machine, for a change of players.
 //        States that leave this worker (captured, watch-state) are deflated: a Model 3's 30 MB
 //        is two thirds zeros and packs to 5 MB; they come back the same way (online, watch-state).
 //      { type: "online", epoch, seats, state, roundTrip } Plays in step with the players in
 //        `seats` (their seat numbers, ascending) from `state`, or from this machine's capture
 //        for `epoch`; `roundTrip` (ms, to the farthest of them) sets a lockstep game's first
-//        input delay.
-//      { type: "solo" } Everyone else left: play on alone.
+//        input delay. A linked game starts over linked instead (no state: its own start-up
+//        one), `roundTrip` setting the link's delay.
+//      { type: "solo" } Everyone else left: play on alone (a linked game starts over alone).
 //      { type: "stream", on } Streams this machine's game to the watchers, or stops.
 //      { type: "snapshot", to } A state for a new watcher, to go on from with the stream.
-//      { type: "watch-state", bytes } | { type: "watch-inputs", frame, inputs } Watching: a
-//        stream's state and inputs, as they're sent out (below).
-//      { type: "input", mask } | { type: "audio", port, sampleRate } the speaker's port and rate
+//      { type: "watch-state", bytes, stream } | { type: "watch-inputs", frame, inputs } |
+//        { type: "watch-link", records } Watching: a stream's state and frames, as they're
+//        sent out (below); `stream` names the stream, so that another state of it can be
+//        passed over.
+//      { type: "probe", at } For checks: a "probe" message when the machine gets to frame `at`
+//        (playing online or watching), or without `at` after the next frame it runs.
+//      { type: "input", input } the local player's controls (a u32, above) |
+//      { type: "audio", port, sampleRate } the speaker's port and rate
 // Out: { type: "ready" } the game is loaded | { type: "frame", rgba, width, height } |
 //      { type: "netplay", event, seat, ... } | { type: "captured", epoch, state } |
 //      { type: "buttons", buttons } what the game calls player 1's buttons, [RetroPad id, name]
 //      pairs, once known | { type: "watch-state", stream, bytes, to } the machine for watchers
 //      to start from, [frame: u32 LE][state], for the watcher `to` or, without it, for all |
-//      { type: "watch-inputs", stream, frame, inputs } a Uint16Array with a mask per controller
+//      { type: "watch-inputs", stream, frame, inputs } a Uint32Array with an input per controller
 //      port (4) for each frame from `frame` on, a few times a second. `stream` counts up each
 //      time the stream starts over (a new session); inputs go on from that stream's states.
-//      Online, every 120 frames the machines compare a hash of the game's RAM (the worker's
+//      A linked board's stream: { type: "watch-link", stream, records } instead, its frames
+//      as linked.js encodes them ([frame][input][link bytes] each), and its watch-state's
+//      state is marked with the board's side (linked.js markLinked) | { type: "probe", frame,
+//      hash, link } the machine at a probe's frame: a hash of its RAM, and the link's status.
+//      In lockstep, every 120 frames the machines compare a hash of the game's RAM (the worker's
 //      own packets, marked with epoch 0xffff): a mismatch is the "desync" netplay event
 //      (seat, frame), once per session, and the page then has one machine hand its game to
 //      everyone again. The "stats" netplay event, once a second: ping (ms), delay (frames of input delay),
 //      rollback (frames; 0 in lockstep), fps (frames shown), stalls (waits for the others'
 //      input in that second), stallMs (the longest), look (the others' input in hand at a frame:
-//      [least, median, most] frames), prefills (looks that waited for more) and framesAhead.
+//      [least, median, most] frames), prefills (looks that waited for more), framesAhead, frame
+//      (the session's next frame), runMs (what a frame costs the core, on average); and
+//      for a linked game `link`: the board's link as the game has it (linked.js) and `lost`,
+//      true while nothing comes from the other board.
 import { Core } from "./libretro.js";
+import { LinkedSession, decodeRecords, encodeRecords, markLinked, parseLinkState, unmarkLinked } from "./linked.js";
 import { Resampler } from "./resample.js";
 
 /** Controller ports, as many as libretro.js has. */
@@ -69,7 +100,8 @@ const WATCH_BUFFER = 12;
 /**
  * Game packets carry their session's epoch; this one marks the worker's own packets instead:
  * a checkpoint, 'h', the epoch (u16), the frame (u32) and a hash of the game's RAM there (u32).
- * The machines compare them to notice when they have drifted apart.
+ * Lockstep machines compare them to notice when they have drifted apart (rollback games leave
+ * that to GGRS, which hashes confirmed frames).
  */
 const CONTROL = 0xffff;
 /** Frames between checkpoints. */
@@ -96,6 +128,10 @@ async function unpack(bytes) {
   return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
+/** A "probe" for whichever frame runs next. */
+const NEXT_FRAME = -1;
+/** A linked game's packets kept for a session that hasn't started here yet: a minute's worth. */
+const MAX_EARLY = 3600;
 /** Input delay when the round trip is unknown, in frames. */
 const DEFAULT_DELAY = 5;
 /** The most input delay a lockstep game takes, in frames; past that it would stall anyway. */
@@ -143,10 +179,13 @@ const REMEMBER_LATE_MS = 60000;
 
 let audioPort;
 let speakerRate = 48000;
-let localMask = 0;
+/** The local player's controls as last sent: buttons and, on a lightgun game, aim. */
+let localInput = 0;
 /** Buttons that went down since the game last read the controls: a tap between two frames
- *  still counts for the next one. */
+ *  still counts for the next one. The aim is simply the latest. */
 let pressed = 0;
+/** The RetroPad mask in an input; the aim is above it. */
+const BUTTONS = 0xffff;
 let cabinet;
 const waiting = [];
 
@@ -159,8 +198,9 @@ const netplay = import("../netplay/netplay.js").then(async (module) => {
 
 onmessage = ({ data: msg }) => {
   if (msg.type === "input") {
-    pressed |= msg.mask & ~localMask;
-    localMask = msg.mask;
+    const input = msg.input >>> 0;
+    pressed |= input & ~localInput & BUTTONS;
+    localInput = input;
   } else if (msg.type === "audio") ({ port: audioPort, sampleRate: speakerRate = speakerRate } = msg);
   else if (msg.type === "start") start(msg);
   // Anything else is for the loaded game; it can arrive while the game still downloads.
@@ -170,9 +210,9 @@ onmessage = ({ data: msg }) => {
 
 /** The local controls for the frame about to run. */
 function sampleInput() {
-  const mask = localMask | pressed;
+  const input = (localInput | pressed) >>> 0;
   pressed = 0;
-  return mask;
+  return input;
 }
 
 // "no-cache" checks with the server every time (a 304 when unchanged), so newly uploaded or
@@ -184,13 +224,22 @@ const download = async (url) => {
 };
 const downloadIfPresent = (url) => url && download(url).catch(() => undefined);
 
-async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, seat = 0, turns = false, lockstep = false, port, hold }) {
+async function start({
+  core: coreUrl, rom: romUrl, files = [], state: stateUrl, seat = 0, turns = false, lockstep = false, gun = false,
+  linked = false, linkState: linkStateUrl, port, hold,
+}) {
   const { default: createCore } = await import(coreUrl);
-  const [rom, state, ...extras] = await Promise.all([
+  const [rom, packedState, packedLinkState, ...extras] = await Promise.all([
     download(romUrl),
     downloadIfPresent(stateUrl),
+    downloadIfPresent(linkStateUrl),
     ...files.map(downloadIfPresent),
   ]);
+  // Start-up states may come deflated (worker states are; mame/link-states.mjs makes them so).
+  const state = packedState && (await unpack(packedState));
+  let linkState = packedLinkState && parseLinkState(packedLinkState);
+  if (linkState) linkState = { ...linkState, state: await unpack(linkState.state) };
+  else if (linkStateUrl && linked) console.warn(`${linkStateUrl}: no start-up state for linked play; linked boards boot instead`);
   // The canvas is for a core that draws with WebGL (Supermodel), which sizes it; FBNeo ignores
   // it. Node (emulator/netplay-check.mjs) has none.
   const canvas = typeof OffscreenCanvas === "function" ? new OffscreenCanvas(1, 1) : undefined;
@@ -202,9 +251,10 @@ async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, 
       audioPort?.postMessage(samples, [samples.buffer]);
     },
     onLog: (level, text) => level >= 2 && console.warn(text),
-  }, { canvas }), { seat, turns, lockstep, port });
+  }, { canvas }), { seat, turns, lockstep, linked, port });
   const core = cab.core;
   core.netplay = true;
+  core.gun = gun;
   files.forEach((url, i) => extras[i] && core.addFile(url.split("/").pop(), extras[i]));
   const { fps, sampleRate } = core.loadGame(romUrl.split("/").pop(), rom);
   cab.fps = fps;
@@ -214,9 +264,11 @@ async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, 
   // from an older core build don't load; the game then just boots normally.
   try {
     if (state) core.unserialize(state);
+    cab.soloState = state;
   } catch (error) {
     console.warn(`${stateUrl}: ${error.message}`);
   }
+  cab.linkState = linkState;
   cab.paused = Boolean(hold);
   await netplay;
   cabinet = cab;
@@ -225,10 +277,10 @@ async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, 
   cab.tick();
 }
 
-/** A mask per controller port: `inputs[i]` on seat `seats[i]`'s, nothing on the others. */
+/** An input per controller port: `inputs[i]` on seat `seats[i]`'s, nothing on the others. */
 function byPort(inputs, seats) {
-  const ports = new Uint16Array(PORTS);
-  inputs.forEach((mask, i) => (ports[seats[i]] = mask));
+  const ports = new Uint32Array(PORTS);
+  inputs.forEach((input, i) => (ports[seats[i]] = input));
   return ports;
 }
 
@@ -306,9 +358,26 @@ class Cabinet {
   fps = 60;
   /** Brings the core's sound to the speaker's rate, when they differ. */
   resampler;
+  /** The game's start-up state, alone (linked games start over from it when left alone). */
+  soloState;
+  /** A linked game's start-up state for this seat's board (linked.js parseLinkState). */
+  linkState;
 
   #seat;
   #lockstep;
+  /** A linked game (linked.js): the board's side while its link is plugged in, undefined while not. */
+  #linked;
+  #linkSide;
+  /** The link's status at the last stats, and whether it has gone quiet (lost). */
+  #link;
+  #linkLost = false;
+  /** Frames whose RAM hash checks asked for ("probe"). */
+  #probes = new Set();
+  /**
+   * A linked game's packets that came before their session started here ([seat, epoch,
+   * bytes]): the other board starts ticking as soon as it can, and nothing is sent twice.
+   */
+  #early = [];
   #port;
   /** Online: the GGRS session, its epoch, and the seats of its players in handle order. */
   #session;
@@ -323,14 +392,16 @@ class Cabinet {
   /** This machine at the last change of players, until the next session starts from it. */
   #captured;
   /**
-   * Streaming to watchers: the stream's number, the frame they get next, inputs (a mask per
-   * port per frame) not sent yet, and when inputs last went out.
+   * Streaming to watchers: the stream's number, the frame they get next, inputs (one per port
+   * per frame) not sent yet, and when inputs last went out.
    */
   #stream;
   #streams = 0;
+  /** The last state for watchers on its way (`#sendState`), the next one goes after it. */
+  #statesSent = Promise.resolve();
   /**
-   * Watching: frames to run (a mask per port each), the frame after the last, and whether it's
-   * waiting to have a few in hand.
+   * Watching: frames to run (an input per port each), the frame after the last, and whether
+   * it's waiting to have a few in hand.
    */
   #watch;
   /** When the next frame is due. */
@@ -367,11 +438,12 @@ class Cabinet {
   #framesSince = performance.now();
   #buttonsSent = false;
 
-  constructor(core, { seat, turns, lockstep, port }) {
+  constructor(core, { seat, turns, lockstep, linked, port }) {
     this.core = core;
     core.turns = turns;
     this.#seat = seat;
     this.#lockstep = lockstep;
+    this.#linked = linked && core.hasLink;
     this.#port = port;
     if (!port) return; // watching
     port.onmessage = ({ data: [seat, packet] }) => {
@@ -379,7 +451,12 @@ class Cabinet {
       const bytes = new Uint8Array(packet);
       const epoch = bytes[0] | (bytes[1] << 8);
       if (epoch === CONTROL) return this.#control(seat, bytes);
-      if (handle < 0 || epoch !== this.#epoch || !this.#session) return;
+      if (handle < 0 || epoch !== this.#epoch || !this.#session) {
+        // A later session's (epochs count up): kept for when it starts here.
+        const later = this.#epoch === undefined || ((epoch - this.#epoch) & 0xffff) - 1 < 0x7fff;
+        if (this.#linked && later && this.#early.length < MAX_EARLY) this.#early.push([seat, epoch, bytes]);
+        return;
+      }
       this.#session.receive(handle, bytes.subarray(2));
       // Waiting for exactly this, most likely: run the frame now rather than at the next look.
       if (this.#waiting) this.#alarm.now();
@@ -391,6 +468,7 @@ class Cabinet {
     if (msg.type === "online") this.#online(msg);
     if (msg.type === "solo") {
       this.#leaveSession();
+      if (this.#linkSide !== undefined) this.#unlink();
       if (this.#stream) this.#startStream();
     }
     if (msg.type === "stream") {
@@ -398,8 +476,10 @@ class Cabinet {
       else if (!this.#stream) this.#startStream();
     }
     if (msg.type === "snapshot" && this.#stream) this.#sendState(msg.to);
-    if (msg.type === "watch-state") this.#watchFrom(msg.bytes);
+    if (msg.type === "watch-state") this.#watchFrom(msg.bytes, msg.stream);
     if (msg.type === "watch-inputs") this.#watchInputs(msg);
+    if (msg.type === "watch-link") this.#watchLink(msg.records);
+    if (msg.type === "probe") this.#probes.add(msg.at ?? NEXT_FRAME);
   }
 
   /** Frames to run per wake-up at most: one for a heavy core, a few to catch up otherwise. */
@@ -440,8 +520,11 @@ class Cabinet {
             break;
           }
           ran++;
+          this.#probe(session.currentFrame());
           this.#next += this.#pace(session, lookahead, frameMs);
-          if (session.currentFrame() % HASH_EVERY === 0) this.#checkpoint(session.currentFrame());
+          // Lockstep only: a rollback game's latest frame may have run on guessed inputs, so
+          // its RAM can rightly differ for a while; GGRS compares confirmed frames there itself.
+          if (this.#lockstep && session.currentFrame() % HASH_EVERY === 0) this.#checkpoint(session.currentFrame());
           if (this.#stall !== undefined) {
             // The wait is over. Making up the time waited would only run through the inputs
             // in hand and wait again a round trip later, the two machines taking turns: carry
@@ -478,7 +561,12 @@ class Cabinet {
             watch.waiting = true;
             break;
           }
-          this.#run(watch.frames.shift(), true);
+          const { ports, link } = watch.frames.shift();
+          // A linked board's frame: the link bytes the player's board was handed before it.
+          if (link) this.core.linkIncoming(link);
+          this.#run(ports, true);
+          if (link) this.core.linkOutgoing(); // what it transmits goes nowhere
+          this.#probe(watch.end - watch.frames.length);
           // A little faster while far behind the stream (frames came in after a hiccup).
           this.#next += watch.frames.length > WATCH_BUFFER * 2.5 ? frameMs * 0.9 : frameMs;
         }
@@ -486,8 +574,10 @@ class Cabinet {
       this.#alarm.at(watch.waiting ? performance.now() + WAIT_POLL_MS : this.#next);
     } else {
       for (let i = 0; i < this.#perWake() && performance.now() >= this.#next; i++) {
-        const ports = byPort([sampleInput()], [this.#seat]);
+        // A linked game's player plays their own board, on its player 1 controls.
+        const ports = byPort([sampleInput()], [this.#linked ? 0 : this.#seat]);
         this.#run(ports, true);
+        this.#probe(NEXT_FRAME);
         this.#stream?.inputs.push(...ports);
         this.#next += frameMs;
       }
@@ -535,6 +625,8 @@ class Cabinet {
       type: "netplay", event: "stats", ping: session.ping(), delay: this.#delay, rollback: this.#tuned.rollback, fps,
       stalls: stalls.length, stallMs: Math.round(Math.max(0, ...stalls)),
       look: looks.length ? [looks[0], looks[looks.length >> 1], looks[looks.length - 1]] : [], prefills: this.#prefills, framesAhead: session.framesAhead(),
+      frame: session.currentFrame(), runMs: Math.round(this.#runMs * 10) / 10,
+      ...(this.#linkSide !== undefined && this.#linkStats(session)),
     });
     this.#looks = [];
     this.#prefills = 0;
@@ -554,7 +646,8 @@ class Cabinet {
    * this machine's own: the others need no notice (netplay/src/lib.rs).
    */
   #tune(session, stalls, now) {
-    if (!this.#tuned.heavy || session.currentFrame() < WARMUP_FRAMES) return;
+    // A linked game's delay is the link's: it can't change during the session (linked.js).
+    if (!this.#tuned.heavy || this.#linkSide !== undefined || session.currentFrame() < WARMUP_FRAMES) return;
     const frameMs = 1000 / this.fps;
     const late = stalls.filter((ms) => ms > LATE_MS && ms < HICCUP_FRAMES * frameMs);
     if (late.length) {
@@ -635,23 +728,55 @@ class Cabinet {
     postMessage({ type: "netplay", event: "desync", seat, frame });
   }
 
-  // GGRS's requests, run on the core.
+  /**
+   * The link as the game has it, for the stats once a second: plugged in, the side, the game's
+   * link mode word (2 in a linked game, 0 in attract mode), its keepalive word, its link state
+   * machine's counter, bytes waiting, frames and bytes each way, and `lost`: a whole second of
+   * frames run with nothing from the other board. Linked boards talk all the time, a few link
+   * frames a tick in attract mode and about one a tick in a game (mame/README.md), so silence
+   * means the other board's game has let the link go. (The mode word alone can't say: it also
+   * leaves 2 when a linked game ends.)
+   */
+  #linkStats(session) {
+    const was = this.#link;
+    const link = (this.#link = { ...this.core.linkStatus(), frame: session.currentFrame() });
+    if (was && link.frame - was.frame >= 30) this.#linkLost = link.rxFrames === was.rxFrames;
+    const { linked, side, mode, keepalive, counter, pending, txFrames, rxFrames, txBytes, rxBytes } = link;
+    return {
+      // The session's D, once both boards' proposals are in (linked.js).
+      delay: session.agreedDelay ?? session.delay,
+      link: { linked, side, mode, keepalive, counter, pending, txFrames, rxFrames, txBytes, rxBytes, heard: session.heard },
+      lost: this.#linkLost && session.heard,
+    };
+  }
+
+  // GGRS's requests, run on the core (and a linked session's: its board's own input on port 0).
   #machine = {
     save: (slot, checksum) => {
       this.core.saveSlot(slot);
       return checksum ? hashRam(this.core.systemRam()) : undefined;
     },
     load: (slot) => this.core.loadSlot(slot),
-    run: (inputs, present) => this.#run(byPort(inputs, this.#seats), present),
+    run: (inputs, present) => this.#run(byPort(inputs, this.#linkSide !== undefined ? [0] : this.#seats), present),
     send: (packets) => this.#post(packets),
   };
 
-  /** Runs a frame with a mask per controller port. */
-  #run(masks, present) {
+  /**
+   * A check asked for the machine at this frame, or after whichever frame runs next ("probe"):
+   * a hash of its RAM, and the link.
+   */
+  #probe(frame) {
+    if (!this.#probes.delete(frame) && !this.#probes.delete(NEXT_FRAME)) return;
+    const link = this.core.hasLink ? this.core.linkStatus() : undefined;
+    postMessage({ type: "probe", frame, hash: hashRam(this.core.systemRam()), link });
+  }
+
+  /** Runs a frame with an input per controller port. */
+  #run(inputs, present) {
     const ports = this.core.inputs;
-    ports.set(masks);
+    ports.set(inputs);
     // Core routes shared upright gameplay and descriptor-defined Start/Coin aliases;
-    // the original masks remain intact for rollback and the spectator input stream.
+    // the original inputs remain intact for rollback and the spectator input stream.
     this.core.present = present;
     const startedAt = performance.now();
     this.core.run();
@@ -674,6 +799,7 @@ class Cabinet {
   }
 
   async #online({ epoch, seats, state, roundTrip }) {
+    if (this.#linked) return this.#linkUp(epoch, seats, roundTrip);
     state = state ? await unpack(state) : this.#captured?.epoch === epoch ? this.#captured.state : undefined;
     if (!state) return;
     this.#leaveSession();
@@ -715,6 +841,59 @@ class Cabinet {
     this.#alarm.now();
   }
 
+  /**
+   * A linked game's two players: this board starts over linked, on its seat's side, from its
+   * start-up state for that (as the other board does at the same time), and the session hands
+   * it the other board's link bytes D ticks after they were sent: D from the round trip, the
+   * larger of the two boards' (linked.js).
+   */
+  #linkUp(epoch, seats, roundTrip) {
+    this.#leaveSession();
+    const side = this.#seat;
+    const delay = onlineDelay(roundTrip, this.fps);
+    this.core.linkSet(true, side);
+    this.core.reset();
+    // Without a start-up state the boards boot, linked from power-on: they link up at the
+    // NAMCO screen after the power-on test, about 15 s.
+    if (this.linkState) this.core.unserialize(this.linkState.state);
+    this.#linkSide = side;
+    this.#link = undefined;
+    this.#linkLost = false;
+    this.#captured = undefined;
+    this.#tuned = { rollback: 0, heavy: true, delay };
+    this.#delay = delay;
+    this.#delayFloor = delay;
+    this.#epoch = epoch & 0xffff;
+    this.#seats = seats;
+    this.#session = new LinkedSession({
+      link: { incoming: (bytes) => this.core.linkIncoming(bytes), outgoing: () => this.core.linkOutgoing() },
+      local: seats.indexOf(this.#seat),
+      delay,
+      carried: this.linkState?.carried ?? [],
+      roundTrip,
+    });
+    for (const [seat, packetEpoch, bytes] of this.#early.splice(0)) {
+      if (packetEpoch === this.#epoch && seats.includes(seat)) this.#session.receive(seats.indexOf(seat), bytes.subarray(2));
+    }
+    this.paused = false;
+    this.#waiting = false;
+    this.#stall = undefined;
+    this.#stalls = [];
+    this.#events = [`linked session from epoch ${this.#epoch}, side ${side}, delay ${delay}`];
+    this.#next = performance.now();
+    if (this.#stream) this.#startStream();
+    this.#alarm.now();
+  }
+
+  /** The other player left a linked game: this board starts over alone, link unplugged. */
+  #unlink() {
+    this.core.linkSet(false);
+    this.core.reset();
+    if (this.soloState) this.core.unserialize(this.soloState);
+    this.#linkSide = undefined;
+    this.#link = undefined;
+  }
+
   #leaveSession() {
     this.#session?.free();
     this.#session = undefined;
@@ -723,10 +902,14 @@ class Cabinet {
     this.paused = false;
   }
 
-  /** Streams from here: the machine as it is now, or online as of the last confirmed frame. */
+  /**
+   * Streams from here: the machine as it is now, or online as of the last confirmed frame. A
+   * linked board streams its own frames, each with the link bytes it was handed (`linked`).
+   */
   #startStream() {
     const frame = this.#session ? this.#session.confirmedFrame() + 1 : 0;
-    this.#stream = { id: ++this.#streams, frame, inputs: [], sentAt: 0 };
+    // `fresh` until its first state is out: its frames wait for it.
+    this.#stream = { id: ++this.#streams, frame, inputs: [], records: [], linked: this.#linkSide !== undefined, sentAt: 0, fresh: true, packing: true };
     this.#sendState();
   }
 
@@ -736,6 +919,7 @@ class Cabinet {
    */
   #flush(now = false) {
     const stream = this.#stream;
+    if (stream.linked) return this.#flushLinked(stream, now);
     if (this.#session) {
       const players = this.#seats.length;
       const confirmed = this.#session.confirmedInputs(stream.frame + stream.inputs.length / PORTS);
@@ -745,42 +929,85 @@ class Cabinet {
     }
     // While a state is being packed, inputs wait: they must reach the watchers after it.
     if (stream.packing || !stream.inputs.length || (!now && performance.now() - stream.sentAt < STREAM_EVERY)) return;
-    const inputs = Uint16Array.from(stream.inputs);
+    const inputs = Uint32Array.from(stream.inputs);
     postMessage({ type: "watch-inputs", stream: stream.id, frame: stream.frame, inputs }, [inputs.buffer]);
     stream.frame += stream.inputs.length / PORTS;
     stream.inputs = [];
     stream.sentAt = performance.now();
   }
 
+  /** A linked board's frames since the last time, as linked.js encodes them. */
+  #flushLinked(stream, now) {
+    const records = stream.records;
+    if (this.#session) records.push(...this.#session.records(stream.frame + records.length));
+    if (stream.packing || !records.length || (!now && performance.now() - stream.sentAt < STREAM_EVERY)) return;
+    // A few seconds' worth at most per message (the room takes up to 1 MiB).
+    for (let at = 0; at < records.length; at += 120) {
+      const encoded = encodeRecords(records.slice(at, at + 120));
+      postMessage({ type: "watch-link", stream: stream.id, records: encoded }, [encoded.buffer]);
+    }
+    stream.frame += records.length;
+    stream.records = [];
+    stream.sentAt = performance.now();
+  }
+
   /**
    * The machine at the frame the stream goes on from, for one watcher or all. Online it's the
-   * save GGRS made before that frame, unless the machine is there now (always, in lockstep).
+   * save GGRS made before that frame, unless the machine is there now (always, in lockstep and
+   * on a linked board, whose state then says which side it's linked on). One state at a time,
+   * in order: packing a big one (a Model 3's or a System 23's) takes a while, and a state that
+   * went out after a newer one would send a watcher back to frames it never gets again.
    */
-  async #sendState(to) {
-    this.#flush(true);
+  #sendState(to) {
     const stream = this.#stream;
-    const { id, frame } = stream;
+    this.#statesSent = this.#statesSent.then(() => this.#packState(stream, to)).catch((error) => console.warn(`Watch state: ${error.message}`));
+  }
+
+  async #packState(stream, to) {
+    if (this.#stream !== stream) return; // the stream started over (or stopped) meanwhile
     const session = this.#session;
-    const saved = session && !this.#lockstep && frame < session.currentFrame();
+    if (stream.fresh) {
+      // Nothing of this stream has gone out yet (its frames wait for its first state, which
+      // may have waited for an earlier one): it starts where the machine is now.
+      stream.frame = session ? session.confirmedFrame() + 1 : stream.frame + stream.inputs.length / PORTS;
+      stream.inputs = [];
+      stream.records = [];
+    } else this.#flush(true);
+    const { id, frame } = stream;
+    const saved = session && !this.#lockstep && !stream.linked && frame < session.currentFrame();
+    const side = this.#linkSide;
+    // The frames run while it packs wait: they must reach the watchers after it.
     stream.packing = true;
-    const state = await pack(saved ? this.core.slotBytes(session.slot(frame)) : this.core.serialize());
-    stream.packing = false;
+    let state;
+    try {
+      state = markLinked(await pack(saved ? this.core.slotBytes(session.slot(frame)) : this.core.serialize()), side);
+    } finally {
+      stream.packing = stream.fresh;
+    }
     if (this.#stream !== stream) return; // the stream started over meanwhile
     const bytes = new Uint8Array(4 + state.length);
     new DataView(bytes.buffer).setUint32(0, frame, true);
     bytes.set(state, 4);
     postMessage({ type: "watch-state", stream: id, bytes, to }, [bytes.buffer]);
+    stream.fresh = stream.packing = false;
     this.#flush(true); // the frames run while packing
   }
 
-  async #watchFrom(bytes) {
+  async #watchFrom(bytes, stream) {
     const frame = new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true);
+    // Another state of the stream this machine plays already (sent to everyone as it started,
+    // and to us as we came, say), which it has the frames to get to: it goes on as it is, as
+    // starting over would drop the frames that came in between. After a gap it starts over.
+    if (stream !== undefined && this.#watch?.stream === stream && this.#watch.end >= frame) return;
     // The stream's inputs from this frame on may arrive while the state inflates: kept from
     // now, run once the machine is at the state.
-    const watch = (this.#watch = { frames: [], end: frame, waiting: true });
+    const watch = (this.#watch = { frames: [], end: frame, waiting: true, stream });
     this.paused = true;
-    const state = await unpack(bytes.subarray(4));
+    // A linked board's: ours is linked on its side too, and gets what it got.
+    const { side, state: packed } = unmarkLinked(bytes.subarray(4));
+    const state = await unpack(packed);
     if (this.#watch !== watch) return; // a newer state came meanwhile
+    if (this.core.hasLink) this.core.linkSet(side !== undefined, side);
     this.core.reset();
     this.core.unserialize(state);
     this.paused = false;
@@ -795,9 +1022,24 @@ class Cabinet {
       return;
     }
     for (let i = (watch.end - frame) * PORTS; i < inputs.length; i += PORTS) {
-      watch.frames.push(inputs.subarray(i, i + PORTS));
+      watch.frames.push({ ports: inputs.subarray(i, i + PORTS) });
     }
     watch.end = Math.max(watch.end, frame + inputs.length / PORTS);
+  }
+
+  /** A linked board's frames (linked.js encodeRecords): its input on port 0, and the link bytes. */
+  #watchLink(encoded) {
+    const watch = this.#watch;
+    if (!watch) return;
+    for (const { frame, input, bytes } of decodeRecords(encoded)) {
+      if (frame < watch.end) continue;
+      if (frame > watch.end) {
+        console.warn(`Watching: frames ${watch.end}-${frame - 1} never came`);
+        return;
+      }
+      watch.frames.push({ ports: byPort([input], [0]), link: bytes });
+      watch.end++;
+    }
   }
 }
 
