@@ -14,7 +14,8 @@ WASM_BINDGEN := .tools/wasm-bindgen-$(WASM_BINDGEN_VERSION)/bin/wasm-bindgen
 # wasm-opt comes with the pinned emsdk.
 WASM_OPT := emulator/.cache/emsdk/upstream/bin/wasm-opt
 
-.PHONY: client netplay emulator emulator-remote upload-emulator supermodel supermodel-remote upload-supermodel upload-rom dev deploy preview \
+.PHONY: client netplay emulator emulator-remote upload-emulator supermodel supermodel-remote upload-supermodel \
+	daytona daytona-remote upload-daytona upload-daytona-states upload-rom dev deploy preview \
 	editor editor-web editor-dev editor-deploy editor-preview pull-map e2e
 
 $(WASM_BINDGEN):
@@ -65,6 +66,16 @@ supermodel:
 supermodel-remote:
 	$(MAKE) upload-supermodel R2_TARGET=--remote
 
+# The Daytona USA (Sega Model 2) core -> daytona/dist/, then into local R2 (served at
+# /daytona/*), the same way. daytona-remote uploads to production. Its ROM set is MAME's
+# `daytona`: make upload-rom ROM=$HOME/Downloads/daytona.zip.
+daytona:
+	./daytona/build.sh web
+	$(MAKE) upload-daytona R2_TARGET=--local
+
+daytona-remote:
+	$(MAKE) upload-daytona R2_TARGET=--remote
+
 # A ROM set (or its start-up .state) into R2, served at /roms/<file>:
 # make upload-rom ROM=$HOME/Downloads/mk2.zip (local R2, for `make dev BUCKET=local`; add
 # R2_TARGET=--remote for production, and R2_BUCKET=vab-preview for the preview Worker's bucket).
@@ -80,6 +91,21 @@ upload-supermodel:
 		--file ../supermodel/dist/supermodel.mjs --content-type text/javascript && \
 	npx wrangler r2 object put $(R2_BUCKET)/supermodel/supermodel.wasm $(R2_TARGET) \
 		--file ../supermodel/dist/supermodel.wasm --content-type application/wasm
+
+upload-daytona:
+	cd server && npx wrangler r2 object put $(R2_BUCKET)/daytona/daytona.mjs $(R2_TARGET) \
+		--file ../daytona/dist/daytona.mjs --content-type text/javascript && \
+	npx wrangler r2 object put $(R2_BUCKET)/daytona/daytona.wasm $(R2_TARGET) \
+		--file ../daytona/dist/daytona.wasm --content-type application/wasm
+
+# Daytona USA's arcade-mode seat states (node daytona/make-states.mjs; ROM-derived, like the ROM
+# set) into R2 next to it, served at /roms/daytona.seat<k>.state: one per seat 0-7.
+# make upload-daytona-states [R2_TARGET=--remote] [R2_BUCKET=vab-preview]
+upload-daytona-states:
+	cd server && for k in 0 1 2 3 4 5 6 7; do \
+		npx wrangler r2 object put $(R2_BUCKET)/roms/daytona.seat$$k.state $(R2_TARGET) \
+			--file ../daytona/dist/states/daytona.seat$$k.state --content-type application/octet-stream || exit 1; \
+	done
 
 upload-emulator:
 	cd server && for dir in ../emulator/dist/*/; do core=$$(basename $$dir); \

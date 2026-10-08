@@ -211,13 +211,17 @@ def paint(solid, p, n, tex):
     return "body", (30, 33, 43), False
 
 
-def render(solids, tex, turns, painter=paint, *, width=WIDTH, height=HEIGHT):
+def render(solids, tex, turns, painter=paint, *, width=WIDTH, height=HEIGHT,
+           footprint_scale=1.0):
     layers = {name: Image.new("RGBA", (width, height)) for name in LAYERS}
-    ray = rotate((1, 1, 1), -turns)
+    ray = rotate((1 / footprint_scale, 1 / footprint_scale, 1), -turns)
     for row in range(height):
         for col in range(width):
             across, down = col + .5 - width / 2, row + .5 - (height - 16)
             origin = rotate((down + across / 2, down - across / 2, 0), -turns, True)
+            if footprint_scale != 1.0:
+                origin = (8 + (origin[0] - 8) / footprint_scale,
+                          8 + (origin[1] - 8) / footprint_scale, origin[2])
             nearest = None
             for solid in solids:
                 hit = solid.hit(origin, ray)
@@ -229,6 +233,8 @@ def render(solids, tex, turns, painter=paint, *, width=WIDTH, height=HEIGHT):
             p = add(origin, mul(ray, distance))
             layer, color, lit = painter(solid, p, normal, tex)
             if not lit:
+                if footprint_scale != 1.0:
+                    normal = unit((normal[0] / footprint_scale, normal[1] / footprint_scale, normal[2]))
                 normal = rotate(normal, turns)
                 # Fixed upper-left lighting shared by every orientation.
                 weights = [max(0, c) for c in normal]

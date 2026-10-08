@@ -1,0 +1,98 @@
+diff --git a/src/runtime/geo.cpp b/src/runtime/geo.cpp
+index 82f7c81..e6a5b5a 100644
+--- a/src/runtime/geo.cpp
++++ b/src/runtime/geo.cpp
+@@ -6,7 +6,8 @@
+ // (BSD-3-Clause; notice above kept as the licence requires). The code below
+ // is MAME's with these changes only: raw pointers are bounds-checked cursors
+ // (GeoPtr, GeoPtr16); kept polygons go to a flat list (Geo::polys) instead of
+-// MAME's per-z buckets; logerror is dropped and fatalerror throws. See
++// MAME's per-z buckets; logerror is dropped and fatalerror throws, except
++// at the polygon list's limit, where parse drops the frame's 3D. See
+ // src/runtime/geo.h and THIRD_PARTY.md.
+ 
+ #include "runtime/geo.h"
+@@ -24,6 +25,9 @@ inline float u2f(uint32_t v) { return std::bit_cast<float>(v); }
+ inline uint32_t f2u(float f) { return std::bit_cast<uint32_t>(f); }
+ using u8 = uint8_t;
+ using u64 = uint64_t;
++// A frame's display list made more polygons than the list holds (MAME's MAX_POLYGONS): thrown
++// where the next one would go, caught by Geo::parse, which drops that frame's 3D.
++struct PolygonListFull {};
+ } // namespace
+ 
+ #define pz      p[0]
+@@ -509,8 +513,8 @@ void Geo::model2_3d_process_polygon(raster_state *raster, uint32_t attr)
+ 
+ 			/* go through the clipped vertex list, adding polygons */
+ 			raster->poly_list_index++;
+-			if (raster->poly_list_index >= 32768) // MAME MAX_POLYGONS
+-				throw GeoFatal("SEGA 3D: Max polygon limit exceeded");
++			if (raster->poly_list_index >= 32768) // MAME MAX_POLYGONS (MAME: a fatal error)
++				throw PolygonListFull{};
+ 			polys.emplace_back();
+ 			GeoPoly *poly = &polys.back();
+ 			poly->reverse = raster->reverse;
+@@ -2230,6 +2234,7 @@ void Geo::parse(uint32_t read_start)
+ 	// reset raster frame variables
+ 	render_frame_start();
+ 
++	try {
+ 	while (end_code == false && input.i < 0x20000/4 && op_count++ < 0x8000)
+ 	{
+ 		/* read in the opcode */
+@@ -2251,6 +2256,20 @@ void Geo::parse(uint32_t read_start)
+ 		/* process it */
+ 		input = geo_process_command(&geo_, opcode, input, &end_code);
+ 	}
++	} catch (const PolygonListFull &) {
++		// A list that does not end before the limit. Seen on a linked cabinet coming back to
++		// its attract mode at one phase of its frames: the list read is the buffer the game
++		// has not finished (the next frame parses the same buffer, whole). MAME stops there
++		// with a fatal error; the arcade shows nothing of it. This frame's 3D is dropped, as
++		// if its list had been empty, and the rasterizer's command decoder is left idle, as
++		// after a list that ended; the game, its RAM and the TGP are untouched, and the next
++		// frame's list is parsed as ever. What the list did before the limit stays done (the
++		// geometrizer's own registers and RAMs), the same on every machine.
++		render_frame_start();
++		raster_.cur_command = 0;
++		raster_.command_index = 0;
++		++dropped_frames_;
++	}
+ }
+ 
+ /***********************************************************************************************/
+diff --git a/src/runtime/geo.h b/src/runtime/geo.h
+index 79cc3d0..008d64c 100644
+--- a/src/runtime/geo.h
++++ b/src/runtime/geo.h
+@@ -224,6 +224,9 @@ public:
+     };
+ 
+     int windows() const { return raster_.cur_window; } // after parse: the last window used
++    // Frames whose display list overflowed the polygon list and were dropped (parse): for the
++    // host's log. Not machine state (save states leave it out): it changes nothing the game does.
++    uint64_t dropped_frames() const { return dropped_frames_; }
+     void zclip_w(uint32_t data) { raster_.master_z_clip = uint8_t(data); } // model2_3d_zclip_w
+     // Widescreen (enhancement, 0 = off): a full-width viewport's left and right
+     // clip planes move out by this many pixels, so polygons beyond the 4:3
+@@ -238,6 +241,7 @@ private:
+     uint32_t *buffer_;
+     raster_state raster_;
+     geo_state geo_;
++    uint64_t dropped_frames_ = 0;
+ 
+     GeoPtr buf(uint32_t i) { return GeoPtr{buffer_, 0x8000, i}; }
+     uint16_t float_to_zval(float floatval, int32_t z_adjust);
+diff --git a/src/runtime/m2_board.h b/src/runtime/m2_board.h
+index 5d92356..5f44f5c 100644
+--- a/src/runtime/m2_board.h
++++ b/src/runtime/m2_board.h
+@@ -99,6 +99,7 @@ public:
+     uint64_t frame() const { return frame_; }
+ 
+     Video &video() { return *video_; }
++    const Geo &geo() const { return *geo_; }
+     // Widescreen (enhancement): pixels added to each side; 0 = the original screen.
+     void set_wide_margin(int pixels);
+     // Draw mode (enhancement): draw the screen every (1 + skip)th frame; the

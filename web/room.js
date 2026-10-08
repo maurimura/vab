@@ -19,15 +19,19 @@ function getIceServers() {
 
 // Binary messages through the room, after its [player id: u32] address: a kind byte, then a
 // game packet, a piece of something bigger, [id: u32][index: u16][count: u16][bytes] (a game
-// handed over, its id the epoch, or a watch state, its id the stream), or watch inputs,
-// [stream: u32][frame: u32][a u16 mask per controller port per frame].
+// handed over, its id the epoch, or a watch state, its id the stream), watch inputs,
+// [stream: u32][frame: u32][a u16 mask per controller port per frame], or an arcade game's
+// watch frames, [stream: u32][frame: u32][bytes] (web/emulator/worker.js says what's in them).
 const PACKET = 0;
 const HANDOVER = 1;
 const WATCH_STATE = 2;
 const WATCH_INPUTS = 3;
+const WATCH_FRAMES = 4;
 const PIECE = 256 * 1024; // the room takes messages up to 1 MiB
 /** The address of everyone watching our cabinet. */
 const WATCHERS = 0;
+/** The address of a message for several players, listed after it (server/src/lib.rs). */
+const SEVERAL = 0xffffffff;
 
 export class Room {
   /** This player's id in the room, from its welcome. */
@@ -58,8 +62,9 @@ export class Room {
    * @param events welcome(name), moved(id, x, y, flip, name), left(id), said(id, name, text),
    *   seats(cabinet, players), full(cabinet), watchers(cabinet, players), message(from, data)
    *   from another player at our cabinet, handover(from, epoch, bytes) a game handed over (see
-   *   handOver), watchState(from, stream, bytes) and watchInputs(from, stream, frame, inputs)
-   *   the game we watch (see watchState and watchInputs)
+   *   handOver), watchState(from, stream, bytes), watchInputs(from, stream, frame, inputs) and
+   *   watchFrames(from, stream, frame, bytes) the game we watch (see watchState, watchInputs
+   *   and watchFrames)
    * @param name this player's name, if they set one before; else the room gives one
    */
   constructor(url, events, name) {
@@ -171,6 +176,18 @@ export class Room {
     this.#sendPieces(to ?? WATCHERS, WATCH_STATE, stream, bytes);
   }
 
+  /**
+   * An arcade game's frames for one watcher (`to`): what our cabinet ran, as the emulator worker
+   * writes them (a Uint8Array), from `frame` on.
+   */
+  watchFrames(to, stream, frame, bytes) {
+    const header = new DataView(new ArrayBuffer(9));
+    header.setUint8(0, WATCH_FRAMES);
+    header.setUint32(1, stream, true);
+    header.setUint32(5, frame, true);
+    this.#sendBinary(to, new Uint8Array(header.buffer), bytes);
+  }
+
   /** Inputs for everyone watching our cabinet: a Uint16Array, a mask per port per frame. */
   watchInputs(stream, frame, inputs) {
     const header = new DataView(new ArrayBuffer(9));
@@ -196,6 +213,20 @@ export class Room {
   /** A game packet (an ArrayBuffer) for another player, through the room. */
   relay(to, packet) {
     this.#sendBinary(to, Uint8Array.of(PACKET), new Uint8Array(packet));
+  }
+
+  /**
+   * A game packet for several players (ids, up to 255), sent through the room once: it arrives
+   * as from a link (Link.onpacket), as `relay`'s do.
+   */
+  relaySeveral(ids, packet) {
+    if (ids.length === 1) return this.relay(ids[0], packet);
+    const header = new Uint8Array(1 + ids.length * 4 + 1);
+    const view = new DataView(header.buffer);
+    header[0] = ids.length;
+    ids.forEach((id, i) => view.setUint32(1 + i * 4, id, true));
+    header[header.length - 1] = PACKET;
+    this.#sendBinary(SEVERAL, header, new Uint8Array(packet));
   }
 
   #sendBinary(to, header, body) {
@@ -296,6 +327,10 @@ export class Room {
     if (kind === WATCH_INPUTS) {
       // Copied: a Uint16Array can't start at an odd offset.
       this.#events.watchInputs(from, id, view.getUint32(9, true), new Uint16Array(message.slice(13)));
+      return;
+    }
+    if (kind === WATCH_FRAMES) {
+      this.#events.watchFrames?.(from, id, view.getUint32(9, true), new Uint8Array(message.slice(13)));
       return;
     }
     const index = view.getUint16(9, true);
@@ -494,6 +529,7 @@ class Call {
   /** Sends them our microphone (a MediaStreamTrack), or nothing with null. */
   microphone(track) {
     this.#microphone = track;
+    if (this.#closed) return;
     this.#audio?.sender.replaceTrack(track).catch((error) => console.warn("Voice:", error));
   }
 

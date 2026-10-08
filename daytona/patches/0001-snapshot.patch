@@ -1,0 +1,2584 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 26bb8b2..b0671ce 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -118,6 +118,7 @@ add_library(runtime STATIC
+     src/runtime/native_sound_engine.cpp
+     src/runtime/enhance.cpp
+     src/runtime/comm_board.cpp
++    src/runtime/snapshot.cpp
+ )
+ target_include_directories(runtime PUBLIC src)
+ target_compile_definitions(runtime PUBLIC M2_ROMSET="${M2_ROMSET}")
+@@ -249,6 +250,20 @@ if(EXISTS ${GEN_DIR}/gen_table.cpp AND EXISTS ${TGP_GEN} AND EXISTS ${SND_GEN})
+     if(WIN32)
+         target_link_libraries(m2run PRIVATE ws2_32) # link play's sockets
+     endif()
++    # Snapshots on the real game: saved, loaded into a fresh GameLoop, run
++    # on, held to a straight run frame by frame. Needs the imported images
++    # (rom_cache/<set>); skipped (77) without them. Revision A's factory
++    # settings are a linked cabinet: its run has the comm board on a cable
++    # looped back (a ring of one), which takes it through attract and a race.
++    add_executable(test_snapshot_rom tests/test_snapshot_rom.cpp ${GEN_SOURCES} ${TGP_GEN} ${SND_GEN})
++    target_link_libraries(test_snapshot_rom PRIVATE runtime)
++    set(M2_SNAPSHOT_ROM_ARGS)
++    if(M2_ROMSET STREQUAL "daytona")
++        set(M2_SNAPSHOT_ROM_ARGS --loop-link)
++    endif()
++    add_test(NAME snapshot_rom COMMAND test_snapshot_rom ${CMAKE_BINARY_DIR}/rom_cache/${M2_ROMSET}
++             --inputs ${CMAKE_SOURCE_DIR}/scripts/inputs/race_basic.txt ${M2_SNAPSHOT_ROM_ARGS})
++    set_tests_properties(snapshot_rom PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 3600)
+ 
+     # The game in a window (needs the app objects below).
+     if(TARGET daytona_app)
+@@ -376,6 +391,12 @@ add_executable(test_comm_board tests/test_comm_board.cpp src/runtime/comm_board.
+ target_include_directories(test_comm_board PRIVATE src)
+ add_test(NAME comm_board COMMAND test_comm_board)
+ 
++# Snapshots (save states): a whole GameLoop on synthetic images, with
++# stand-ins for the three recompiled programs (no ROM).
++add_executable(test_snapshot tests/test_snapshot.cpp)
++target_link_libraries(test_snapshot PRIVATE runtime)
++add_test(NAME snapshot COMMAND test_snapshot)
++
+ # Wheel and pedal bindings against SDL virtual joysticks.
+ if(TARGET SDL3::SDL3-static)
+     add_executable(test_app_controls tests/test_app_controls.cpp src/app/controls.cpp src/app/ffb.cpp)
+diff --git a/src/runtime/comm_board.h b/src/runtime/comm_board.h
+index c699c47..d7e1c19 100644
+--- a/src/runtime/comm_board.h
++++ b/src/runtime/comm_board.h
+@@ -23,6 +23,8 @@
+ 
+ namespace rt {
+ 
++class SnapshotAccess; // runtime/snapshot.cpp
++
+ // The two cables: to the next cabinet and from the one before. Non-blocking.
+ class LinkTransport {
+ public:
+@@ -59,6 +61,7 @@ public:
+     int count() const { return linkcount_; }
+ 
+ private:
++    friend class SnapshotAccess;
+     uint8_t *shared_;
+     uint16_t frame_offset_;
+     LinkTransport *transport_ = nullptr;
+diff --git a/src/runtime/enhance.cpp b/src/runtime/enhance.cpp
+index 16f3476..49b14f2 100644
+--- a/src/runtime/enhance.cpp
++++ b/src/runtime/enhance.cpp
+@@ -15,11 +15,10 @@ constexpr uint32_t kBudgetAddr = 0x5010f4, kGameBudget = 5000;
+ 
+ void hook_draw_list(Cpu &c) {
+     const int level = std::clamp(Enhance::draw_distance, Enhance::kDrawMin, Enhance::kDrawMax);
+-    static bool raised = false;
+     const uint32_t budget = level > 0 ? kGameBudget * uint32_t(1 + level) : kGameBudget;
+-    if (level > 0 || raised) {
++    if (level > 0 || Enhance::budget_raised) {
+         c.bus->write_dword(kBudgetAddr, budget);
+-        raised = level > 0;
++        Enhance::budget_raised = level > 0;
+     }
+     if (level == 0) return;
+     const uint32_t car = c.m_r[8];
+diff --git a/src/runtime/enhance.h b/src/runtime/enhance.h
+index 0f7e1f6..a66d0e9 100644
+--- a/src/runtime/enhance.h
++++ b/src/runtime/enhance.h
+@@ -14,6 +14,10 @@ struct Enhance {
+     // around the car, -2 the car's cell only; +1 the whole 5x5, +2 7x7.
+     static constexpr int kDrawMin = -2, kDrawMax = 2;
+     static inline int draw_distance = 0;
++    // hook_draw_list raised the game's polygon budget (it lowers it again
++    // once the draw distance is back to 0). Here, not in the hook, so a
++    // snapshot (runtime/snapshot.h) carries it.
++    static inline bool budget_raised = false;
+ };
+ 
+ // 0x17078 (daytona93; 0x17508 in Revision A, the same code and RAM), after
+diff --git a/src/runtime/game_loop.cpp b/src/runtime/game_loop.cpp
+index 5d14907..6390055 100644
+--- a/src/runtime/game_loop.cpp
++++ b/src/runtime/game_loop.cpp
+@@ -41,7 +41,7 @@ GameLoop::GameLoop(M2Board::Images img, bool sound_enabled) {
+     board_->attach(*cpu_, *ls_);
+     cpu_->reset();
+     env_ = std::make_unique<gen::Env>(gen::Env{*cpu_, *ls_});
+-    ls_->add_callback(kProbe, [this] { probe(); });
++    ls_->add_callback(kProbe, probe_fn(), Lockstep::Callback::FrameProbe);
+ }
+ 
+ void GameLoop::probe() {
+@@ -74,7 +74,7 @@ void GameLoop::probe() {
+             vblank_start_ = ls_->count;
+         }
+     }
+-    ls_->add_callback(ls_->count + kProbe, [this] { probe(); });
++    ls_->add_callback(ls_->count + kProbe, probe_fn(), Lockstep::Callback::FrameProbe);
+ }
+ 
+ void GameLoop::run_frame(const Inputs &inputs) {
+diff --git a/src/runtime/game_loop.h b/src/runtime/game_loop.h
+index b449802..f6818cd 100644
+--- a/src/runtime/game_loop.h
++++ b/src/runtime/game_loop.h
+@@ -17,6 +17,7 @@
+ #include "runtime/sound_board.h"
+ 
+ #include <cstdint>
++#include <functional>
+ #include <memory>
+ #include <string>
+ #include <utility>
+@@ -24,6 +25,8 @@
+ 
+ namespace rt {
+ 
++class SnapshotAccess;
++
+ class GameLoop {
+ public:
+     // Detached, single-use work for one sound-board frame. Only its SoundBoard
+@@ -115,7 +118,9 @@ public:
+     int interrupts() const { return ls_->interrupts(); }
+ 
+ private:
++    friend class SnapshotAccess; // runtime/snapshot.cpp
+     void probe();
++    std::function<void()> probe_fn() { return [this] { probe(); }; } // the frame probe callback (Lockstep::Callback::FrameProbe)
+     FrameProfiler profiler_;
+     std::unique_ptr<M2Board> board_;
+     std::unique_ptr<Cpu> cpu_;
+diff --git a/src/runtime/geo.h b/src/runtime/geo.h
+index d71f07c..79cc3d0 100644
+--- a/src/runtime/geo.h
++++ b/src/runtime/geo.h
+@@ -20,6 +20,8 @@
+ 
+ namespace rt {
+ 
++class SnapshotAccess; // runtime/snapshot.cpp
++
+ struct GeoFatal : std::runtime_error {
+     using std::runtime_error::runtime_error;
+ };
+@@ -229,6 +231,7 @@ public:
+     void set_wide_margin(int pixels) { wide_margin_ = pixels; }
+ 
+ private:
++    friend class SnapshotAccess;
+     int wide_margin_ = 0;
+     std::vector<uint32_t> polygon_rom_;
+     std::vector<uint16_t> texture_rom_;
+diff --git a/src/runtime/lockstep.cpp b/src/runtime/lockstep.cpp
+index 9c87856..bee1ada 100644
+--- a/src/runtime/lockstep.cpp
++++ b/src/runtime/lockstep.cpp
+@@ -106,10 +106,11 @@ bool Lockstep::apply() {
+     return core_.m_IP != ip_before;
+ }
+ 
+-void Lockstep::add_callback(uint64_t at, std::function<void()> fn) {
++void Lockstep::add_callback(uint64_t at, std::function<void()> fn, Callback tag) {
+     Event e{};
+     e.kind = Event::Call;
+     e.count = at;
++    e.tag = tag;
+ #ifdef M2_DC_MEMORY
+     if (!free_calls_.empty()) {
+         e.fn = free_calls_.back();
+diff --git a/src/runtime/lockstep.h b/src/runtime/lockstep.h
+index be46ab5..172d870 100644
+--- a/src/runtime/lockstep.h
++++ b/src/runtime/lockstep.h
+@@ -15,8 +15,16 @@
+ 
+ namespace rt {
+ 
++class SnapshotAccess; // runtime/snapshot.cpp
++
+ class Lockstep {
+ public:
++    // What a free-run callback does, for snapshots (runtime/snapshot.h): the
++    // pending callbacks are saved by tag and their owners make them again on
++    // load. A tool's own callbacks are untagged: no snapshot is taken while
++    // one is pending.
++    enum class Callback : uint8_t { Untagged, FrameProbe, UartShift };
++
+     // Loads MAME's IRQ log (M2TRACE_IRQLOG) and hooks the core's take callback.
+     Lockstep(Cpu &core, const std::string &irq_log_path);
+     // Free run (the game on its own, no MAME): no log; the board schedules
+@@ -55,7 +63,7 @@ public:
+     // event at the same count (MAME's vblank handler parses the display list
+     // before it raises the vblank line). Lockstep: call before the run
+     // starts. Free run: callbacks may add further callbacks.
+-    void add_callback(uint64_t at, std::function<void()> fn);
++    void add_callback(uint64_t at, std::function<void()> fn, Callback tag = Callback::Untagged);
+     // Free run: an interrupt line changed; take it at the next boundary.
+ #ifdef M2_DC_SPEED
+     // The rewritten generated code keeps the instructions it has run since
+@@ -80,12 +88,14 @@ public:
+     int interrupts() const { return taken_; }
+ 
+ private:
++    friend class SnapshotAccess;
+     struct Event {
+         enum Kind { Call, Line, Imm, Pend, End } kind;
+         uint64_t count;
+         int a = 0, b = 0;
+         uint32_t ip = 0;
+         size_t fn = 0; // Call: index into calls_
++        Callback tag = Callback::Untagged;
+     };
+     std::vector<std::function<void()>> calls_;
+     bool apply();
+diff --git a/src/runtime/m2_board.cpp b/src/runtime/m2_board.cpp
+index 9084024..66aaa74 100644
+--- a/src/runtime/m2_board.cpp
++++ b/src/runtime/m2_board.cpp
+@@ -280,9 +280,9 @@ void M2Board::uart_write_data(uint8_t v) {
+     if (!uart_shift_busy_) {
+         uart_shift_busy_ = true;
+ #ifdef M2_DC_SPEED
+-        ls_->add_callback(ls_->now() + 1, [this] { uart_shift_done(); }); // (now(): Lockstep::pending)
++        ls_->add_callback(ls_->now() + 1, uart_shift_fn(), Lockstep::Callback::UartShift); // (now(): Lockstep::pending)
+ #else
+-        ls_->add_callback(ls_->count + 1, [this] { uart_shift_done(); });
++        ls_->add_callback(ls_->count + 1, uart_shift_fn(), Lockstep::Callback::UartShift);
+ #endif
+     }
+ }
+diff --git a/src/runtime/m2_board.h b/src/runtime/m2_board.h
+index 0d94aac..06859c9 100644
+--- a/src/runtime/m2_board.h
++++ b/src/runtime/m2_board.h
+@@ -22,6 +22,7 @@
+ #include <array>
+ #include <cstdint>
+ #include <deque>
++#include <functional>
+ #include <memory>
+ #include <string>
+ #include <utility>
+@@ -31,6 +32,8 @@
+ 
+ namespace rt {
+ 
++class SnapshotAccess; // runtime/snapshot.cpp
++
+ struct Inputs {
+     uint8_t steer = 0x80, accel = 0x20, brake = 0x20; // ADC values, 0x20-0xe0
+     uint8_t in0 = 0xff, in1 = 0x8f, in2 = 0xff;       // switches, active low (MAME IN0/IN1/IN2 layout)
+@@ -55,6 +58,7 @@ public:
+     IoBoard() { ram_.fill(0); eeprom.fill(0xff); }
+ 
+ private:
++    friend class SnapshotAccess;
+     std::array<uint8_t, 0x800> ram_;
+ };
+ 
+@@ -122,6 +126,7 @@ public:
+ #endif
+ 
+ private:
++    friend class SnapshotAccess;
+     enum Kind : uint8_t { Unmapped, Rom, Ram, Tex, Dev };
+     struct Page {
+         Kind kind = Unmapped;
+@@ -210,6 +215,7 @@ private:
+     std::vector<uint8_t> uart_out_;
+     uint64_t sound_total_ = 0;
+     void uart_shift_done();
++    std::function<void()> uart_shift_fn() { return [this] { uart_shift_done(); }; } // (Lockstep::Callback::UartShift)
+ };
+ 
+ } // namespace rt
+diff --git a/src/runtime/m2_tgp_board.h b/src/runtime/m2_tgp_board.h
+index 5fb43cc..4adbabf 100644
+--- a/src/runtime/m2_tgp_board.h
++++ b/src/runtime/m2_tgp_board.h
+@@ -14,6 +14,7 @@
+ 
+ namespace rt {
+ 
++class SnapshotAccess; // runtime/snapshot.cpp
+ 
+ class TgpBoard : public TgpBus {
+ public:
+@@ -54,6 +55,7 @@ public:
+     void mem_w(uint32_t adr, uint32_t v) override;
+ 
+ private:
++    friend class SnapshotAccess;
+     void run_tgp();
+     void push_geo(uint32_t data);
+ 
+diff --git a/src/runtime/multipcm.h b/src/runtime/multipcm.h
+index 0470fd6..4636aea 100644
+--- a/src/runtime/multipcm.h
++++ b/src/runtime/multipcm.h
+@@ -9,6 +9,10 @@
+ #include <cstdint>
+ #include <memory>
+ 
++namespace rt {
++class SnapshotAccess; // runtime/snapshot.cpp
++}
++
+ namespace snd {
+ 
+ class MultiPcm {
+@@ -32,6 +36,7 @@ public:
+     }
+ 
+ private:
++    friend class rt::SnapshotAccess;
+     struct Sample {
+         uint32_t start = 0, loop = 0, end = 0;
+         uint8_t attack_reg = 0, decay1_reg = 0, decay2_reg = 0, decay_level = 0, release_reg = 0, key_rate_scale = 0;
+diff --git a/src/runtime/raster.h b/src/runtime/raster.h
+index 3627d9c..3e2e748 100644
+--- a/src/runtime/raster.h
++++ b/src/runtime/raster.h
+@@ -24,6 +24,8 @@
+ 
+ namespace rt {
+ 
++class SnapshotAccess; // runtime/snapshot.cpp
++
+ // The video memories the rasterizer reads, as the i960 sees them.
+ struct VideoMem {
+     const uint8_t *palram = nullptr;    // 0x01800000, 0x4000 bytes (u16 entries)
+@@ -81,6 +83,7 @@ public:
+     struct Extra; // per-polygon shading state (MAME m2_poly_extra_data)
+ 
+ private:
++    friend class SnapshotAccess;
+     int stride_ = 512, margin_ = 0;
+     int hud_dx_ = 0;                           // HUD overlay move (0 = none)
+     float hud_box_[4] = {0, 0, 0, 0};          // the condition box: x0, x1, y0, y1 (496-wide)
+diff --git a/src/runtime/snapshot.cpp b/src/runtime/snapshot.cpp
+new file mode 100644
+index 0000000..bde1925
+--- /dev/null
++++ b/src/runtime/snapshot.cpp
+@@ -0,0 +1,816 @@
++// Snapshots of the machine (see snapshot.h). One description of each part's
++// fields serves both directions: a Writer appends them, a Reader reads them
++// back, first only checking (nothing is written) and then, if the whole
++// state checked out, applying.
++
++#include "runtime/snapshot.h"
++
++#include <algorithm>
++#include <bit>
++#include <cstdint>
++#include <cstring>
++#include <deque>
++#include <string>
++#include <type_traits>
++#include <utility>
++
++#if defined(M2_DC_MEMORY) || defined(M2_DC_SPEED)
++#error "snapshots do not cover the Dreamcast build's memory layout and fast paths"
++#endif
++
++static_assert(std::endian::native == std::endian::little, "snapshots are little-endian, as every host this builds for");
++static_assert(sizeof(int) == 4, "int fields are saved as 32 bits");
++
++// ymfm's save_restore leaves three of its engine's counters out: which
++// channels are summed into the output (refreshed every 4096 samples) and the
++// schedule of those refreshes. Without them a loaded chip sums its channels
++// differently for up to 4096 samples. They are reached through pointers to
++// members named in explicit instantiations, where access is not checked
++// ([temp.spec.general]: "The usual access checking rules do not apply to
++// names used to specify explicit instantiations"); ymfm itself is unchanged.
++namespace rt::ymfm_access {
++template <typename Tag, typename Tag::type M> struct Expose {
++    friend typename Tag::type member(Tag) { return M; }
++};
++using Engine = ymfm::fm_engine_base<ymfm::opna_registers>;
++struct Fm { using type = Engine ymfm::ym2612::*; friend type member(Fm); };
++struct Active { using type = uint32_t Engine::*; friend type member(Active); };
++struct Modified { using type = uint32_t Engine::*; friend type member(Modified); };
++struct Prepare { using type = uint32_t Engine::*; friend type member(Prepare); };
++template struct Expose<Fm, &ymfm::ym2612::m_fm>;
++template struct Expose<Active, &Engine::m_active_channels>;
++template struct Expose<Modified, &Engine::m_modified_channels>;
++template struct Expose<Prepare, &Engine::m_prepare_count>;
++} // namespace rt::ymfm_access
++
++namespace rt {
++
++namespace {
++
++constexpr char kMagic[8] = {'M', '2', 'S', 'N', 'A', 'P', 'S', 'T'};
++constexpr uint32_t kVersion = 1, kHeaderSize = 64, kSectionHeader = 16;
++
++// Limits for state_size_bound only (a load takes any count its section's
++// size allows): far above anything seen.
++constexpr size_t kBoundPolys = 8192;        // kept polygons in a frame (attract and race: 2,182)
++constexpr size_t kBoundFifoWords = 65536;   // each TGP FIFO
++constexpr size_t kBoundUartBytes = 65536;   // bytes for the sound board not yet taken
++constexpr size_t kBoundSoundEvents = 65536; // sound board events (bytes on the line, YM timers)
++constexpr size_t kBoundCallbacks = 64;      // i960 callbacks (the frame probe, a UART shift)
++constexpr size_t kMaxPolys = 32768;         // MAME MAX_POLYGONS: Geo stops there
++
++constexpr uint32_t fourcc(const char (&s)[5]) {
++    return uint32_t(uint8_t(s[0])) | uint32_t(uint8_t(s[1])) << 8 | uint32_t(uint8_t(s[2])) << 16 |
++           uint32_t(uint8_t(s[3])) << 24;
++}
++
++// A check against truncation and corruption, not a cryptographic hash: four
++// lanes of multiply-rotate over 8-byte words, each step a bijection of the
++// lane, so any single changed word changes the result.
++uint64_t hash64(const uint8_t *p, size_t n) {
++    constexpr uint64_t k1 = 0x9e3779b97f4a7c15ull, k2 = 0xc2b2ae3d27d4eb4full;
++    uint64_t h[4] = {k1, k2, ~k1, ~k2};
++    size_t i = 0;
++    for (; i + 32 <= n; i += 32)
++        for (int l = 0; l < 4; ++l) {
++            uint64_t w;
++            std::memcpy(&w, p + i + size_t(l) * 8, 8);
++            h[l] = std::rotl(h[l] ^ (w * k2), 31) * k1;
++        }
++    uint64_t tail = 0, r = uint64_t(n);
++    for (size_t k = 0; i < n; ++i, ++k) {
++        tail |= uint64_t(p[i]) << (8 * (k & 7));
++        if ((k & 7) == 7 || i + 1 == n) r = std::rotl(r ^ (tail * k2), 31) * k1, tail = 0;
++    }
++    for (uint64_t v : h) r = std::rotl(r ^ v, 27) * k1 + k2;
++    r ^= r >> 33, r *= 0xff51afd7ed558ccdull, r ^= r >> 33, r *= 0xc4ceb9fe1a85ec53ull, r ^= r >> 33;
++    return r;
++}
++
++// --- the two directions ---------------------------------------------------------
++
++class Writer {
++public:
++    static constexpr bool kSaving = true;
++    explicit Writer(std::vector<uint8_t> &out) : out_(out) {}
++    bool ok() const { return true; }
++    bool apply() const { return false; }
++    template <typename T> T operator()(const T &v) {
++        static_assert(std::is_arithmetic_v<T> && sizeof(T) <= 8);
++        if constexpr (std::is_same_v<T, bool>) out_.push_back(v ? 1 : 0);
++        else put(&v, sizeof v);
++        return v;
++    }
++    template <typename E> E en(const E &v, E max) { // an enum (u8)
++        (void)max;
++        out_.push_back(uint8_t(v));
++        return v;
++    }
++    void raw(const void *p, size_t n) { put(p, n); }
++    template <typename T, size_t N> void arr(const T (&a)[N]) {
++        static_assert(std::is_arithmetic_v<T> && !std::is_same_v<T, bool>);
++        put(a, sizeof a);
++    }
++    // A vector of up to `max` elements; a vector whose length the target
++    // must share.
++    template <typename T> void vec(const std::vector<T> &v, size_t max = SIZE_MAX) {
++        require(v.size() <= max && v.size() <= UINT32_MAX, "a queue past its limit");
++        (*this)(uint32_t(v.size()));
++        put(v.data(), v.size() * sizeof(T));
++    }
++    template <typename T> void fixed(const std::vector<T> &v) { vec(v); }
++    uint32_t count(uint32_t n, size_t) { return (*this)(n); }
++    bool require(bool ok, const char *what) {
++        if (!ok) throw Fatal(std::string("snapshot: cannot save: ") + what);
++        return true;
++    }
++    template <typename F> void section(const char (&tag)[5], uint32_t version, F &&body) {
++        (*this)(fourcc(tag));
++        (*this)(version);
++        const size_t at = out_.size();
++        (*this)(uint64_t(0));
++        body();
++        const uint64_t size = out_.size() - at - 8;
++        std::memcpy(out_.data() + at, &size, 8);
++    }
++
++private:
++    void put(const void *p, size_t n) {
++        const auto *b = static_cast<const uint8_t *>(p);
++        out_.insert(out_.end(), b, b + n);
++    }
++    std::vector<uint8_t> &out_;
++};
++
++class Reader {
++public:
++    static constexpr bool kSaving = false;
++    Reader(const uint8_t *p, size_t n, bool apply) : p_(p), end_(p + n), apply_(apply) {}
++    bool ok() const { return ok_; }
++    bool apply() const { return apply_; }
++    bool at_end() const { return p_ == end_; }
++    // Reads a field, stores it only when applying; returns what was read.
++    template <typename T> T operator()(T &v) {
++        static_assert(std::is_arithmetic_v<T> && sizeof(T) <= 8);
++        const T t = get<T>();
++        if (apply_ && ok_) v = t;
++        return t;
++    }
++    template <typename T> T get() {
++        if constexpr (std::is_same_v<T, bool>) {
++            const uint8_t b = get<uint8_t>();
++            require(b <= 1, "bool");
++            return b != 0;
++        } else {
++            T t{};
++            if (need(sizeof t)) {
++                std::memcpy(&t, p_, sizeof t);
++                p_ += sizeof t;
++            }
++            return t;
++        }
++    }
++    template <typename E> E en(E &v, E max) {
++        const uint8_t u = get<uint8_t>();
++        require(u <= uint8_t(max), "enum");
++        if (apply_ && ok_) v = E(u);
++        return E(u);
++    }
++    void raw(void *p, size_t n) {
++        if (!need(n)) return;
++        if (apply_) std::memcpy(p, p_, n);
++        p_ += n;
++    }
++    template <typename T, size_t N> void arr(T (&a)[N]) {
++        static_assert(std::is_arithmetic_v<T> && !std::is_same_v<T, bool>);
++        raw(a, sizeof a);
++    }
++    template <typename T> void vec(std::vector<T> &v, size_t max = SIZE_MAX) {
++        const uint32_t n = count(0, sizeof(T));
++        if (!require(n <= max, "a queue past its limit")) return;
++        if (apply_) v.resize(n);
++        raw(v.data(), size_t(n) * sizeof(T));
++    }
++    void skip(size_t n) {
++        if (need(n)) p_ += n;
++    }
++    template <typename T> void fixed(std::vector<T> &v) {
++        const uint32_t n = get<uint32_t>();
++        if (require(n == v.size(), "size")) raw(v.data(), size_t(n) * sizeof(T));
++    }
++    // A count of elements of at least `min_bytes` each, which must fit in
++    // what is left of the section.
++    uint32_t count(uint32_t, size_t min_bytes) {
++        const uint32_t n = get<uint32_t>();
++        require(uint64_t(n) * min_bytes <= uint64_t(end_ - p_), "count");
++        return ok_ ? n : 0;
++    }
++    bool require(bool ok, const char *) {
++        if (!ok) fail();
++        return ok_;
++    }
++    template <typename F> void section(const char (&tag)[5], uint32_t version, F &&body) {
++        const uint32_t t = get<uint32_t>(), v = get<uint32_t>();
++        const uint64_t size = get<uint64_t>();
++        if (!require(t == fourcc(tag) && v == version && size <= uint64_t(end_ - p_), "section")) return;
++        const uint8_t *const outer = end_;
++        end_ = p_ + size;
++        body();
++        require(p_ == end_, "section size");
++        p_ = end_;
++        end_ = outer;
++    }
++    void skip_section_rest() { p_ = end_; }
++
++private:
++    bool need(size_t n) {
++        if (ok_ && size_t(end_ - p_) >= n) return true;
++        fail();
++        return false;
++    }
++    void fail() {
++        ok_ = false;
++        p_ = end_;
++    }
++    const uint8_t *p_, *end_;
++    bool apply_, ok_ = true;
++};
++
++} // namespace
++
++// --- the parts --------------------------------------------------------------------
++
++class SnapshotAccess {
++public:
++    template <class Ar> static void state(Ar &ar, GameLoop &g);
++    static size_t bound(const GameLoop &g);
++    static uint8_t *work_ram(M2Board &b, size_t *size) {
++        if (size) *size = b.work_.size();
++        return b.work_.data();
++    }
++    static const M2Board::Images &images(const GameLoop &g) { return g.board_->img_; }
++    static bool sound_pending(const GameLoop &g) { return g.sound_frame_pending_; }
++    static void loaded(GameLoop &g);
++
++private:
++    template <class Ar> static void loop(Ar &ar, GameLoop &g);
++    template <class Ar> static void cpu(Ar &ar, Cpu &c);
++    template <class Ar> static void lockstep(Ar &ar, GameLoop &g);
++    template <class Ar> static void enhance(Ar &ar);
++    template <class Ar> static void board(Ar &ar, M2Board &b);
++    template <class Ar> static void rams(Ar &ar, M2Board &b);
++    template <class Ar> static void io(Ar &ar, IoBoard &io);
++    template <class Ar> static void tgp_board(Ar &ar, TgpBoard &t);
++    template <class Ar> static void tgp(Ar &ar, Tgp &t);
++    template <class Ar> static void geo(Ar &ar, Geo &g);
++    template <class Ar> static void video(Ar &ar, Video &v);
++    template <class Ar> static void comm(Ar &ar, M2Board &b);
++    template <class Ar> static void sound(Ar &ar, snd::SoundBoard *s);
++    template <class Ar> static void ym(Ar &ar, snd::SoundBoard *s);
++    template <class Ar> static void pcm(Ar &ar, snd::SoundBoard *s, int chip);
++    template <class Ar> static void fifo(Ar &ar, std::deque<uint32_t> &q);
++    template <class Ar> static void vertex(Ar &ar, GeoVertex &v);
++    template <class Ar> static bool present(Ar &ar, bool here);
++};
++
++template <class Ar> void SnapshotAccess::state(Ar &ar, GameLoop &g) {
++    M2Board &b = *g.board_;
++    ar.section("LOOP", 1, [&] { loop(ar, g); });
++    ar.section("CPU ", 1, [&] { cpu(ar, *g.cpu_); });
++    ar.section("LOCK", 1, [&] { lockstep(ar, g); });
++    ar.section("ENH ", 1, [&] { enhance(ar); });
++    ar.section("BRD ", 1, [&] { board(ar, b); });
++    ar.section("RAM ", 1, [&] { rams(ar, b); });
++    ar.section("IO  ", 1, [&] { io(ar, b.io_); });
++    ar.section("TGPB", 1, [&] { tgp_board(ar, b.tgp_); });
++    ar.section("TGP ", 1, [&] { tgp(ar, b.tgp_.tgp_); });
++    ar.section("GEO ", 1, [&] { geo(ar, *b.geo_); });
++    ar.section("VID ", 1, [&] { video(ar, *b.video_); });
++    ar.section("COMM", 1, [&] { comm(ar, b); });
++    ar.section("SND ", 1, [&] { sound(ar, g.sound_.get()); });
++    ar.section("YM  ", 1, [&] { ym(ar, g.sound_.get()); });
++    ar.section("PCM1", 1, [&] { pcm(ar, g.sound_.get(), 0); });
++    ar.section("PCM2", 1, [&] { pcm(ar, g.sound_.get(), 1); });
++    ar.section("END ", 1, [] {});
++}
++
++template <class Ar> void SnapshotAccess::loop(Ar &ar, GameLoop &g) {
++    ar(g.frames_);
++    ar(g.frame_start_);
++    ar(g.vblank_start_);
++    ar(g.in_vblank_);
++    ar(g.frame_done_);
++    Inputs &in = g.inputs_;
++    ar(in.steer), ar(in.accel), ar(in.brake), ar(in.in0), ar(in.in1), ar(in.in2);
++}
++
++template <class Ar> void SnapshotAccess::cpu(Ar &ar, Cpu &c) {
++    ar.arr(c.m_r);
++    ar.raw(c.m_rcache, sizeof c.m_rcache);
++    ar.arr(c.m_rcache_frame_addr);
++    ar.require(ar(c.m_rcache_pos) >= 0, "register cache position");
++    ar.arr(c.m_fp); // doubles: their bits
++    ar(c.m_SAT), ar(c.m_PRCB), ar(c.m_PC), ar(c.m_AC), ar(c.m_IP), ar(c.m_PIP), ar(c.m_ICR);
++    ar(c.m_immediate_irq), ar(c.m_immediate_vector), ar(c.m_immediate_pri);
++    ar.arr(c.m_irq_line_state);
++}
++
++// The pending free-run callbacks, by tag, in the order they will run.
++template <class Ar> void SnapshotAccess::lockstep(Ar &ar, GameLoop &g) {
++    Lockstep &ls = *g.ls_;
++    ar.require(ls.free_run_, "the lockstep harness (a MAME log) has no snapshots");
++    ar(ls.count), ar(ls.end_count), ar(ls.next_count), ar(ls.poked_), ar(ls.taken_);
++    using Callback = Lockstep::Callback;
++    if constexpr (Ar::kSaving) {
++        ar(uint32_t(ls.log_.size() - ls.next_));
++        for (size_t i = ls.next_; i < ls.log_.size(); ++i) {
++            const Lockstep::Event &e = ls.log_[i];
++            ar.require(e.kind == Lockstep::Event::Call && e.tag != Callback::Untagged,
++                       "a callback no snapshot knows is pending (a tool's own)");
++            ar(e.count);
++            ar.en(e.tag, Callback::UartShift);
++        }
++    } else {
++        const uint32_t n = ar.count(0, 9);
++        std::vector<std::pair<uint64_t, Callback>> events;
++        uint64_t last = 0;
++        for (uint32_t i = 0; i < n && ar.ok(); ++i) {
++            const uint64_t at = ar.template get<uint64_t>();
++            Callback unused = Callback::Untagged;
++            const Callback tag = ar.en(unused, Callback::UartShift);
++            ar.require(tag != Callback::Untagged, "untagged callback");
++            ar.require(at >= last, "callbacks out of order");
++            last = at;
++            events.emplace_back(at, tag);
++        }
++        if (!ar.apply() || !ar.ok()) return;
++        ls.log_.clear();
++        ls.calls_.clear();
++        ls.next_ = 0;
++        for (const auto &[at, tag] : events) {
++            Lockstep::Event e{};
++            e.kind = Lockstep::Event::Call;
++            e.count = at;
++            e.fn = ls.calls_.size();
++            e.tag = tag;
++            ls.calls_.push_back(tag == Callback::FrameProbe ? g.probe_fn() : g.board_->uart_shift_fn());
++            ls.log_.push_back(e);
++        }
++    }
++}
++
++template <class Ar> void SnapshotAccess::enhance(Ar &ar) {
++    const int level = ar(Enhance::draw_distance);
++    ar.require(level >= Enhance::kDrawMin && level <= Enhance::kDrawMax, "draw distance");
++    ar(Enhance::budget_raised);
++}
++
++template <class Ar> void SnapshotAccess::board(Ar &ar, M2Board &b) {
++    ar(b.intreq_), ar(b.intena_);
++    ar.arr(b.lines_);
++    ar.arr(b.timervals_);
++    ar(b.videocontrol_), ar(b.zclip_);
++    ar(b.render_mode_), ar(b.render_test_), ar(b.render_unk_);
++    ar(b.comm_cn_), ar(b.comm_fg_);
++    ar(b.frame_);
++    ar(b.uart_txrdy_), ar(b.uart_shift_busy_), ar(b.uart_have_hold_), ar(b.uart_hold_);
++    ar.vec(b.uart_out_);
++    ar(b.sound_total_);
++}
++
++template <class Ar> void SnapshotAccess::rams(Ar &ar, M2Board &b) {
++    for (std::vector<uint8_t> *r : {&b.ram_, &b.work_, &b.cpuctl_, &b.backup_, &b.tile_, &b.chr_, &b.palette_, &b.xlat_,
++                                    &b.tex0_, &b.tex1_, &b.luma_, &b.fb_a_, &b.fb_b_, &b.comm_})
++        ar.fixed(*r);
++}
++
++template <class Ar> void SnapshotAccess::io(Ar &ar, IoBoard &io) {
++    ar.raw(io.ram_.data(), io.ram_.size());
++    ar.raw(io.eeprom.data(), io.eeprom.size());
++    Inputs &in = io.inputs;
++    ar(in.steer), ar(in.accel), ar(in.brake), ar(in.in0), ar(in.in1), ar(in.in2);
++}
++
++template <class Ar> void SnapshotAccess::fifo(Ar &ar, std::deque<uint32_t> &q) {
++    if constexpr (Ar::kSaving) {
++        ar(uint32_t(q.size()));
++        for (uint32_t w : q) ar(w);
++    } else {
++        const uint32_t n = ar.count(0, 4);
++        if (ar.apply() && ar.ok()) q.clear();
++        for (uint32_t i = 0; i < n && ar.ok(); ++i) {
++            const uint32_t w = ar.template get<uint32_t>();
++            if (ar.apply()) q.push_back(w);
++        }
++    }
++}
++
++template <class Ar> void SnapshotAccess::tgp_board(Ar &ar, TgpBoard &t) {
++    fifo(ar, t.in_);
++    fifo(ar, t.out_);
++    ar.vec(t.upload_, 0x1000); // (fifo_w's limit)
++    ar(t.coproctl_), ar(t.geoctl_), ar(t.geo_write_start_), ar(t.geo_read_start_);
++    ar(t.booted_);
++    ar.arr(t.buffer_);
++}
++
++template <class Ar> void SnapshotAccess::tgp(Ar &ar, Tgp &t) {
++    ar(t.st), ar(t.a), ar(t.b), ar(t.d), ar(t.p);
++    ar(t.alu_stmask), ar(t.alu_stset), ar(t.alu_r1), ar(t.alu_r2);
++    ar(t.pc), ar(t.sp), ar(t.b0), ar(t.b1), ar(t.x0), ar(t.x1), ar(t.i0), ar(t.i1), ar(t.vsmr);
++    ar.arr(t.pcs);
++    ar(t.mask), ar(t.m);
++    ar(t.r), ar(t.rpc), ar(t.c0), ar(t.c1), ar(t.sft), ar(t.vsm);
++    ar(t.gpio0), ar(t.stall);
++    ar(t.count);
++    ar(t.bank_reg), ar(t.sincos_base), ar(t.inv_base), ar(t.isqrt_base);
++    ar.arr(t.atan_base);
++    ar.arr(t.data);
++    ar.arr(t.prog);
++}
++
++template <class Ar> void SnapshotAccess::vertex(Ar &ar, GeoVertex &v) {
++    ar(v.x), ar(v.y);
++    ar.arr(v.p);
++}
++
++template <class Ar> void SnapshotAccess::geo(Ar &ar, Geo &g) {
++    Geo::raster_state &r = g.raster_;
++    ar.arr(r.viewport);
++    ar.raw(r.center, sizeof r.center);
++    ar.require(ar(r.center_sel) < 4, "center select");
++    ar(r.reverse), ar(r.z_adjust), ar(r.polygon_z), ar(r.master_z_clip), ar(r.cur_command);
++    ar.arr(r.command_buffer);
++    ar.require(ar(r.command_index) <= 32, "command index");
++    ar(r.poly_list_index), ar(r.min_z), ar(r.max_z);
++    ar.arr(r.texture_ram);
++    ar.arr(r.log_ram);
++    ar(r.cur_window);
++    for (auto &planes : r.clip_plane)
++        for (Geo::plane &pl : planes) vertex(ar, pl.normal), ar(pl.distance);
++
++    Geo::geo_state &s = g.geo_;
++    ar(s.mode);
++    ar.arr(s.matrix);
++    vertex(ar, s.focus);
++    vertex(ar, s.light);
++    ar(s.lod);
++    ar.arr(s.coef_table);
++    for (Geo::texture_parameter &tp : s.texture_parameters)
++        ar(tp.diffuse), ar(tp.ambient), ar(tp.specular_control), ar(tp.specular_scale);
++    ar.arr(s.polygon_ram0);
++    ar.arr(s.polygon_ram1);
++
++    // The last frame's polygons: drawn again while the 3D layer is kept (30 Hz
++    // mode), counted by polygon_count_r. Vertices past num_vertices are
++    // always zero (a fresh GeoPoly each).
++    std::vector<GeoPoly> &polys = g.polys;
++    const uint32_t n = ar.count(uint32_t(polys.size()), 33);
++    if (!ar.require(n <= kMaxPolys, "polygon count")) return;
++    if (ar.apply()) polys.assign(n, GeoPoly{});
++    GeoPoly scratch;
++    for (uint32_t i = 0; i < n && ar.ok(); ++i) {
++        GeoPoly &p = (Ar::kSaving || ar.apply()) ? polys[i] : scratch;
++        ar(p.z);
++        ar.arr(p.texheader);
++        ar(p.luma), ar(p.texlod);
++        ar.arr(p.viewport);
++        ar.arr(p.center);
++        ar(p.window), ar(p.reverse);
++        const uint8_t nv = ar(p.num_vertices);
++        if (!ar.require(nv <= 8, "polygon vertices")) return;
++        for (uint8_t k = 0; k < nv; ++k) vertex(ar, p.v[k]);
++    }
++}
++
++template <class Ar> void SnapshotAccess::video(Ar &ar, Video &v) {
++    // Pens are not a function of palette RAM alone (a colour-translation
++    // write recomputes only the first 4096 at the next update): kept as they are.
++    ar.arr(v.pens_);
++    ar(v.palette_dirty_);
++    ar(v.crtc_x_), ar(v.crtc_y_), ar(v.render_x_), ar(v.render_y_);
++    const bool kept = ar(v.render_done_);
++    ar(v.rendered_now_);
++    ar(v.coverage_), ar(v.hud_on_);
++    // The 3D layer's visible part, width() x H, as screen_update copies it:
++    // shown again while render_done_ (until the geometrizer's next frame, a
++    // frame later in 30 Hz mode), and what raster().pixels() and
++    // raster_hash() give until the next 3D frame clears it (through 2D
++    // screens too, where nothing draws over it).
++    Raster &r = v.raster_;
++    uint32_t margin = uint32_t(r.margin_), width = uint32_t(Video::W + 2 * r.margin_), rows = Video::H;
++    margin = ar(margin), width = ar(width), rows = ar(rows);
++    if (!ar.require(width == Video::W + 2 * margin && rows == Video::H, "3D layer size")) return;
++    if constexpr (Ar::kSaving) {
++        for (uint32_t y = 0; y < rows; ++y) ar.raw(r.dest_.data() + size_t(y) * size_t(r.stride_), width * 4);
++    } else if (int(margin) != r.margin_) {
++        // Another widescreen margin here: a kept layer is drawn again from
++        // the polygons at the next update instead.
++        ar.skip(size_t(width) * rows * 4);
++        if (ar.apply() && ar.ok() && kept) v.render_done_ = false;
++    } else {
++        if (ar.apply()) std::fill(r.dest_.begin(), r.dest_.end(), 0u);
++        for (uint32_t y = 0; y < rows && ar.ok(); ++y) ar.raw(r.dest_.data() + size_t(y) * size_t(r.stride_), width * 4);
++    }
++}
++
++template <class Ar> bool SnapshotAccess::present(Ar &ar, bool here) {
++    if constexpr (Ar::kSaving) return ar(here);
++    else return ar.template get<bool>();
++}
++
++template <class Ar> void SnapshotAccess::comm(Ar &ar, M2Board &b) {
++    const bool here = b.comm_board_ != nullptr;
++    // A link-play state goes to a machine with a link (set_link first), and
++    // only there: the game reads the board's registers.
++    if (!ar.require(present(ar, here) == here, "link play: the comm board's presence differs")) return;
++    if (!here) return;
++    CommBoard &c = *b.comm_board_;
++    uint16_t offset = c.frame_offset_;
++    ar.require(ar(offset) == c.frame_offset_, "comm frame offset");
++    ar(c.zfg_), ar(c.cn_), ar(c.fg_), ar(c.framesync_);
++    ar(c.linkenable_), ar(c.linkalive_), ar(c.linkid_), ar(c.linkcount_), ar(c.zfg_delay_);
++    ar(c.linktimer_);
++    ar.arr(c.buffer0_);
++    ar.vec(c.rx_);
++}
++
++// The sound board. A state without one leaves this machine's as it is; one
++// with it, loaded where there is none (a frontend with its own audio), is
++// skipped: the i960 never reads the sound board, so the game is the same.
++template <class Ar> void SnapshotAccess::sound(Ar &ar, snd::SoundBoard *s) {
++    const bool there = present(ar, s != nullptr);
++    if (!there) return;
++    if constexpr (!Ar::kSaving)
++        if (!s) return ar.skip_section_rest();
++    snd::Cpu68k &c = s->cpu_;
++    ar.arr(c.d), ar.arr(c.a);
++    ar(c.other_sp), ar(c.pc);
++    ar(c.x), ar(c.n), ar(c.z), ar(c.v), ar(c.c);
++    ar(c.sys);
++    ar(c.irq_line);
++    ar.fixed(c.ram);
++
++    snd::Sched &sc = s->sched_;
++    ar(sc.count), ar(sc.end_count), ar(sc.next_count), ar(sc.auto_irq);
++    if constexpr (Ar::kSaving) {
++        ar(uint32_t(sc.events_.size()));
++        for (const auto &[at, e] : sc.events_) {
++            ar.require(e.tag.kind == snd::SoundBoard::kRxByte || e.tag.kind == snd::SoundBoard::kYmTimer,
++                       "a sound event no snapshot knows is pending (a tool's own)");
++            ar(at), ar(e.tag.kind), ar(e.tag.arg);
++        }
++    } else {
++        const uint32_t n = ar.count(0, 20);
++        std::vector<std::pair<uint64_t, snd::Sched::Tag>> events;
++        uint64_t last = 0;
++        for (uint32_t i = 0; i < n && ar.ok(); ++i) {
++            const uint64_t at = ar.template get<uint64_t>();
++            snd::Sched::Tag tag;
++            tag.kind = ar.template get<uint32_t>();
++            tag.arg = ar.template get<uint64_t>();
++            ar.require(tag.kind == snd::SoundBoard::kRxByte || tag.kind == snd::SoundBoard::kYmTimer, "sound event");
++            ar.require(at >= last, "sound events out of order");
++            last = at;
++            events.emplace_back(at, tag);
++        }
++        if (ar.apply() && ar.ok()) {
++            sc.events_.clear();
++            for (const auto &[at, tag] : events) sc.events_.emplace_hint(sc.events_.end(), at, snd::Sched::Event{s->event(tag), tag});
++        }
++    }
++
++    ar(s->expect_mode_), ar(s->rx_enable_), ar(s->rxrdy_), ar(s->rx_hold_), ar(s->errors_);
++    ar(s->line_free_);
++    uint64_t received = s->received_;
++    received = ar(received);
++    if (ar.apply() && ar.ok()) s->received_ = size_t(received);
++    ar(s->carry_); // a double: its bits
++    ar(s->fm_done_);
++    ar.arr(s->timer_gen_);
++    ar.arr(s->timer_due_clk_);
++    ar.require(ar(s->in_timer_) == -1, "inside a YM timer");
++    ar.arr(s->pcm_slot_);
++    ar.arr(s->pcm_register_);
++    ar(s->pcm_done_);
++    if (ar.apply() && ar.ok()) {
++        s->fm_out_.clear(); // rendered before the state: not this timeline's
++        s->pcm_out_.clear();
++    }
++}
++
++template <class Ar> void SnapshotAccess::ym(Ar &ar, snd::SoundBoard *s) {
++    using namespace ymfm_access;
++    const bool there = present(ar, s != nullptr);
++    if (!there) return;
++    if constexpr (!Ar::kSaving)
++        if (!s) return ar.skip_section_rest();
++    Engine &fm = s->ym_.*member(Fm());
++    uint32_t active = fm.*member(Active()), modified = fm.*member(Modified()), prepare = fm.*member(Prepare());
++    if constexpr (Ar::kSaving) {
++        std::vector<uint8_t> blob;
++        ymfm::ymfm_saved_state st(blob, true);
++        s->ym_.save_restore(st);
++        fm.*member(Modified()) = modified; // (save_restore marks every channel modified: undone, saving changes nothing)
++        ar.vec(blob);
++        ar(active), ar(modified), ar(prepare);
++    } else {
++        // ymfm's format is fixed for the chip: the size a fresh one saves.
++        struct Quiet : ymfm::ymfm_interface {} quiet;
++        ymfm::ym3438 fresh(quiet);
++        std::vector<uint8_t> expect, blob;
++        ymfm::ymfm_saved_state probe(expect, true);
++        fresh.save_restore(probe);
++        const uint32_t n = ar.template get<uint32_t>();
++        if (!ar.require(n == expect.size(), "YM3438 state size")) return;
++        blob.resize(n);
++        const bool apply = ar.apply();
++        ar.raw(blob.data(), n); // (stored only when applying)
++        active = ar.template get<uint32_t>();
++        modified = ar.template get<uint32_t>();
++        prepare = ar.template get<uint32_t>();
++        if (!apply || !ar.ok()) return;
++        ymfm::ymfm_saved_state st(blob, false);
++        s->ym_.save_restore(st);
++        // The operators' caches, as prepare() fills them from the registers
++        // (without prepare's key-state step, which the schedule decides).
++        for (uint32_t i = 0; i < Engine::OPERATORS; ++i) {
++            auto *op = fm.debug_operator(i);
++            fm.regs().cache_operator_data(op->choffs(), op->opoffs(), op->debug_cache());
++        }
++        fm.*member(Active()) = active;
++        fm.*member(Modified()) = modified;
++        fm.*member(Prepare()) = prepare;
++    }
++}
++
++template <class Ar> void SnapshotAccess::pcm(Ar &ar, snd::SoundBoard *s, int chip) {
++    const bool there = present(ar, s != nullptr);
++    if (!there) return;
++    if constexpr (!Ar::kSaving)
++        if (!s) return ar.skip_section_rest();
++    snd::MultiPcm &m = chip ? s->pcm2_ : s->pcm1_;
++    ar.require(ar(m.bank_) <= 3, "MultiPCM bank");
++    ar(m.cur_slot_), ar(m.address_);
++    // LFO tables by name: 0 none, 1 pitch, 2 amplitude; scales by table and row.
++    auto lfo = [&](snd::MultiPcm::Lfo &l) {
++        ar(l.phase), ar(l.phase_step);
++        uint8_t table = 0, scale = 0, row = 0;
++        if constexpr (Ar::kSaving) {
++            table = l.table == nullptr ? 0 : l.table == m.pitch_table_ ? 1 : l.table == m.amplitude_table_ ? 2 : 3;
++            for (uint8_t k = 0; k < 8; ++k) {
++                if (l.scale == m.pitch_scale_tables_[k]) scale = 1, row = k;
++                if (l.scale == m.amplitude_scale_tables_[k]) scale = 2, row = k;
++            }
++            ar.require(table < 3 && (l.scale == nullptr || scale != 0), "MultiPCM LFO table");
++        }
++        table = ar(table), scale = ar(scale), row = ar(row);
++        if (!ar.require(table < 3 && scale < 3 && row < 8, "MultiPCM LFO table")) return;
++        if (ar.apply()) {
++            l.table = table == 1 ? m.pitch_table_ : table == 2 ? m.amplitude_table_ : nullptr;
++            l.scale = scale == 1 ? m.pitch_scale_tables_[row] : scale == 2 ? m.amplitude_scale_tables_[row] : nullptr;
++        }
++    };
++    for (snd::MultiPcm::Slot &sl : m.slots_) {
++        ar.arr(sl.regs);
++        ar(sl.playing);
++        snd::MultiPcm::Sample &sa = sl.sample;
++        ar(sa.start), ar(sa.loop), ar(sa.end);
++        ar(sa.attack_reg), ar(sa.decay1_reg), ar(sa.decay2_reg), ar(sa.decay_level), ar(sa.release_reg);
++        ar(sa.key_rate_scale), ar(sa.lfo_vibrato_reg), ar(sa.lfo_amplitude_reg), ar(sa.format);
++        ar(sl.offset), ar(sl.octave), ar(sl.pitch), ar(sl.step), ar(sl.reverse), ar(sl.pan), ar(sl.dsp_send);
++        ar(sl.total_level), ar(sl.dest_total_level), ar(sl.total_level_step), ar(sl.prev_sample);
++        snd::MultiPcm::Envelope &e = sl.env;
++        ar(e.volume);
++        ar.en(e.state, snd::MultiPcm::State::Release);
++        ar(e.reverb), ar(e.attack_rate), ar(e.decay1_rate), ar(e.decay2_rate), ar(e.release_rate), ar(e.decay_level);
++        ar(sl.lfo_frequency);
++        lfo(sl.pitch_lfo);
++        ar(sl.vibrato);
++        lfo(sl.amplitude_lfo);
++        ar(sl.tremolo);
++        ar(sl.effect);
++        if (!ar.ok()) return;
++    }
++}
++
++// After a load: what the screen and the renderers cache from RAM is
++// rebuilt from it at the next update.
++void SnapshotAccess::loaded(GameLoop &g) {
++    M2Board &b = *g.board_;
++    ++b.tex_generation_; // the hardware renderer uploads texture RAM again when this moves
++    Video &v = *b.video_;
++#ifdef M2_VITA_RENDER_OPT
++    v.tiles_valid_ = false;
++    v.background_dirty_ = v.foreground_dirty_ = true;
++#else
++    v.dec_valid_ = false; // every tile decoded again from tile and character RAM
++#endif
++    v.tile_memory_touched_ = v.character_memory_touched_ = true;
++    v.system24_source_dirty_ = true;
++    v.set_raster_hud_moves(); // the HUD's move follows hud_on_
++}
++
++size_t SnapshotAccess::bound(const GameLoop &g) {
++    const M2Board &b = *g.board_;
++    size_t n = kHeaderSize + 17 * kSectionHeader;
++    n += 64;                                                         // LOOP
++    n += 4 * (32 + 64 + 4 + 1) + 32 + 4 * 10 + 4;                    // CPU
++    n += 64 + kBoundCallbacks * 9;                                   // LOCK
++    n += 8;                                                          // ENH
++    n += 128 + std::max(b.uart_out_.size(), kBoundUartBytes);       // BRD
++    for (const std::vector<uint8_t> *r : {&b.ram_, &b.work_, &b.cpuctl_, &b.backup_, &b.tile_, &b.chr_, &b.palette_,
++                                          &b.xlat_, &b.tex0_, &b.tex1_, &b.luma_, &b.fb_a_, &b.fb_b_, &b.comm_})
++        n += 4 + r->size();                                          // RAM
++    n += 0x800 + 128 + 8;                                            // IO
++    const TgpBoard &t = b.tgp_;
++    n += 64 + 4 * (std::max(t.in_.size(), kBoundFifoWords) + std::max(t.out_.size(), kBoundFifoWords) + 0x1000) +
++         sizeof t.buffer_;                                           // TGPB
++    n += 256 + sizeof t.tgp_.data + sizeof t.tgp_.prog;              // TGP
++    n += sizeof(Geo::raster_state) + sizeof(Geo::geo_state) + 4 +
++         std::max(b.geo_->polys.size(), kBoundPolys) * (33 + 8 * 20); // GEO (the structs' sizes bound their fields)
++    const Video &v = *b.video_;
++    n += sizeof v.pens_ + 64 + size_t(v.width()) * Video::H * 4;     // VID
++    n += 64 + 0x1000 + (b.comm_board_ ? b.comm_board_->rx_.size() : 0) + 0x2000; // COMM
++    n += 1;
++    if (const snd::SoundBoard *s = g.sound_.get()) {
++        n += 256 + s->cpu_.ram.size() + std::max(s->sched_.events_.size(), kBoundSoundEvents) * 20 + 128; // SND
++        n += 4096;                                                   // YM (ymfm saves about 1 KB)
++        n += 2 * (16 + 28 * 128);                                    // PCM1, PCM2
++    }
++    return n + 4096;
++}
++
++// --- the interface ------------------------------------------------------------------
++
++namespace {
++void put64(uint8_t *p, uint64_t v) { std::memcpy(p, &v, 8); }
++uint64_t get64(const uint8_t *p) {
++    uint64_t v;
++    std::memcpy(&v, p, 8);
++    return v;
++}
++uint32_t get32(const uint8_t *p) {
++    uint32_t v;
++    std::memcpy(&v, p, 4);
++    return v;
++}
++void romset(uint8_t *out) {
++    std::memset(out, 0, 16);
++    const std::string s = M2_ROMSET;
++    std::memcpy(out, s.data(), std::min<size_t>(s.size(), 16));
++}
++uint64_t fingerprint(const std::vector<uint8_t> &image) { return hash64(image.data(), image.size()); }
++} // namespace
++
++std::vector<uint8_t> save_state(GameLoop &game) {
++    if (SnapshotAccess::sound_pending(game)) throw Fatal("snapshot: a deferred sound frame is pending: complete it first");
++    std::vector<uint8_t> out;
++    out.reserve(state_size_bound(game));
++    out.resize(kHeaderSize);
++    Writer w(out);
++    SnapshotAccess::state(w, game);
++    uint8_t *h = out.data();
++    std::memcpy(h, kMagic, 8);
++    std::memcpy(h + 8, &kVersion, 4);
++    std::memcpy(h + 12, &kHeaderSize, 4);
++    put64(h + 16, out.size() - kHeaderSize);
++    put64(h + 24, hash64(out.data() + kHeaderSize, out.size() - kHeaderSize));
++    romset(h + 32);
++    put64(h + 48, fingerprint(SnapshotAccess::images(game).program));
++    put64(h + 56, fingerprint(SnapshotAccess::images(game).sound_program));
++    return out;
++}
++
++bool load_state(GameLoop &game, const uint8_t *data, size_t size) {
++    if (SnapshotAccess::sound_pending(game)) throw Fatal("snapshot: a deferred sound frame is pending: complete it first");
++    if (!data || size < kHeaderSize) return false;
++    if (std::memcmp(data, kMagic, 8) != 0 || get32(data + 8) != kVersion || get32(data + 12) != kHeaderSize) return false;
++    const uint64_t body = get64(data + 16);
++    if (body > size - kHeaderSize) return false;
++    for (size_t i = kHeaderSize + size_t(body); i < size; ++i)
++        if (data[i]) return false; // only zero padding after the state
++    uint8_t set[16];
++    romset(set);
++    if (std::memcmp(data + 32, set, 16) != 0) return false;
++    if (get64(data + 48) != fingerprint(SnapshotAccess::images(game).program) ||
++        get64(data + 56) != fingerprint(SnapshotAccess::images(game).sound_program))
++        return false;
++    const uint8_t *const p = data + kHeaderSize;
++    if (hash64(p, size_t(body)) != get64(data + 24)) return false;
++
++    Reader check(p, size_t(body), false);
++    SnapshotAccess::state(check, game);
++    if (!check.ok() || !check.at_end()) return false;
++    Reader apply(p, size_t(body), true);
++    SnapshotAccess::state(apply, game);
++    if (!apply.ok() || !apply.at_end()) throw Fatal("snapshot: a state that checked out failed to load");
++    SnapshotAccess::loaded(game);
++    return true;
++}
++
++size_t state_size_bound(const GameLoop &game) { return SnapshotAccess::bound(game); }
++
++uint8_t *main_ram(M2Board &board, size_t *size) { return SnapshotAccess::work_ram(board, size); }
++
++} // namespace rt
+diff --git a/src/runtime/snapshot.h b/src/runtime/snapshot.h
+new file mode 100644
+index 0000000..1d08ff1
+--- /dev/null
++++ b/src/runtime/snapshot.h
+@@ -0,0 +1,105 @@
++// Snapshots of the whole machine (save states): everything the game, its
++// sound and its link depend on, so a second GameLoop of the same ROM set,
++// loaded with one, continues exactly as the first would have: the same
++// instructions at the same counts, the same RAM, the same screen and sound.
++// Made for lockstep play, where a machine joining a game (or one that has
++// drifted) is handed the state of one already in it.
++//
++// Take one between frames: after run_frame (or once a deferred sound frame
++// has completed), never from inside the game's code or a detached sound
++// packet. Load one onto a GameLoop of the same ROM set and build, normally a
++// freshly constructed one (any GameLoop works: everything in the state is
++// overwritten and what the screen caches is rebuilt). A link-play state
++// needs board().set_link(...) on the target first: the comm board's presence
++// must match. Bytes the link transport holds (sent, not yet read) are the
++// host's, not in the state.
++//
++// Not in the state, on purpose: the ROM images (only a fingerprint of the
++// program ROMs, so another set's state is refused), tables made from them or
++// from constants, the viewer's own settings (widescreen, frame skip, external
++// 3D, HUD at the edges, stretched backdrop, the launcher's volumes), output
++// waiting for the host (the composed screen, rendered audio not yet taken,
++// drive board commands, the EEPROM-dirty flag), the frame profiler, debug
++// records (Geo::pushed) and the link transport. The draw-distance
++// enhancement (a global) is in it: it changes the game's own RAM, so a state
++// carries it and a load sets it.
++//
++// Format (all little-endian; floats and doubles as their bits):
++//
++//   header, 64 bytes:
++//     0  char[8]  magic "M2SNAPST"
++//     8  u32      format version (kVersion)
++//    12  u32      header size (64)
++//    16  u64      body size: bytes after the header
++//    24  u64      check: a 64-bit hash of the body (snapshot.cpp, hash64)
++//    32  char[16] ROM set (M2_ROMSET), zero-padded
++//    48  u64      fingerprint (hash64) of the i960 program image
++//    56  u64      fingerprint of the sound program image
++//   body: sections, in a fixed order, each
++//     u32 tag (four characters), u32 section version, u64 size, then size
++//     bytes; the last is "END " with size 0.
++//
++// A load checks the header, the hash, then every section's tag, version and
++// size against what this build expects (and each variable-length part
++// against its section's size) before it changes anything: a truncated,
++// corrupted or foreign state is refused with false and the GameLoop is left
++// as it was. Bytes after the end of the state must be zero (a caller may
++// pass a zero-padded buffer of state_size_bound bytes).
++//
++// Sections (snapshot.cpp has the field order of each):
++//   "LOOP" GameLoop: frame count, vblank phase and its counts, latched inputs
++//   "CPU " i960: registers, register cache and its frames, AC, PC, IP, SAT,
++//          PRCB, ICR, FP registers, interrupt state (no TC: not modelled)
++//   "LOCK" Lockstep: instruction count, next event, pending callbacks (by
++//          Lockstep::Callback tag: the frame probe, the UART's shift)
++//   "ENH " the draw-distance enhancement and its budget flag
++//   "BRD " M2Board registers: interrupts, timers, video control, render
++//          mode, comm registers, frame number, the sound UART and the bytes
++//          for the sound board not yet taken
++//   "RAM " every RAM of the board, each with its size: main, work, CPU
++//          control, backup, tile, character, palette, colour translation,
++//          texture 0 and 1, luma, frame buffers A and B, comm shared RAM
++//   "IO  " the I/O board: dual-port RAM, EEPROM, latched inputs
++//   "TGPB" TGP board: FIFOs, program upload, control registers, buffer RAM
++//   "TGP " the TGP: registers, data RAM, program RAM, instruction count
++//   "GEO " the geometrizer's state and its last frame's polygons
++//   "VID " palette pens, CRTC and render offsets, whether the 3D layer is
++//          kept for the next frame, the 3D layer (its visible part)
++//   "COMM" present flag, then the comm board's registers and buffers
++//   "SND " present flag, then the 68000, its RAM and schedule (by
++//          Sched::Tag: bytes on the serial line, YM timers), the UART, YM
++//          timer generations, rendered-sample counts
++//   "YM  " present flag, then the YM3438 (ymfm's save_restore, plus the
++//          three engine counters it leaves out)
++//   "PCM1", "PCM2" present flag, then the MultiPCMs
++//   "END "
++#pragma once
++
++#include "runtime/game_loop.h"
++
++#include <cstddef>
++#include <cstdint>
++#include <vector>
++
++namespace rt {
++
++// Everything needed to continue identically. Throws rt::Fatal while a
++// deferred sound frame is pending, or while a callback or sound event no
++// snapshot knows is pending (a tool's own).
++std::vector<uint8_t> save_state(GameLoop &game);
++// Onto a GameLoop of the same ROM set (normally freshly constructed). False,
++// with nothing changed, if the data is not a whole, intact state of this
++// build, this ROM set and this machine's configuration (comm board). A
++// machine without a sound board takes a state with one (the sound sections
++// are skipped: the i960 never reads the sound board) and the reverse (its
++// sound board is left as it was).
++bool load_state(GameLoop &game, const uint8_t *data, size_t size);
++// At least save_state(game).size() for any state this machine reaches while
++// its queues stay within generous limits (snapshot.cpp, kBound*): for callers
++// that pre-allocate. Compare save_state's size with it anyway.
++size_t state_size_bound(const GameLoop &game);
++// The i960's work RAM (1 MB at 0x00500000, where the game keeps its state):
++// for the host's desync hash.
++uint8_t *main_ram(M2Board &board, size_t *size);
++
++} // namespace rt
+diff --git a/src/runtime/snd_sched.h b/src/runtime/snd_sched.h
+index c0bfc03..5093995 100644
+--- a/src/runtime/snd_sched.h
++++ b/src/runtime/snd_sched.h
+@@ -13,11 +13,24 @@
+ #include <functional>
+ #include <map>
+ 
++namespace rt {
++class SnapshotAccess; // runtime/snapshot.cpp
++}
++
+ namespace snd {
+ 
++// What a scheduled event does, for snapshots (runtime/snapshot.h): its
++// owner's kind and argument, from which the owner makes it again on load.
++// Kind 0: untagged (a tool's own; no snapshot is taken while one is pending).
++struct SchedTag {
++    uint32_t kind = 0;
++    uint64_t arg = 0;
++};
++
+ class Sched {
+ public:
+     explicit Sched(Cpu68k &c) : c_(c) {}
++    using Tag = SchedTag;
+ 
+     uint64_t count = 0;              // completed instructions
+     uint64_t end_count = UINT64_MAX; // recompiled code returns once this is reached
+@@ -31,18 +44,23 @@ public:
+     bool finished() const { return count >= end_count; }
+ 
+     // Run fn once `at` instructions have completed (at >= count).
+-    void at(uint64_t when, std::function<void()> fn) {
+-        events_.emplace(std::max(when, count), std::move(fn));
++    void at(uint64_t when, std::function<void()> fn, Tag tag = {}) {
++        events_.emplace(std::max(when, count), Event{std::move(fn), tag});
+         next_count = std::min(next_count, events_.begin()->first);
+     }
+     // The interrupt line or mask changed: re-check at the next boundary.
+     void poke() { next_count = std::min(next_count, count + 1); }
+ 
+ private:
++    friend class rt::SnapshotAccess;
++    struct Event {
++        std::function<void()> fn;
++        Tag tag;
++    };
+     bool apply() {
+         const uint32_t pc = c_.pc;
+         while (!events_.empty() && events_.begin()->first <= count) {
+-            auto fn = std::move(events_.begin()->second);
++            auto fn = std::move(events_.begin()->second.fn);
+             events_.erase(events_.begin());
+             fn();
+         }
+@@ -52,7 +70,7 @@ private:
+     }
+ 
+     Cpu68k &c_;
+-    std::multimap<uint64_t, std::function<void()>> events_;
++    std::multimap<uint64_t, Event> events_;
+ };
+ 
+ } // namespace snd
+diff --git a/src/runtime/sound_board.cpp b/src/runtime/sound_board.cpp
+index 93abc74..888ba68 100644
+--- a/src/runtime/sound_board.cpp
++++ b/src/runtime/sound_board.cpp
+@@ -23,11 +23,30 @@ void SoundBoard::send(const uint8_t *bytes, size_t n) {
+     for (size_t i = 0; i < n; ++i) {
+         const uint64_t at = std::max(line_free_, sched_.count) + kByteTime;
+         line_free_ = at;
+-        const uint8_t b = bytes[i];
+-        sched_.at(at, [this, b] { rx_arrive(b); });
++        const Sched::Tag tag{kRxByte, bytes[i]};
++        sched_.at(at, event(tag), tag);
+     }
+ }
+ 
++std::function<void()> SoundBoard::event(Sched::Tag tag) {
++    if (tag.kind == kRxByte) {
++        const uint8_t b = uint8_t(tag.arg);
++        return [this, b] { rx_arrive(b); };
++    }
++    if (tag.kind == kYmTimer) {
++        const uint32_t tnum = uint32_t(tag.arg & 1);
++        const uint64_t gen = tag.arg >> 1;
++        return [this, tnum, gen] {
++            if (timer_gen_[tnum] != gen) return; // re-armed or stopped since
++            render_fm_to(sched_.count);
++            in_timer_ = int(tnum);
++            m_engine->engine_timer_expired(tnum);
++            in_timer_ = -1;
++        };
++    }
++    throw rt::Fatal("sound board: unknown event kind");
++}
++
+ void SoundBoard::rx_arrive(uint8_t byte) {
+     if (!rx_enable_) return; // receiver off: the byte is lost, as on the chip
+     if (rxrdy_) errors_ |= 0x10; // overrun: the new byte replaces the unread one
+@@ -168,13 +187,8 @@ void SoundBoard::ymfm_set_timer(uint32_t tnum, int32_t duration_in_clocks) {
+     const uint64_t due = base + uint64_t(duration_in_clocks);
+     timer_due_clk_[tnum] = due;
+     const uint64_t at = (due * kIps + kYmClock - 1) / kYmClock;
+-    sched_.at(at, [this, tnum, gen] {
+-        if (timer_gen_[tnum] != gen) return; // re-armed or stopped since
+-        render_fm_to(sched_.count);
+-        in_timer_ = int(tnum);
+-        m_engine->engine_timer_expired(tnum);
+-        in_timer_ = -1;
+-    });
++    const Sched::Tag tag{kYmTimer, gen << 1 | tnum};
++    sched_.at(at, event(tag), tag);
+ }
+ 
+ } // namespace snd
+diff --git a/src/runtime/sound_board.h b/src/runtime/sound_board.h
+index ec48141..887b4af 100644
+--- a/src/runtime/sound_board.h
++++ b/src/runtime/sound_board.h
+@@ -18,10 +18,15 @@
+ 
+ #include <cstdint>
+ #include <deque>
++#include <functional>
+ #include <memory>
+ #include <utility>
+ #include <vector>
+ 
++namespace rt {
++class SnapshotAccess; // runtime/snapshot.cpp
++}
++
+ namespace snd {
+ 
+ class SoundBoard : public Devices, public ymfm::ymfm_interface {
+@@ -67,6 +72,13 @@ public:
+     void ymfm_set_timer(uint32_t tnum, int32_t duration_in_clocks) override;
+ 
+ private:
++    friend class rt::SnapshotAccess;
++    // Scheduled events (Sched::Tag kinds): a command byte arriving at the
++    // UART (arg: the byte), a YM timer expiring (arg: generation << 1 |
++    // timer). event() makes each from its tag, so a snapshot's events are
++    // made again as they were.
++    enum EventKind : uint32_t { kRxByte = 1, kYmTimer = 2 };
++    std::function<void()> event(Sched::Tag tag);
+     void run_to(uint64_t count);
+     void render_fm_to(uint64_t count);
+     void render_pcm_to(uint64_t count);
+diff --git a/src/runtime/video.h b/src/runtime/video.h
+index 1aaf652..c9089a3 100644
+--- a/src/runtime/video.h
++++ b/src/runtime/video.h
+@@ -22,6 +22,8 @@
+ 
+ namespace rt {
+ 
++class SnapshotAccess; // runtime/snapshot.cpp
++
+ class Video {
+ public:
+     // tile_ram: 0x01000000 (0x10000 bytes, u16 entries); char_ram: 0x01080000
+@@ -187,6 +189,7 @@ public:
+     static constexpr int W = 496, H = 384;
+ 
+ private:
++    friend class SnapshotAccess;
+     uint16_t tile(uint32_t i) const { return uint16_t(tile_ram_[i * 2] | tile_ram_[i * 2 + 1] << 8); }
+     void build_layer(int layer); // pixmap_/flags_ for one tilemap
+ #ifdef M2_DC_SPEED
+diff --git a/tests/test_snapshot.cpp b/tests/test_snapshot.cpp
+new file mode 100644
+index 0000000..e48671b
+--- /dev/null
++++ b/tests/test_snapshot.cpp
+@@ -0,0 +1,845 @@
++// Snapshots (src/runtime/snapshot.cpp) without the ROM: a whole GameLoop on
++// synthetic images, running hand-written stand-ins for the three recompiled
++// programs (the i960 game, the TGP, the sound 68000). Each stand-in calls the
++// runtime as generated code does (boundary before an instruction, the count
++// after it, memory through the bus), and between them they reach every part a
++// snapshot carries: interrupts (nested, pending), the register cache spilled
++// to memory, the TGP's FIFOs and upload, a display list the geometrizer turns
++// into polygons and the rasterizer draws (in 30 Hz mode too, where the 3D
++// layer is kept a frame), tilemaps and palette, the I/O board and EEPROM, the
++// sound UART (more bytes some frames than the line carries in a frame, so
++// some are still on it at the save), the 68000 with its interrupt, YM timers
++// and voices, both MultiPCMs (LFOs on), and a link-play comm board on an
++// in-memory transport.
++//
++// Checks: a state loaded into a fresh machine saves to the same bytes; it
++// then runs on exactly as the machine it came from (screen, 3D layer, work
++// RAM, audio samples, instruction counts, frame by frame, and the whole state
++// at the end); loading into a machine that has been running works the same;
++// taking snapshots does not change the machine; the public accessors agree
++// after a load; a UART shift pending across the save; truncated, corrupted,
++// foreign or inconsistent states are refused and leave the machine
++// untouched; link presence must match, and a frame half received goes along;
++// a machine without a sound board takes a state with one (and the reverse),
++// and its untaken sound bytes go along. Prints the state's size and the time
++// to save and load it.
++
++#include "runtime/snapshot.h"
++
++#include <algorithm>
++#include <bit>
++#include <chrono>
++#include <cstdio>
++#include <cstring>
++#include <deque>
++#include <memory>
++#include <string>
++#include <vector>
++
++// --- stand-ins for the generated code -------------------------------------------------
++
++namespace {
++
++constexpr uint32_t crc32_words(const uint32_t *w, size_t n) { // as TgpBoard checks the upload
++    uint32_t c = 0xffffffffu;
++    for (size_t i = 0; i < n; i++)
++        for (int b = 0; b < 4; b++) {
++            c ^= (w[i] >> (8 * b)) & 0xff;
++            for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xedb88320u & (0u - (c & 1)));
++        }
++    return ~c;
++}
++constexpr uint32_t kTgpProgram[4] = {0x11111111, 0x22222222, 0x33333333, 0x44444444};
++
++// i960 memory map of the stand-in game
++constexpr uint32_t kPrcb = 0x1000, kEntry = 0x2000, kIntTab = 0x00200000, kIntStack = 0x00580000;
++constexpr uint32_t kVblankHandler = 0x3000, kUartHandler = 0x3400;
++constexpr uint32_t kFrameCounter = 0x00500000, kSendLeft = 0x00500010, kLoops = 0x00500014, kInputs = 0x00500020;
++constexpr uint32_t kVecVblank = 0x1a, kVecUart = 0x32; // priorities 3 and 6
++constexpr uint32_t kListWord = 0x100;                  // display list in buffer RAM (word index)
++
++uint32_t rd32(rt::Cpu &c, uint32_t a) { return c.bus->read_dword(a); }
++void wr32(rt::Cpu &c, uint32_t a, uint32_t v) { c.bus->write_dword(a, v); }
++uint32_t f2u(float f) { return std::bit_cast<uint32_t>(f); }
++
++// The display list: a window, then a strip of quads whose position follows
++// the frame and the wheel.
++void display_list(rt::Cpu &c, uint32_t frame, uint32_t steer) {
++    uint32_t a = 0x00900000 + kListWord * 4;
++    auto put = [&](uint32_t v) { wr32(c, a, v), a += 4; };
++    put(0x03u << 23); // window
++    put(0);
++    put((495u << 16) | 383u);
++    for (int k = 0; k < 4; ++k) put(((248u + (frame & 7)) << 16) | 192u);
++    put(0x02u << 23); // direct data
++    put(0x10 + (frame & 0x30));
++    put(0x20);
++    const float shift = float(int(steer) - 0x80) * 8.0f + float(frame % 40) * 10.0f;
++    put(f2u(-1500 + shift)), put(f2u(-1500)), put(f2u(10));
++    put(f2u(-1500 + shift)), put(f2u(1500)), put(f2u(10));
++    for (int q = 0; q < 4; ++q) {
++        put(1u | (1u << 8) | (1u << 10) | (1u << 17)); // quad, linked, min z, double sided
++        put(0x00400000 + (uint32_t(q) << 15));
++        put(f2u(1.0f));
++        const float x = -1500 + shift + 800.0f * float(q + 1);
++        put(f2u(x)), put(f2u(-1500 + float(q) * 100)), put(f2u(10 + float(q)));
++        put(f2u(x)), put(f2u(1500)), put(f2u(10 + float(q)));
++    }
++    put(0);
++    put(0x0fu << 23); // end
++}
++
++void i960_step(rt::Cpu &c, uint32_t ip) {
++    uint32_t *const R = c.m_r;
++    switch (ip) {
++    // boot: interrupt table, enables, priority, the TGP's program, the screen
++    case kEntry:
++        c.m_ICR = (kVecUart << 24) | (0x2au << 16) | (0x22u << 8) | kVecVblank;
++        wr32(c, kIntTab + 36 + (kVecVblank - 8) * 4, kVblankHandler);
++        wr32(c, kIntTab + 36 + (kVecUart - 8) * 4, kUartHandler);
++        c.m_IP = 0x2004;
++        return;
++    case 0x2004:
++        wr32(c, 0x00e80004, 0x401); // vblank and sound UART interrupts
++        c.m_IP = 0x2008;
++        return;
++    case 0x2008: { // modpc: priority 0, executing
++        const uint32_t was = c.m_PC;
++        c.m_PC = 0x00000002;
++        c.m_IP = 0x200c;
++        if ((was >> 16 & 0x1f) > (c.m_PC >> 16 & 0x1f)) c.check_pending_irqs();
++        return;
++    }
++    case 0x200c:
++        wr32(c, 0x00980000, 0x80000000); // TGP upload
++        for (uint32_t w : kTgpProgram) wr32(c, 0x00884000, w);
++        wr32(c, 0x00980000, 0); // boot it
++        c.m_IP = 0x2010;
++        return;
++    case 0x2010:
++        for (uint32_t i = 0; i < 64; ++i) c.bus->write_word(0x01080000 + i * 2, uint16_t(0x1234 * (i + 1))); // characters
++        for (uint32_t i = 0; i < 128; ++i) c.bus->write_word(0x01000000 + i * 2, uint16_t((i & 3) | (i << 7)));  // layer 0 tiles
++        c.bus->write_word(0x01000000 + 0x5005 * 2, 0x8000); // layers 1-3 off (vscr bit 15)
++        c.bus->write_word(0x01000000 + 0x5006 * 2, 0x8000);
++        c.bus->write_word(0x01000000 + 0x5007 * 2, 0x8000);
++        wr32(c, 0x0181c000, 0xff); // z clip off
++        c.m_IP = 0x2020;
++        return;
++
++    // main loop
++    case 0x2020: {
++        R[16] = c.bus->read_byte(kFrameCounter);
++        const uint32_t frame = R[16];
++        const uint32_t n = 2 + frame % 3;
++        for (uint32_t k = 0; k < n; ++k) wr32(c, 0x00880000 + (k << 2), frame * 16 + k); // TGP function port
++        for (uint32_t k = 0; k + 1 < n; ++k) wr32(c, 0x00500100 + k * 4, rd32(c, 0x00884000)); // results
++        R[17] = rd32(c, 0x00980004);                     // FIFO status
++        wr32(c, 0x00500140, rd32(c, 0x00900000 + 0x40)); // buffer RAM the TGP wrote
++        display_list(c, frame, rd32(c, kInputs) & 0xff);
++        wr32(c, 0x00803008, kListWord * 4);   // geometrizer read start
++        wr32(c, 0x00801008, 0x10000);         // write start, and three words pushed there
++        for (uint32_t k = 0; k < 3; ++k) wr32(c, 0x00800000 + (k << 4), 0x80000000u | (frame + k));
++        wr32(c, 0x0098000c, (frame / 16) & 1); // 30 Hz mode on and off
++        wr32(c, 0x00884000, 0xa0000000 | frame); // left in the TGP's input FIFO at the frame's end
++        wr32(c, 0x00884000, 0xb0000000 | frame);
++        c.m_IP = 0x2024;
++        return;
++    }
++    case 0x2024: // call six deep: the register cache spills
++        c.m_IP = 0x2028;
++        c.do_call(0x2100, 0, R[1]);
++        return;
++    case 0x2028: {
++        const uint32_t frame = c.bus->read_byte(kFrameCounter);
++        wr32(c, kLoops, rd32(c, kLoops) + 1);
++        for (int k = 0; k < 4; ++k) R[21] += rd32(c, 0x01a04000); // comm board status (link play takes frames in here)
++        // I/O board: latch the inputs, keep them; EEPROM store and load
++        c.bus->write_byte(0x01c00040, 1);
++        wr32(c, kInputs, rd32(c, 0x01c00000) ^ rd32(c, 0x01c00008) << 8 ^ rd32(c, 0x01c00010) << 16);
++        if (frame % 7 == 3) {
++            c.bus->write_byte(0x01c00000 + (0x100 / 2) * 4, uint8_t(frame));
++            c.bus->write_byte(0x01c00040, 2);
++        }
++        if (frame % 11 == 5) c.bus->write_byte(0x01c00040, 3);
++        c.bus->write_byte(0x01c00000 + (0x11 / 2) * 4 + 2, uint8_t(0x10 + frame)); // drive board
++        // texture RAM, luma, backup, frame buffer, CPU control
++        c.bus->write_word(0x12000000 + (frame % 512) * 4, uint16_t(frame * 977));
++        c.bus->write_word(0x12400000 + (frame % 512) * 4 + 2, uint16_t(frame * 31));
++        wr32(c, 0x12800000 + (frame % 256) * 4, frame * 0x01010101u);
++        c.bus->write_byte(0x01d00000 + frame % 0x4000, uint8_t(frame));
++        wr32(c, 0x11600000 + (frame % 64) * 4, frame);
++        wr32(c, 0x00e00000 + (frame % 64) * 4, ~frame);
++        wr32(c, 0x01a00100 + (frame % 64) * 4, frame * 3); // comm shared RAM (past the board's registers)
++        wr32(c, 0x00500150, rd32(c, 0x10400000)); // polygon count
++        c.m_IP = 0x2020;
++        return;
++    }
++    case 0x12b0: // the game's wait for vblank (GameLoop's idle range)
++        R[20] = c.bus->read_byte(kFrameCounter);
++        c.m_IP = 0x12b4;
++        return;
++    case 0x12b4:
++        c.m_IP = R[20] == R[16] ? 0x12b0 : 0x12b8;
++        return;
++    case 0x12b8:
++        c.m_IP = 0x2154;
++        return;
++
++    // vblank: count the frame, write the screen's memories, send sound bytes
++    case kVblankHandler:
++        wr32(c, 0x00e80000, ~1u);
++        c.bus->write_byte(kFrameCounter, uint8_t(c.bus->read_byte(kFrameCounter) + 1));
++        c.m_IP = kVblankHandler + 4;
++        return;
++    case kVblankHandler + 4: {
++        const uint32_t frame = c.bus->read_byte(kFrameCounter);
++        for (uint32_t i = 0; i < 4; ++i) c.bus->write_word(0x01800000 + ((frame * 4 + i) % 0x2000) * 2, uint16_t(frame * 1103 + i));
++        c.bus->write_word(0x01810000 + (0x80 / 2 + (frame % 3) * 0x100) * 2, uint16_t(frame * 5)); // colour translation
++        c.bus->write_word(0x01000000 + (frame % 64) * 2, uint16_t(frame * 129));                   // a tile
++        c.bus->write_word(0x01080000 + (frame % 32) * 2, uint16_t(frame * 0x1111));                // a character
++        c.bus->write_word(0x01040000, uint16_t(frame & 3));        // CRTC
++        c.bus->write_word(0x01060000, uint16_t((frame >> 2) & 3));
++        wr32(c, 0x10000000, (frame & 1) << 2);                     // render mode
++        c.m_IP = kVblankHandler + 8;
++        return;
++    }
++    case kVblankHandler + 8: // every 5th frame more than the sound board's line carries in a frame
++        wr32(c, kSendLeft, c.bus->read_byte(kFrameCounter) % 5 == 0 ? 70 : 5);
++        c.bus->write_byte(0x01c80000, uint8_t(c.bus->read_byte(kFrameCounter) * 3));
++        c.m_IP = kVblankHandler + 12;
++        return;
++    case kVblankHandler + 12:
++        c.do_ret();
++        return;
++
++    // sound UART ready: the next byte
++    case kUartHandler:
++        wr32(c, 0x00e80000, ~0x400u);
++        c.m_IP = kUartHandler + 4;
++        return;
++    case kUartHandler + 4: {
++        const uint32_t left = rd32(c, kSendLeft);
++        if (left) {
++            wr32(c, kSendLeft, left - 1);
++            c.bus->write_byte(0x01c80000, uint8_t(c.bus->read_byte(kFrameCounter) * 7 + left * 13));
++        }
++        c.m_IP = kUartHandler + 8;
++        return;
++    }
++    case kUartHandler + 8:
++        c.do_ret();
++        return;
++    default: break;
++    }
++    if (ip >= 0x2100 && ip < 0x2160) { // six functions: work, call the next (the last waits for vblank); return
++        const uint32_t k = (ip - 0x2100) >> 4;
++        if ((ip & 0xf) == 0) {
++            R[3] = R[3] * 31 + k + R[16];
++            R[4 + k] = R[3] ^ 0x5a5a5a5au;
++            R[19] += R[3];
++            if (k == 5) {
++                c.m_IP = 0x12b0;
++            } else {
++                c.m_IP = ip + 4;
++                c.do_call(ip + 0x10, 0, R[1]);
++            }
++            return;
++        }
++        if ((ip & 0xf) == 4) {
++            c.do_ret();
++            return;
++        }
++    }
++    char b[64];
++    std::snprintf(b, sizeof b, "stand-in i960: no instruction at %08x", ip);
++    throw rt::Fatal(b);
++}
++
++// The 68000 stand-in: UART set up, YM timer A running; its interrupt takes
++// each byte and plays it on the YM and a MultiPCM.
++void snd_step(snd::Cpu68k &c, snd::Sched &s, uint32_t pc) {
++    auto ym = [&](uint8_t reg, uint8_t v, bool hi = false) {
++        c.w8(hi ? 0xd00005 : 0xd00001, reg);
++        c.w8(hi ? 0xd00007 : 0xd00003, v);
++    };
++    switch (pc) {
++    case 0x400:
++        c.w8(0xc20003, 0x4e); // UART mode, then command: receive on
++        c.w8(0xc20003, 0x15);
++        ym(0x24, 0xf0), ym(0x25, 0x01), ym(0x27, 0x15); // timer A
++        ym(0x22, 0x0b); // LFO on
++        c.set_sr(0x2000);
++        s.poke();
++        c.pc = 0x410;
++        return;
++    case 0x410: {
++        const uint8_t status = c.r8(0xd00001);
++        c.w8(0xf00100, status);
++        if (status & 1) {
++            ym(0x27, 0x15);
++            const uint8_t ticks = uint8_t(c.r8(0xf00101) + 1);
++            c.w8(0xf00101, ticks);
++            if ((ticks & 7) == 0) ym(0x28, uint8_t(ticks >> 3 & 3)); // a key off now and then
++        }
++        c.pc = 0x410;
++        return;
++    }
++    case 0x500: { // IRQ 2: a byte from the i960
++        const uint8_t b = c.r8(0xc20001);
++        const uint8_t at = c.r8(0xf00102);
++        c.w8(0xf00200 + at, b);
++        c.w8(0xf00102, uint8_t(at + 1));
++        const uint8_t ch = b & 3;
++        ym(uint8_t(0xa4 + ch), uint8_t(0x20 | ((b >> 2) & 7)), b & 0x80);
++        ym(uint8_t(0xa0 + ch), uint8_t(b * 7), b & 0x80);
++        ym(uint8_t(0xb0 + ch), uint8_t(b & 7), b & 0x80);
++        ym(uint8_t(0xb4 + ch), 0xc0 | (b & 0x37), b & 0x80);
++        for (uint8_t op = 0; op < 16; op += 4) {
++            ym(uint8_t(0x30 + op + ch), uint8_t(b + op), b & 0x80);
++            ym(uint8_t(0x40 + op + ch), uint8_t((b + op) & 0x3f), b & 0x80);
++            ym(uint8_t(0x50 + op + ch), 0x1f, b & 0x80);
++            ym(uint8_t(0x60 + op + ch), 0x80 | (b & 0x1f), b & 0x80);
++            ym(uint8_t(0x80 + op + ch), 0x0f, b & 0x80);
++        }
++        ym(0x28, uint8_t(0xf0 | ch | (b & 0x80 ? 4 : 0)));
++        // a MultiPCM voice: the driver's voice record first (the key-on asks whose voice it is)
++        const unsigned chip = (b >> 6) & 1;
++        const uint32_t base = chip ? 0xc60001 : 0xc40001;
++        const uint8_t slot = b & 0x1f;
++        const uint32_t voice = 0xf01500 + (b % 28) * 10;
++        c.w8(voice, uint8_t(1 | chip << 3)), c.w8(voice + 1, slot), c.w8(voice + 3, b), c.w8(voice + 6, 0);
++        c.w8(base + 2, slot);
++        auto reg = [&](uint8_t r, uint8_t v) { c.w8(base + 4, r), c.w8(base, v); };
++        reg(1, b), reg(2, uint8_t(b << 2)), reg(3, 0x40 | (b & 0xf)), reg(0, 0x40 | (b & 0xf));
++        reg(6, uint8_t(0x08 | (b & 0x3f) | 1)), reg(10, uint8_t(1 + (b & 6))), reg(5, uint8_t(b & 0xfe));
++        reg(4, (b & 0x20) ? 0x00 : 0x80);
++        c.w16(chip ? 0xc70000 : 0xc50000, b & 3);
++        c.pc = 0x504;
++        return;
++    }
++    case 0x504: { // rte
++        const uint16_t sr = c.pop16();
++        c.pc = c.pop32();
++        c.set_sr(sr);
++        s.poke();
++        return;
++    }
++    default: break;
++    }
++    char b[64];
++    std::snprintf(b, sizeof b, "stand-in 68000: no instruction at %06x", pc);
++    throw rt::Fatal(b);
++}
++
++} // namespace
++
++namespace gen {
++bool has_code(uint32_t) { return true; }
++uint64_t native_instructions() { return 0; }
++void run(Env &e) {
++    rt::Cpu &c = e.c;
++    rt::Lockstep &ls = e.ls;
++    for (;;) {
++        if (ls.finished()) return;
++        if (ls.boundary()) continue;
++        i960_step(c, c.m_IP);
++        ++ls.count;
++    }
++}
++} // namespace gen
++
++namespace rt::tgpgen {
++const uint32_t program_crc32 = crc32_words(kTgpProgram, 4);
++const uint32_t program_words = 4;
++// Each input word: a result out, a word into data RAM and one into buffer RAM.
++void run(Tgp &t, uint64_t budget) {
++    for (;;) {
++        if (t.count >= budget) return;
++        switch (t.pc) {
++        case 0: {
++            const uint32_t v = t.read_reg<0x21>();
++            if (t.stall) {
++                t.stall = false;
++                return;
++            }
++            t.d = v;
++            ++t.count, t.pc = 1;
++            break;
++        }
++        case 1:
++            t.a = t.d * 3 + t.data_r(5) + uint32_t(t.count);
++            t.data_w(uint16_t(t.d & 0xff), t.a);
++            t.write_reg<0x23>(0x00400000); // the bank: buffer RAM
++            t.io_w(uint16_t(0x40 + (t.d & 0x3f)), t.a ^ 0xffff);
++            t.write_reg<0x23>(0);
++            ++t.count, t.pc = 2;
++            break;
++        default:
++            t.write_reg<0x22>(t.a);
++            ++t.count, t.pc = 0;
++            break;
++        }
++    }
++}
++} // namespace rt::tgpgen
++
++namespace sndgen {
++bool has_code(uint32_t a) { return a == 0x400 || a == 0x410 || a == 0x500 || a == 0x504; }
++uint64_t native_instructions() { return 0; }
++void run(Env &e) {
++    snd::Cpu68k &c = e.c;
++    snd::Sched &s = e.s;
++    for (;;) {
++        if (s.finished()) return;
++        if (s.boundary()) continue;
++        snd_step(c, s, c.pc);
++        ++s.count;
++    }
++}
++} // namespace sndgen
++
++// --- the test ----------------------------------------------------------------------------
++
++namespace {
++
++int failures = 0;
++void check(bool ok, const std::string &what) {
++    std::printf("%s: %s\n", ok ? "ok  " : "FAIL", what.c_str());
++    if (!ok) ++failures;
++}
++
++uint64_t fnv(const void *p, size_t n, uint64_t h = 0xcbf29ce484222325ull) {
++    const auto *b = static_cast<const uint8_t *>(p);
++    for (size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 0x100000001b3ull;
++    return h;
++}
++
++void be32(std::vector<uint8_t> &v, size_t at, uint32_t x) {
++    v[at] = uint8_t(x >> 24), v[at + 1] = uint8_t(x >> 16), v[at + 2] = uint8_t(x >> 8), v[at + 3] = uint8_t(x);
++}
++void le32(std::vector<uint8_t> &v, size_t at, uint32_t x) { std::memcpy(&v[at], &x, 4); }
++
++// The real images' sizes, where the board copies or maps them whole.
++rt::M2Board::Images images(uint8_t variant = 0) {
++    rt::M2Board::Images img;
++    img.program.assign(0x200000, 0);
++    le32(img.program, 4, kPrcb);
++    le32(img.program, 12, kEntry);
++    le32(img.program, kPrcb + 20, kIntTab);
++    le32(img.program, kPrcb + 24, kIntStack);
++    img.program[0x100000] = variant;
++    img.main_data.assign(0x2000000, 0);
++    img.copro_tables.assign(0x40000, 0);
++    for (size_t i = 0; i < img.copro_tables.size(); ++i) img.copro_tables[i] = uint8_t(i * 7);
++    img.copro_data.assign(0x800000, 0);
++    img.polygons.assign(0x10000, 0);
++    img.textures.assign(0x10000, 0);
++    for (size_t i = 0; i < img.textures.size(); ++i) img.textures[i] = uint8_t(i * 13 + 5);
++    img.sound_program.assign(0x40000, 0);
++    be32(img.sound_program, 0, 0x00f0fff0); // SSP
++    be32(img.sound_program, 4, 0x400);      // PC
++    be32(img.sound_program, (24 + 2) * 4, 0x500);
++    img.pcm1.assign(0x400000, 0);
++    img.pcm2.assign(0x400000, 0);
++    for (size_t i = 0; i < img.pcm1.size(); ++i) img.pcm1[i] = uint8_t(i * 2654435761u >> 13), img.pcm2[i] = uint8_t(i * 40503u >> 7);
++    return img;
++}
++
++rt::Inputs inputs_at(uint64_t frame) {
++    rt::Inputs in;
++    in.steer = uint8_t(0x40 + (frame * 5) % 0x80);
++    in.accel = uint8_t(0x20 + (frame * 3) % 0xc0);
++    in.in0 = uint8_t(frame % 9 == 0 ? 0xef : 0xff);
++    return in;
++}
++
++// A cable: delivers what it was given (and, looped back, what the board
++// sends), counts what is written. The same on every machine.
++struct Cable : rt::LinkTransport {
++    explicit Cable(bool loop = false) : loop(loop) {}
++    bool loop;
++    std::deque<uint8_t> in;
++    uint64_t written = 0;
++    void poll() override {}
++    bool rx_open() const override { return true; }
++    bool tx_open() const override { return true; }
++    int read(uint8_t *buf, int max) override {
++        const int n = std::min<int>(max, int(in.size()));
++        for (int i = 0; i < n; ++i) buf[i] = in.front(), in.pop_front();
++        return n;
++    }
++    bool write(const uint8_t *buf, int n) override {
++        written += uint64_t(n);
++        if (loop) in.insert(in.end(), buf, buf + n);
++        return true;
++    }
++};
++
++struct Frame {
++    uint64_t screen, raster, ram, audio, counts;
++    bool operator==(const Frame &) const = default;
++};
++
++Frame frame_of(rt::GameLoop &g) {
++    Frame f{};
++    f.screen = g.board().video().screen_hash();
++    f.raster = g.board().video().raster_hash();
++    size_t n = 0;
++    const uint8_t *ram = rt::main_ram(g.board(), &n);
++    f.ram = fnv(ram, n);
++    if (snd::SoundBoard *s = g.sound()) {
++        const auto fm = s->take_fm(), pcm = s->take_pcm();
++        f.audio = fnv(pcm.data(), pcm.size() * 4, fnv(fm.data(), fm.size() * 4)) ^ (fm.size() << 40) ^ pcm.size();
++    }
++    f.counts = g.instructions() * 3 ^ g.board().tgp().tgp_instructions() * 5 ^ uint64_t(g.interrupts()) * 7 ^
++               (g.sound() ? g.sound()->instructions() * 11 : 0) ^ g.board().sound_bytes_total() * 13;
++    return f;
++}
++
++std::vector<Frame> run(rt::GameLoop &g, uint64_t frames, uint64_t input_offset = 0) {
++    std::vector<Frame> out;
++    for (uint64_t i = 0; i < frames; ++i) {
++        g.run_frame(inputs_at(g.frames() + input_offset));
++        out.push_back(frame_of(g));
++    }
++    return out;
++}
++
++std::unique_ptr<rt::GameLoop> machine(bool sound = true, uint8_t variant = 0) {
++    return std::make_unique<rt::GameLoop>(images(variant), sound);
++}
++
++// The snapshot's integrity hash (snapshot.cpp, hash64), to make states that
++// are intact but inconsistent. Checked against a real state's first.
++uint64_t hash64(const uint8_t *p, size_t n) {
++    constexpr uint64_t k1 = 0x9e3779b97f4a7c15ull, k2 = 0xc2b2ae3d27d4eb4full;
++    uint64_t h[4] = {k1, k2, ~k1, ~k2};
++    size_t i = 0;
++    for (; i + 32 <= n; i += 32)
++        for (int l = 0; l < 4; ++l) {
++            uint64_t w;
++            std::memcpy(&w, p + i + size_t(l) * 8, 8);
++            h[l] = std::rotl(h[l] ^ (w * k2), 31) * k1;
++        }
++    uint64_t tail = 0, r = uint64_t(n);
++    for (size_t k = 0; i < n; ++i, ++k) {
++        tail |= uint64_t(p[i]) << (8 * (k & 7));
++        if ((k & 7) == 7 || i + 1 == n) r = std::rotl(r ^ (tail * k2), 31) * k1, tail = 0;
++    }
++    for (uint64_t v : h) r = std::rotl(r ^ v, 27) * k1 + k2;
++    r ^= r >> 33, r *= 0xff51afd7ed558ccdull, r ^= r >> 33, r *= 0xc4ceb9fe1a85ec53ull, r ^= r >> 33;
++    return r;
++}
++void rehash(std::vector<uint8_t> &s) {
++    const uint64_t h = hash64(s.data() + 64, s.size() - 64);
++    std::memcpy(&s[24], &h, 8);
++}
++// Offset of a section's header in a state.
++size_t section(const std::vector<uint8_t> &s, const char *tag) {
++    size_t at = 64;
++    while (at + 16 <= s.size()) {
++        if (std::memcmp(&s[at], tag, 4) == 0) return at;
++        uint64_t size;
++        std::memcpy(&size, &s[at + 8], 8);
++        at += 16 + size_t(size);
++    }
++    return SIZE_MAX;
++}
++
++double ms_since(std::chrono::steady_clock::time_point t) {
++    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
++}
++
++} // namespace
++
++int main() {
++    constexpr uint64_t kAt = 70, kAfter = 90; // save after kAt frames; kAfter more after it
++    try {
++        // A: the straight run, saved at kAt (and, in passing, at every frame
++        // after: snapshots must not change the machine).
++        auto a = machine();
++        const std::vector<Frame> a_before = run(*a, kAt);
++        const std::vector<uint8_t> s1 = rt::save_state(*a);
++        const std::vector<uint8_t> s1_again = rt::save_state(*a);
++        check(s1 == s1_again, "two saves of one machine are the same bytes");
++
++        // B: fresh, loaded: the same bytes again, the same accessors.
++        auto b = machine();
++        check(rt::load_state(*b, s1.data(), s1.size()), "load into a fresh machine");
++        check(rt::save_state(*b) == s1, "a loaded machine saves to the same bytes");
++        {
++            rt::M2Board &x = a->board(), &y = b->board();
++            size_t n1 = 0, n2 = 0;
++            const uint8_t *r1 = rt::main_ram(x, &n1), *r2 = rt::main_ram(y, &n2);
++            bool pens = true;
++            for (uint32_t i = 0; i < 8192; ++i) pens &= x.video().system24_pen(i) == y.video().system24_pen(i);
++            check(n1 == 0x100000 && n1 == n2 && std::memcmp(r1, r2, n1) == 0, "work RAM");
++            check(a->frames() == b->frames() && a->instructions() == b->instructions() && a->interrupts() == b->interrupts() &&
++                      x.frame() == y.frame(),
++                  "frame, instruction and interrupt counts");
++            check(x.backup_ram() == y.backup_ram() && x.io().eeprom == y.io().eeprom && x.io().inputs.steer == y.io().inputs.steer &&
++                      x.sound_bytes_total() == y.sound_bytes_total(),
++                  "backup RAM, EEPROM, latched inputs, sound bytes");
++            check(x.tgp().coproctl_r() == y.tgp().coproctl_r() && x.tgp().geo_read_start() == y.tgp().geo_read_start() &&
++                      x.tgp().geo_r(0x2008 / 4) == y.tgp().geo_r(0x2008 / 4) && x.tgp().booted() && y.tgp().booted() &&
++                      x.tgp().tgp_instructions() == y.tgp().tgp_instructions() &&
++                      std::memcmp(x.tgp().buffer(), y.tgp().buffer(), 0x8000 * 4) == 0,
++                  "TGP board: control, geometrizer registers, instructions, buffer RAM");
++            check(pens && x.video().crtc_x() == y.video().crtc_x() && x.video().crtc_y() == y.video().crtc_y() &&
++                      x.video().render_x() == y.video().render_x() && x.video().render_y() == y.video().render_y() &&
++                      x.video().raster_hash() == y.video().raster_hash(),
++                  "video: pens, CRTC and render offsets, the 3D layer");
++            check(a->sound()->instructions() == b->sound()->instructions() && a->sound()->ram() == b->sound()->ram() &&
++                      a->sound()->bytes_received() == b->sound()->bytes_received(),
++                  "sound board: 68000 count and RAM, bytes received");
++        }
++        std::vector<Frame> a_after;
++        std::vector<std::vector<uint8_t>> at_30hz; // saved in 30 Hz mode (frames 80-95): one keeps its 3D layer a frame
++        for (uint64_t i = 0; i < kAfter; ++i) {
++            a_after.push_back(run(*a, 1)[0]);
++            std::vector<uint8_t> s = rt::save_state(*a);
++            if (a->frames() == 86 || a->frames() == 87) at_30hz.push_back(std::move(s));
++        }
++        // (taken from the machines' own sound buffers since the load; A's
++        // were taken at kAt by frame_of)
++        const std::vector<Frame> b_after = run(*b, kAfter);
++        check(a_after == b_after, "after a load: screen, 3D layer, work RAM, audio and counts equal, " +
++                                      std::to_string(kAfter) + " frames");
++        check(rt::save_state(*a) == rt::save_state(*b), "and the whole state at the end");
++        uint64_t polys_seen = 0;
++        for (const Frame &f : a_before) polys_seen += f.raster != a_before[0].raster;
++        check(polys_seen > 0, "the 3D layer changed over the run (the display list draws)");
++        for (const std::vector<uint8_t> &s : at_30hz) {
++            auto m = machine();
++            const bool loaded = rt::load_state(*m, s.data(), s.size());
++            const uint64_t from = m->frames();
++            check(loaded && run(*m, kAt + kAfter - from) == std::vector<Frame>(a_after.begin() + long(from - kAt), a_after.end()) &&
++                      rt::save_state(*m) == rt::save_state(*a),
++                  "saved in 30 Hz mode after frame " + std::to_string(from) + ": runs on the same, to the same state");
++        }
++
++        // Snapshots did not change A: a machine never saved runs the same.
++        auto plain = machine();
++        std::vector<Frame> plain_frames = run(*plain, kAt + kAfter);
++        check(std::equal(a_before.begin(), a_before.end(), plain_frames.begin()) &&
++                  std::equal(a_after.begin(), a_after.end(), plain_frames.begin() + kAt),
++              "saving every frame does not change the machine (YM caches included)");
++
++        // C: a machine that has been running on other inputs, loaded.
++        b.reset();
++        auto c = machine();
++        run(*c, 40, 1000);
++        check(rt::load_state(*c, s1.data(), s1.size()) && rt::save_state(*c) == s1, "load into a machine already running");
++        check(run(*c, kAfter) == std::vector<Frame>(plain_frames.begin() + kAt, plain_frames.end()),
++              "and it runs on as the original");
++        c.reset();
++
++        // Refused states leave the machine as it was.
++        auto d = machine();
++        run(*d, 5);
++        const std::vector<uint8_t> d0 = rt::save_state(*d);
++        auto refused = [&](std::vector<uint8_t> s, const std::string &what) {
++            const bool loaded = rt::load_state(*d, s.data(), s.size());
++            check(!loaded && rt::save_state(*d) == d0, "refused, machine unchanged: " + what);
++        };
++        refused({}, "empty");
++        for (size_t n : {size_t(10), size_t(63), size_t(64), size_t(100), s1.size() / 2, s1.size() - 1})
++            refused(std::vector<uint8_t>(s1.begin(), s1.begin() + long(n)), "truncated to " + std::to_string(n) + " bytes");
++        for (size_t at : {size_t(0), size_t(8), size_t(12), size_t(16), size_t(24), size_t(32), size_t(48), size_t(56)}) {
++            std::vector<uint8_t> s = s1;
++            s[at] ^= 0x01;
++            refused(s, "header byte " + std::to_string(at) + " changed");
++        }
++        int body_refused = 0;
++        for (int k = 1; k <= 64; ++k) {
++            std::vector<uint8_t> s = s1;
++            s[64 + (s.size() - 65) * size_t(k) / 64] ^= 0x10;
++            body_refused += !rt::load_state(*d, s.data(), s.size());
++        }
++        check(body_refused == 64 && rt::save_state(*d) == d0, "refused, machine unchanged: 64 single-byte corruptions spread over the body");
++        {
++            std::vector<uint8_t> s = s1;
++            s.push_back(1);
++            refused(s, "a nonzero byte after the state");
++        }
++        // Intact (rehashed) but inconsistent: refused by the section checks.
++        {
++            std::vector<uint8_t> s = s1;
++            rehash(s);
++            check(s == s1, "the test's copy of the integrity hash matches");
++            std::vector<uint8_t> t = s1;
++            t[section(t, "GEO ")] = 'X';
++            rehash(t);
++            refused(t, "a section tag changed (rehashed)");
++            t = s1;
++            const size_t vid = section(t, "VID ");
++            t[vid + 4] = 2;
++            rehash(t);
++            refused(t, "a section version changed (rehashed)");
++            t = s1;
++            const size_t ram = section(t, "RAM ");
++            le32(t, ram + 16, 0x30000); // the first RAM's size
++            rehash(t);
++            refused(t, "a RAM's size changed (rehashed)");
++            t = s1;
++            const size_t loop = section(t, "LOOP");
++            t[loop + 16 + 24] = 2; // in_vblank_: a bool that is 2
++            rehash(t);
++            refused(t, "a bool field that is 2 (rehashed)");
++            t = s1;
++            const size_t enh = section(t, "ENH ");
++            le32(t, enh + 16, 7); // draw distance 7
++            rehash(t);
++            refused(t, "draw distance out of range (rehashed)");
++        }
++        {
++            auto other = machine(true, 1); // another program image
++            const std::vector<uint8_t> o0 = rt::save_state(*other);
++            check(!rt::load_state(*other, s1.data(), s1.size()) && rt::save_state(*other) == o0,
++                  "refused, machine unchanged: another program image");
++        }
++        {
++            std::vector<uint8_t> padded = s1;
++            padded.resize(rt::state_size_bound(*a) + 100, 0);
++            auto e = machine();
++            check(rt::load_state(*e, padded.data(), padded.size()) && rt::save_state(*e) == s1, "a zero-padded buffer loads");
++        }
++        d.reset();
++
++        // A sound byte written between frames (by the host, not the game):
++        // its UART shift callback is pending across the snapshot.
++        {
++            auto u1 = machine();
++            run(*u1, 10);
++            u1->board().write_byte(0x01c80000, 0x5a);
++            const std::vector<uint8_t> us = rt::save_state(*u1);
++            uint32_t pending = 0; // LOCK: count, end, next (8 bytes each), poked (1), taken (4), then the count
++            std::memcpy(&pending, &us[section(us, "LOCK") + 16 + 29], 4);
++            auto u2 = machine();
++            check(pending == 2 && rt::load_state(*u2, us.data(), us.size()) && rt::save_state(*u2) == us,
++                  "a UART shift pending across the snapshot (two callbacks: the frame probe and the shift)");
++            const bool same = run(*u1, 10) == run(*u2, 10);
++            check(same && rt::save_state(*u1) == rt::save_state(*u2), "and it runs on the same");
++        }
++
++        // Deferred sound: no snapshot while a sound frame is pending.
++        {
++            auto e = machine();
++            e->run_frame_deferred_sound(inputs_at(0));
++            bool threw = false;
++            try {
++                (void)rt::save_state(*e);
++            } catch (const rt::Fatal &) {
++                threw = true;
++            }
++            check(threw, "save refused while a deferred sound frame is pending");
++            e->complete_deferred_sound(e->execute_deferred_sound());
++        }
++
++        // No sound board here: a state with one loads (the game is the same).
++        {
++            auto quiet = machine(false);
++            check(rt::load_state(*quiet, s1.data(), s1.size()), "a machine without a sound board takes a state with one");
++            bool same = true;
++            for (uint64_t i = 0; i < 30; ++i) {
++                const Frame f = run(*quiet, 1)[0];
++                const Frame &p = plain_frames[kAt + i];
++                same &= f.screen == p.screen && f.raster == p.raster && f.ram == p.ram;
++            }
++            check(same, "and runs on with the same screen, 3D layer and work RAM");
++            const std::vector<uint8_t> q = rt::save_state(*quiet);
++            auto loud = machine();
++            check(rt::load_state(*loud, q.data(), q.size()), "a state without a sound board loads where there is one");
++            // Nobody takes the sound bytes here: they wait in the board, and go along.
++            auto quiet2 = machine(false);
++            check(rt::load_state(*quiet2, q.data(), q.size()), "between machines without a sound board");
++            run(*quiet, 5), run(*quiet2, 5);
++            const std::vector<uint8_t> b1 = quiet->board().take_sound_bytes(), b2 = quiet2->board().take_sound_bytes();
++            check(b1 == b2 && b1.size() > 100, "their untaken sound bytes are the same (" + std::to_string(b1.size()) + ")");
++        }
++
++        // Link play: the comm board's state goes along; its presence must match.
++        {
++            // Waiting for the ring, with part of a frame in.
++            Cable ca, cb;
++            auto la = machine();
++            la->board().set_link(&ca);
++            run(*la, 3);
++            la->board().write_dword(0x01a04000, 0x00010001); // fg 1 (master), cn 1: the board starts
++            run(*la, 5);
++            // The first 300 bytes of the numbering token (0xff: cabinet 1 of 1)
++            // come before the save, the rest after.
++            ca.in.push_back(0xff), ca.in.push_back(0x01);
++            for (int i = 2; i < 300; ++i) ca.in.push_back(0);
++            run(*la, 5);
++            check(la->board().comm_board()->link() == rt::CommBoard::Link::Waiting && ca.in.empty(),
++                  "link: waiting for the ring, part of a frame received");
++            const std::vector<uint8_t> ls = rt::save_state(*la);
++            auto lb = machine();
++            lb->board().set_link(&cb);
++            check(rt::load_state(*lb, ls.data(), ls.size()) && rt::save_state(*lb) == ls, "link: loads where there is a link");
++            for (Cable *k : {&ca, &cb})
++                for (int i = 300; i < 0xe01; ++i) k->in.push_back(0);
++            const bool same = run(*la, 20) == run(*lb, 20);
++            check(same && rt::save_state(*la) == rt::save_state(*lb) && lb->board().comm_board()->link() == rt::CommBoard::Link::Up,
++                  "link: and runs on the same (the token completes, the link comes up)");
++            auto none = machine();
++            const std::vector<uint8_t> n0 = rt::save_state(*none);
++            check(!rt::load_state(*none, ls.data(), ls.size()) && rt::save_state(*none) == n0, "link: refused where there is none");
++            Cable cc;
++            auto linked = machine();
++            linked->board().set_link(&cc);
++            check(!rt::load_state(*linked, s1.data(), s1.size()), "link: a state without one refused where there is one");
++        }
++        {
++            // Up: a ring of one (the cable looped back), a frame each way every vblank.
++            Cable ca(true), cb(true);
++            auto la = machine();
++            la->board().set_link(&ca);
++            run(*la, 3);
++            la->board().write_dword(0x01a04000, 0x00010001);
++            for (int i = 0; i < 400 && la->board().comm_board()->link() != rt::CommBoard::Link::Up; ++i) run(*la, 1);
++            run(*la, 3);
++            const rt::CommBoard &up = *la->board().comm_board();
++            check(up.link() == rt::CommBoard::Link::Up && up.id() == 1 && up.count() == 1 && ca.in.empty(),
++                  "link: up after " + std::to_string(la->frames()) + " frames, cabinet 1 of 1, nothing left on the line");
++            const std::vector<uint8_t> ls = rt::save_state(*la);
++            const uint64_t written = ca.written;
++            auto lb = machine();
++            lb->board().set_link(&cb);
++            check(rt::load_state(*lb, ls.data(), ls.size()), "link up: loads");
++            const bool same = run(*la, 30) == run(*lb, 30);
++            check(same && rt::save_state(*la) == rt::save_state(*lb) && ca.written - written == cb.written && cb.written > 0,
++                  "link up: runs on the same, sending the same bytes (" + std::to_string(cb.written) + ")");
++        }
++
++        // Size and cost.
++        {
++            auto m = machine();
++            run(*m, kAt);
++            std::vector<uint8_t> s;
++            const int reps = 20;
++            auto t0 = std::chrono::steady_clock::now();
++            for (int i = 0; i < reps; ++i) s = rt::save_state(*m);
++            const double save_ms = ms_since(t0) / reps;
++            t0 = std::chrono::steady_clock::now();
++            for (int i = 0; i < reps; ++i) (void)rt::load_state(*m, s.data(), s.size());
++            const double load_ms = ms_since(t0) / reps;
++            std::printf("state: %zu bytes (bound %zu); save %.2f ms, load %.2f ms (mean of %d)\n", s.size(),
++                        rt::state_size_bound(*m), save_ms, load_ms, reps);
++            size_t at = 64;
++            while (at + 16 <= s.size()) {
++                uint64_t size;
++                std::memcpy(&size, &s[at + 8], 8);
++                std::printf("  %.4s %9llu\n", reinterpret_cast<const char *>(&s[at]), (unsigned long long)size);
++                at += 16 + size_t(size);
++            }
++            check(s.size() <= rt::state_size_bound(*m), "the state fits its bound");
++        }
++    } catch (const std::exception &e) {
++        std::printf("FAIL: exception: %s\n", e.what());
++        return 1;
++    }
++    std::printf("%s\n", failures ? "test_snapshot: FAILED" : "test_snapshot: all passed");
++    return failures ? 1 : 0;
++}
+diff --git a/tests/test_snapshot_rom.cpp b/tests/test_snapshot_rom.cpp
+new file mode 100644
+index 0000000..02a242d
+--- /dev/null
++++ b/tests/test_snapshot_rom.cpp
+@@ -0,0 +1,260 @@
++// Snapshots on the real game (needs the imported images and the generated
++// code): a run saved at each sample point, each state loaded into a fresh
++// GameLoop and run on, held frame by frame to a straight run that never
++// saved: the screen, the 3D layer, the work RAM, the sound board's output and
++// the instruction counts; and the whole state at the end of each stretch to
++// the saving run's own. Prints the state's size and the save and load times.
++//
++//   test_snapshot_rom IMAGES_DIR [--inputs FILE] [--at N,N,...] [--then K]
++//                     [--nvram DIR] [--loop-link]
++//
++// --nvram DIR: every machine starts from the app's saved EEPROM and backup
++// RAM (tools/common/nvram.h). --loop-link: every machine has the comm board,
++// its cable looped back (a ring of one cabinet: Revision A's factory
++// settings, a linked master, then run as "1 of 1"). Bytes on that cable are
++// the host's, not the machine's: a loaded machine's cable gets what the
++// saving machine's held at that frame, as a host would hand them over.
++//
++// Exit 0 when every point holds, 1 when one does not, 77 (skipped) without
++// the images.
++
++#include "runtime/snapshot.h"
++#include "../tools/common/input_script.h"
++#include "../tools/common/nvram.h"
++
++#include <algorithm>
++#include <chrono>
++#include <cinttypes>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <deque>
++#include <fstream>
++#include <map>
++#include <memory>
++#include <sstream>
++#include <string>
++#include <vector>
++
++namespace {
++
++// A cable from the comm board back to itself, delivering at once.
++struct Loop : rt::LinkTransport {
++    std::deque<uint8_t> in;
++    void poll() override {}
++    bool rx_open() const override { return true; }
++    bool tx_open() const override { return true; }
++    int read(uint8_t *buf, int max) override {
++        const int n = std::min<int>(max, int(in.size()));
++        for (int i = 0; i < n; ++i) buf[i] = in.front(), in.pop_front();
++        return n;
++    }
++    bool write(const uint8_t *buf, int n) override {
++        in.insert(in.end(), buf, buf + n);
++        return true;
++    }
++};
++
++// A machine as the options make it.
++struct Machine {
++    Loop cable;
++    std::unique_ptr<rt::GameLoop> game;
++    Machine(const std::string &dir, const std::string &nvram, bool link) : game(std::make_unique<rt::GameLoop>(dir)) {
++        if (!nvram.empty()) tools::load_nvram(*game, nvram);
++        if (link) game->board().set_link(&cable);
++    }
++};
++
++uint64_t fnv(const void *p, size_t n, uint64_t h = 0xcbf29ce484222325ull) {
++    const auto *b = static_cast<const uint8_t *>(p);
++    for (size_t i = 0; i < n; ++i) h = (h ^ b[i]) * 0x100000001b3ull;
++    return h;
++}
++
++struct Frame {
++    uint64_t screen = 0, raster = 0, ram = 0, audio = 0, instructions = 0, tgp = 0, sound = 0;
++    bool operator==(const Frame &) const = default;
++};
++
++Frame frame_of(rt::GameLoop &g) {
++    Frame f;
++    f.screen = g.board().video().screen_hash();
++    f.raster = g.board().video().raster_hash();
++    size_t n = 0;
++    const uint8_t *ram = rt::main_ram(g.board(), &n);
++    f.ram = fnv(ram, n);
++    if (snd::SoundBoard *s = g.sound()) {
++        const auto fm = s->take_fm(), pcm = s->take_pcm();
++        f.audio = fnv(pcm.data(), pcm.size() * sizeof(float), fnv(fm.data(), fm.size() * sizeof(float)));
++        f.sound = s->instructions();
++    }
++    f.instructions = g.instructions();
++    f.tgp = g.board().tgp().tgp_instructions();
++    return f;
++}
++
++// The parts that differ, as bits: screen, 3D layer, work RAM, audio, i960,
++// TGP and 68000 counts.
++unsigned differences(const Frame &a, const Frame &b) {
++    return (a.screen != b.screen) | (a.raster != b.raster) << 1 | (a.ram != b.ram) << 2 | (a.audio != b.audio) << 3 |
++           (a.instructions != b.instructions) << 4 | (a.tgp != b.tgp) << 5 | (a.sound != b.sound) << 6;
++}
++std::string names(unsigned d) {
++    static const char *name[] = {"screen", "3D-layer", "work-RAM", "audio", "i960-count", "TGP-count", "68000-count"};
++    std::string s;
++    for (unsigned i = 0; i < 7; ++i)
++        if (d >> i & 1) s += std::string(" ") + name[i];
++    return s;
++}
++
++double ms(std::chrono::steady_clock::time_point t) {
++    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
++}
++
++} // namespace
++
++int main(int argc, char **argv) {
++    if (argc < 2) {
++        std::fprintf(stderr, "usage: test_snapshot_rom IMAGES_DIR [--inputs FILE] [--at N,N,...] [--then K]\n");
++        return 2;
++    }
++    const std::string dir = argv[1];
++    if (!std::ifstream(dir + "/program.bin")) {
++        std::printf("test_snapshot_rom: no images at %s (import the ROM set first): skipped\n", dir.c_str());
++        return 77;
++    }
++    std::vector<uint64_t> points = {600, 1300, 2000, 3000, 4000};
++    uint64_t then = 300;
++    tools::Script script;
++    std::string nvram;
++    bool link = false;
++    for (int i = 2; i < argc; ++i)
++        if (!std::strcmp(argv[i], "--loop-link")) link = true;
++    for (int i = 2; i + 1 < argc; i += 2) {
++        if (!std::strcmp(argv[i], "--loop-link")) {
++            --i;
++            continue;
++        }
++        if (!std::strcmp(argv[i], "--inputs")) script.load(argv[i + 1]);
++        else if (!std::strcmp(argv[i], "--nvram")) nvram = argv[i + 1];
++        else if (!std::strcmp(argv[i], "--then")) then = std::strtoull(argv[i + 1], nullptr, 10);
++        else if (!std::strcmp(argv[i], "--at")) {
++            points.clear();
++            std::stringstream ss(argv[i + 1]);
++            for (std::string n; std::getline(ss, n, ',');) points.push_back(std::strtoull(n.c_str(), nullptr, 10));
++        }
++    }
++    std::sort(points.begin(), points.end());
++    const uint64_t last = points.back() + then;
++    int failures = 0;
++    try {
++        // The reference: never saved.
++        auto t0 = std::chrono::steady_clock::now();
++        std::vector<Frame> reference;
++        {
++            Machine m(dir, nvram, link);
++            rt::GameLoop &g = *m.game;
++            for (uint64_t f = 0; f < last; ++f) {
++                g.run_frame(script.at(g.board().frame()));
++                reference.push_back(frame_of(g));
++            }
++        }
++        const double ref_ms = ms(t0);
++        std::printf("reference: %" PRIu64 " frames in %.1f s\n", last, ref_ms / 1000);
++
++        // The saving run: states at each point and at the end of each stretch.
++        std::map<uint64_t, std::vector<uint8_t>> states;
++        std::map<uint64_t, std::deque<uint8_t>> cables;
++        double save_ms = 0, bound = 0;
++        int saves = 0;
++        size_t cable_max = 0;
++        {
++            Machine m(dir, nvram, link);
++            rt::GameLoop &g = *m.game;
++            bool same = true;
++            for (uint64_t f = 0; f < last; ++f) {
++                g.run_frame(script.at(g.board().frame()));
++                const Frame fr = frame_of(g);
++                if (!(fr == reference[f]) && same) {
++                    std::printf("FAIL: the saving run left the reference at frame %" PRIu64 ":%s\n", f + 1,
++                                names(differences(fr, reference[f])).c_str());
++                    same = false;
++                    ++failures;
++                }
++                const uint64_t n = g.frames();
++                bool wanted = false;
++                for (uint64_t p : points) wanted |= n == p || n == p + then;
++                // a save every 50 frames too: saving must not change the machine
++                if (wanted || n % 50 == 0) {
++                    const auto t = std::chrono::steady_clock::now();
++                    std::vector<uint8_t> s = rt::save_state(g);
++                    save_ms += ms(t), ++saves;
++                    bound = double(rt::state_size_bound(g));
++                    if (wanted) states[n] = std::move(s), cables[n] = m.cable.in;
++                    cable_max = std::max(cable_max, m.cable.in.size());
++                }
++            }
++            if (link) {
++                const rt::CommBoard *cb = g.board().comm_board();
++                static const char *names[] = {"off", "waiting", "up", "lost"};
++                std::printf("link: %s, cabinet %d of %d; most bytes on the cable at a save: %zu\n", names[int(cb->link())],
++                            cb->id(), cb->count(), cable_max);
++            }
++            if (same) std::printf("ok  : saving (%d states) left the run as the reference, %" PRIu64 " frames\n", saves, last);
++        }
++
++        // Each point: loaded into a fresh GameLoop, run on.
++        double load_ms = 0;
++        int loads = 0;
++        for (uint64_t p : points) {
++            const std::vector<uint8_t> &s = states.at(p);
++            Machine m(dir, nvram, link);
++            rt::GameLoop &g = *m.game;
++            m.cable.in = cables.at(p); // the host's bytes in flight
++            const auto t = std::chrono::steady_clock::now();
++            const bool loaded = rt::load_state(g, s.data(), s.size());
++            load_ms += ms(t), ++loads;
++            if (!loaded) {
++                std::printf("FAIL: the state at frame %" PRIu64 " did not load\n", p);
++                ++failures;
++                continue;
++            }
++            const bool resaved = rt::save_state(g) == s;
++            uint64_t bad = 0, first_bad = 0;
++            unsigned what = 0;
++            for (uint64_t k = 0; k < then; ++k) {
++                g.run_frame(script.at(g.board().frame()));
++                const Frame fr = frame_of(g);
++                const Frame &ref = reference[p + k];
++                if (const unsigned d = differences(fr, ref)) {
++                    if (!bad++) first_bad = p + k + 1;
++                    what |= d;
++                }
++            }
++            const bool end_same = rt::save_state(g) == states.at(p + then);
++            const bool ok = resaved && !bad && end_same;
++            failures += !ok;
++            std::printf("%s: frame %5" PRIu64 ": %zu bytes; loaded saves the same bytes: %s; %" PRIu64
++                        " frames after: %" PRIu64 " differ%s%s; whole state at frame %" PRIu64 ": %s\n",
++                        ok ? "ok  " : "FAIL", p, s.size(), resaved ? "yes" : "NO", then, bad,
++                        bad ? (" (from frame " + std::to_string(first_bad) + "; in:").c_str() : "", bad ? (names(what) + ")").c_str() : "",
++                        p + then, end_same ? "same" : "DIFFERENT");
++        }
++
++        const std::vector<uint8_t> &s = states.at(points.back());
++        std::printf("state size: %zu bytes (bound %.0f); save %.2f ms (mean of %d), load %.2f ms (mean of %d, into a fresh GameLoop)\n",
++                    s.size(), bound, save_ms / saves, saves, load_ms / loads, loads);
++        size_t at = 64;
++        while (at + 16 <= s.size()) {
++            uint64_t size;
++            std::memcpy(&size, &s[at + 8], 8);
++            std::printf("  %.4s %9" PRIu64 "\n", reinterpret_cast<const char *>(&s[at]), size);
++            at += 16 + size_t(size);
++        }
++    } catch (const std::exception &e) {
++        std::printf("FAIL: %s\n", e.what());
++        return 1;
++    }
++    std::printf("%s\n", failures ? "test_snapshot_rom: FAILED" : "test_snapshot_rom: all passed");
++    return failures ? 1 : 0;
++}

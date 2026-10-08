@@ -1,0 +1,17 @@
+diff --git a/src/runtime/m2_board.cpp b/src/runtime/m2_board.cpp
+index 9084024..89dd7c2 100644
+--- a/src/runtime/m2_board.cpp
++++ b/src/runtime/m2_board.cpp
+@@ -128,6 +128,12 @@ M2Board::M2Board(Images images)
+     geo_ = std::make_unique<Geo>(*img_.rom, tgp_.buffer_data());
+ #else
+     geo_ = std::make_unique<Geo>(img_.polygons, img_.textures, tgp_.buffer_data());
++    // The geometrizer and the TGP board copied what they read, and the sound board's images are
++    // the sound board's own (GameLoop): only the program and main data stay mapped from here.
++    // Released, they are ~48 MB less per board (a host running two boards in one process).
++    for (std::vector<uint8_t> *image : {&img_.polygons, &img_.textures, &img_.copro_tables, &img_.copro_data,
++                                        &img_.sound_program, &img_.pcm1, &img_.pcm2})
++        std::vector<uint8_t>().swap(*image);
+ #endif
+     video_ = std::make_unique<Video>(tile_.data(), chr_.data());
+     video_->enable_write_tracking();

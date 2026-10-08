@@ -1,5 +1,6 @@
-// Runs an FBNeo core off the main thread for one cabinet. Posts each frame to the page (which
-// hands it to Bevy) and streams audio to the AudioWorklet (audio.js).
+// Runs a cabinet's core (FBNeo, Supermodel or Daytona USA's, through libretro.js) off the main
+// thread. Posts each frame to the page (which hands it to Bevy) and streams audio to the
+// AudioWorklet (audio.js).
 //
 // Alone, the local player's buttons drive their seat's controller port. Online, every seated
 // player's machine runs the same game in step with rollback (netplay/src/lib.rs): GGRS guesses
@@ -9,13 +10,16 @@
 // some frames of input delay, and a wait whenever the others' input is late. Each starts
 // with its session's epoch, so packets still in flight from an earlier session are dropped.
 //
-// Frames run on a precise clock (Alarm): one frame at its slot, the picture posted, then the
-// next. A heavy core (a Model 3 frame is ~12 ms) never runs two frames back to back to catch
-// up, since that holds its inputs and its picture for the whole burst; it catches up one frame
-// per wake-up. GGRS's packets leave the moment it makes them, so online the two machines each
-// run their frame in the same slot and swap one input per frame. A lockstep game's input delay
-// follows the other machines' lateness: a frame more when their input keeps arriving late, a
-// frame less after a quiet stretch.
+// Frames run on a precise clock (Alarm) at the core's own rate (FBNeo and Supermodel say 60 Hz,
+// Daytona USA's Model 2 57.524 Hz): one frame at its slot, the picture posted, then the next.
+// The sound keeps up by itself: a frame's samples are 1/fps of a second of it, however many
+// that is (800 at 60 Hz and 48 kHz, 834 or 835 at 57.524 Hz). A heavy core (a Model 3 frame
+// is ~12 ms) never runs two frames back to back to catch up, since that holds its inputs and
+// its picture for the whole burst; it catches up one frame per wake-up. GGRS's packets leave
+// the moment it makes them, so online the two machines each run their frame in the same slot
+// and swap one input per frame. A lockstep game's input delay follows the other machines'
+// lateness: a frame more when their input keeps arriving late, a frame less after a quiet
+// stretch.
 //
 // When players join or leave, one machine (the page picks it) captures the game as it is and
 // every player starts a new session from that capture.
@@ -25,10 +29,36 @@
 // only frames no rollback can change anymore. The watchers' machines play those frames as they
 // come in, keeping a few in hand so they play evenly.
 //
-// In:  { type: "start", core, rom, files, state, seat, turns, lockstep, port, hold }
+// An `arcade` game (Daytona USA) is linked cabinets, as in an arcade, and none of the above:
+// this machine is the player's own cabinet only (the core's `seat` setting, which this sets),
+// started from their seat's state and running from then on, whoever else sits down or leaves;
+// nothing waits for anyone, there is no capture or session. The cabinets' link boards talk
+// through the players' browsers instead, the way the arcade's link cable joined them, so the
+// game's own rules say who races whom. After each frame this cabinet's block of link data goes
+// out on `port` (an ArrayBuffer for every other cabinet: [0xda][seat: u8][frame: u32 LE][block])
+// when it changed, and again now and then when it didn't (in case one went missing); the
+// others' come in on `port` as [seat, packet], and the newest from each seat goes into the core
+// before the next frame (Core.linkIn). A cabinet that hears nothing from a seat goes on with
+// what it last heard. Watching one: its machine's state, the blocks it had then, and for each
+// frame its controls and the blocks that went in before it ("watch-frames"), so the watcher's
+// machine sees exactly what the player's did. A cabinet left waiting for good by a player who
+// stood up between Start and the race (Daytona USA has no timeout for it) goes back to its
+// seat's state, the attract mode (CabinetLink, #watchGame).
+//
+// In:  { type: "start", core, rom, files, state, seat, turns, lockstep, arcade, options, port, hold }
 //        Loads the game. `files` (a BIOS) and `state` are optional: skipped if missing. Plays
 //        alone right away, or with `hold` waits for "online" (joining a game in progress) or
-//        "watch-state" (watching; no `seat` or `port` then).
+//        "watch-state" (watching; no `seat` or `port` then). `options` are the core's own
+//        settings ({ key: value }, strings; Core.setOption), made before the game loads. With a
+//        `view` among them the machine has a screen per seat (Daytona USA as the twin
+//        cabinet): it shows `seat`'s (a watcher's, seat 0's), set again after every state it
+//        loads, since states may carry the one of the machine that made them.
+//        An `arcade` game also gets `seat` among them (a watcher's: the seat it watches), and
+//        `state` is the seat's (states may be deflated, as below).
+//      { type: "view", view } Watching such a game: shows seat `view`'s screen instead.
+//      { type: "link-seats", seats } An arcade game: who sits at each seat ({ seat: player id },
+//        or null). A seat left empty is off the link before the next frame (Core.linkAbsent);
+//        someone new at a seat starts over the frame count its packets carry.
 //      { type: "capture", epoch } Stops and captures the machine, for a change of players.
 //        States that leave this worker (captured, watch-state) are deflated: a Model 3's 30 MB
 //        is two thirds zeros and packs to 5 MB; they come back the same way (online, watch-state).
@@ -39,10 +69,13 @@
 //      { type: "solo" } Everyone else left: play on alone.
 //      { type: "stream", on } Streams this machine's game to the watchers, or stops.
 //      { type: "snapshot", to } A state for a new watcher, to go on from with the stream.
-//      { type: "watch-state", bytes } | { type: "watch-inputs", frame, inputs } Watching: a
-//        stream's state and inputs, as they're sent out (below).
+//      { type: "watch-state", bytes, seat } | { type: "watch-inputs", frame, inputs } Watching:
+//        a stream's state and inputs, as they're sent out (below); an arcade game's state is
+//        the cabinet at `seat` (the core's seat is set before it loads), and its frames come as
+//        { type: "watch-frames", frame, bytes }.
 //      { type: "input", mask } | { type: "audio", port, sampleRate } the speaker's port and rate
-// Out: { type: "ready" } the game is loaded | { type: "frame", rgba, width, height } |
+// Out: { type: "ready", state } the game is loaded (`state`: from the start's state) |
+//      { type: "frame", rgba, width, height } |
 //      { type: "netplay", event, seat, ... } | { type: "captured", epoch, state } |
 //      { type: "buttons", buttons } what the game calls player 1's buttons, [RetroPad id, name]
 //      pairs, once known | { type: "watch-state", stream, bytes, to } the machine for watchers
@@ -50,6 +83,15 @@
 //      { type: "watch-inputs", stream, frame, inputs } a Uint16Array with a mask per controller
 //      port (4) for each frame from `frame` on, a few times a second. `stream` counts up each
 //      time the stream starts over (a new session); inputs go on from that stream's states.
+//      An arcade game's watch-state is [frame: u32 LE][the link: per seat (8) a byte, 1 when a
+//      block follows, | 2 when the seat is off the link, and the block][state], and its frames
+//      come as { type: "watch-frames", stream, frame, bytes }: per frame [controls: u16 LE]
+//      [count: u8] and that many [seat: u8, | 0x80 when it went off the link][the block, as
+//      changes from that seat's last: runs of [unchanged: u8][changed: u8][changed bytes]].
+//      { type: "arcade", fps, frame, blocksIn, blocksOut, link } An arcade game, once a second:
+//      frames shown, frames run, blocks taken in and sent out in that second, and the core's
+//      link status (Core.linkStatus). { type: "arcade-cancelled" } its cabinet went back to the
+//      attract mode, its race left waiting by someone who stood up before it began.
 //      Online, every 120 frames the machines compare a hash of the game's RAM (the worker's
 //      own packets, marked with epoch 0xffff): a mismatch is the "desync" netplay event
 //      (seat, frame), once per session, and the page then has one machine hand its game to
@@ -78,6 +120,32 @@ const HASH_EVERY = 120;
 const HASH_STRIDE = 4;
 /** Marks a deflated state: "vabz", then the deflate-raw bytes. */
 const PACKED = Uint8Array.of(0x76, 0x61, 0x62, 0x7a);
+/** An arcade game's link packets start with this, then [seat: u8][frame: u32 LE][block]. */
+const LINK_PACKET = 0xda;
+/** Seats on an arcade game's link (Daytona USA's cabinets). */
+const LINK_SEATS = 8;
+/** An arcade cabinet sends its block again after this many frames without a change. */
+const RESEND_FRAMES = 60;
+/**
+ * Daytona USA, the arcade game, as its main RAM says (from 0x500000; daytona/ring-notes.md, "The
+ * bridge"): the cars on the track (10 outside a race, 16 in a linked race of two, 40 alone), the
+ * entrants in the session this cabinet sees (0 in the attract mode; an idle cabinet counts
+ * another's session's too), and the game's mode: 3 to 11 the attract mode, 16 idle while
+ * another's session takes entries (WAITING FOR YOUR ENTRY), ENTERED from this cabinet's Start
+ * (circuit select, mission select) until its race (22).
+ */
+const CARS = 0x1080;
+const ENTRANTS = 0x40027;
+const MODE = 0x10a0;
+const ENTERED = 18;
+const NO_RACE = 10;
+/**
+ * A cabinet is ENTERED for 1866 frames (32.4 s) at most when nobody leaves: from the session's
+ * first Start, with no circuit or mission chosen and every count run out (1580 with them chosen).
+ * One still there this many frames (37.5 s) after its Start, a player having left meanwhile,
+ * waits for them for good: the game has no timeout.
+ */
+const STRANDED_FRAMES = 2160;
 
 /** Deflates a state for the trip to the other players, marked as such. */
 async function pack(state) {
@@ -184,7 +252,7 @@ const download = async (url) => {
 };
 const downloadIfPresent = (url) => url && download(url).catch(() => undefined);
 
-async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, seat = 0, turns = false, lockstep = false, port, hold }) {
+async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, seat = 0, turns = false, lockstep = false, arcade = false, options = {}, port, hold }) {
   const { default: createCore } = await import(coreUrl);
   const [rom, state, ...extras] = await Promise.all([
     download(romUrl),
@@ -202,25 +270,41 @@ async function start({ core: coreUrl, rom: romUrl, files = [], state: stateUrl, 
       audioPort?.postMessage(samples, [samples.buffer]);
     },
     onLog: (level, text) => level >= 2 && console.warn(text),
-  }, { canvas }), { seat, turns, lockstep, port });
+  }, { canvas }), { seat, turns, lockstep, arcade, port });
   const core = cab.core;
   core.netplay = true;
   files.forEach((url, i) => extras[i] && core.addFile(url.split("/").pop(), extras[i]));
+  // An arcade game's machine is the seat's cabinet.
+  if (arcade) options = { ...options, seat: String(seat) };
+  for (const [key, value] of Object.entries(options)) core.setOption(key, String(value));
   const { fps, sampleRate } = core.loadGame(romUrl.split("/").pop(), rom);
+  // Pacing, input delay and the stats all go by the core's rate, whatever it is (see the top).
   cab.fps = fps;
   // The speaker runs at one rate; a core at another (Supermodel, 44.1 kHz) is brought to it.
   if (Math.round(sampleRate) !== speakerRate) cab.resampler = new Resampler(sampleRate, speakerRate);
   // A start-up state (emulator/snapshot.mjs) skips the boot screens and adds credits. States
-  // from an older core build don't load; the game then just boots normally.
+  // from an older core build don't load; the game then just boots normally. An arcade seat's
+  // is the cabinet on the link, in the attract mode (deflated, and loaded after a power-on, as
+  // any state from another machine).
+  let loaded = false;
   try {
-    if (state) core.unserialize(state);
+    if (state) {
+      const bytes = arcade ? await unpack(state) : state;
+      if (arcade) core.reset();
+      core.unserialize(bytes);
+      loaded = true;
+      // An arcade cabinet goes back to it when its race is left waiting for good (CabinetLink).
+      if (arcade && !hold) cab.seatState = bytes;
+    }
   } catch (error) {
     console.warn(`${stateUrl}: ${error.message}`);
   }
+  if (arcade && !hold && !loaded) console.warn(`${stateUrl ?? "No state"}: the cabinet starts from power-on, off the link`);
+  if ("view" in options) cab.show(seat);
   cab.paused = Boolean(hold);
   await netplay;
   cabinet = cab;
-  postMessage({ type: "ready" });
+  postMessage({ type: "ready", state: loaded });
   for (const msg of waiting.splice(0)) cab.handle(msg);
   cab.tick();
 }
@@ -303,13 +387,20 @@ class Cabinet {
   muted = false;
   /** Not running frames: waiting to join a game, or for the others after a capture. */
   paused = false;
+  /** The core's frame rate (loadGame's), until the game loads. */
   fps = 60;
+  /** An arcade game: the seat's state the cabinet started from. */
+  seatState;
   /** Brings the core's sound to the speaker's rate, when they differ. */
   resampler;
 
   #seat;
   #lockstep;
   #port;
+  /** Which seat's screen the machine shows, for a core with one per seat; else undefined. */
+  #view;
+  /** An arcade game: the player's cabinet on the link (CabinetLink), or a watcher's (true). */
+  #arcade;
   /** Online: the GGRS session, its epoch, and the seats of its players in handle order. */
   #session;
   #epoch;
@@ -367,13 +458,14 @@ class Cabinet {
   #framesSince = performance.now();
   #buttonsSent = false;
 
-  constructor(core, { seat, turns, lockstep, port }) {
+  constructor(core, { seat, turns, lockstep, arcade, port }) {
     this.core = core;
     core.turns = turns;
     this.#seat = seat;
     this.#lockstep = lockstep;
     this.#port = port;
-    if (!port) return; // watching
+    if (arcade) this.#arcade = port ? new CabinetLink(core, seat, port) : true;
+    if (!port || arcade) return; // watching, or the link takes the port
     port.onmessage = ({ data: [seat, packet] }) => {
       const handle = this.#seats?.indexOf(seat) ?? -1;
       const bytes = new Uint8Array(packet);
@@ -398,8 +490,21 @@ class Cabinet {
       else if (!this.#stream) this.#startStream();
     }
     if (msg.type === "snapshot" && this.#stream) this.#sendState(msg.to);
-    if (msg.type === "watch-state") this.#watchFrom(msg.bytes);
+    if (msg.type === "watch-state") this.#watchFrom(msg.bytes, msg.seat);
     if (msg.type === "watch-inputs") this.#watchInputs(msg);
+    if (msg.type === "watch-frames") this.#watchFrames(msg);
+    if (msg.type === "link-seats" && this.#arcade instanceof CabinetLink) this.#arcade.seated(msg.seats);
+    if (msg.type === "view" && this.#view !== undefined) this.show(msg.view);
+  }
+
+  /**
+   * Shows seat `view`'s screen, on a core with one per seat (its "view" setting), or again the
+   * one it showed: after loading a state, which may carry the view of the machine that made it.
+   */
+  show(view = this.#view) {
+    if (view === undefined) return;
+    this.#view = view;
+    this.core.setOption("view", String(view));
   }
 
   /** Frames to run per wake-up at most: one for a heavy core, a few to catch up otherwise. */
@@ -478,12 +583,21 @@ class Cabinet {
             watch.waiting = true;
             break;
           }
-          this.#run(watch.frames.shift(), true);
+          const frame = watch.frames.shift();
+          if (this.#arcade) this.#watchLinked(frame);
+          else this.#run(frame, true);
           // A little faster while far behind the stream (frames came in after a hiccup).
           this.#next += watch.frames.length > WATCH_BUFFER * 2.5 ? frameMs * 0.9 : frameMs;
         }
       }
       this.#alarm.at(watch.waiting ? performance.now() + WAIT_POLL_MS : this.#next);
+    } else if (this.#arcade) {
+      for (let i = 0; i < this.#perWake() && performance.now() >= this.#next; i++) {
+        this.#runLinked(sampleInput());
+        this.#next += frameMs;
+      }
+      this.#linkStats(performance.now());
+      this.#alarm.at(this.#next);
     } else {
       for (let i = 0; i < this.#perWake() && performance.now() >= this.#next; i++) {
         const ports = byPort([sampleInput()], [this.#seat]);
@@ -680,6 +794,7 @@ class Cabinet {
     // Power-on, then the state: every machine then has the same of what the state leaves out.
     this.core.reset();
     this.core.unserialize(state);
+    this.show();
     this.#captured = undefined;
     if (this.#lockstep) {
       this.#tuned = { rollback: 0, heavy: true }; // GGRS never saves: no slots needed
@@ -698,6 +813,8 @@ class Cabinet {
     this.#delayFloor = delay;
     this.#epoch = epoch & 0xffff;
     this.#seats = seats;
+    // GGRS takes whole frames per second, for its guess of how far ahead the others are (57.524
+    // makes 58: under 1% off, and lockstep doesn't pace by that guess anyway).
     this.#session = new Session(seats.length, seats.indexOf(this.#seat), delay, rollback, Math.round(this.fps));
     this.paused = false;
     this.#waiting = false;
@@ -723,10 +840,14 @@ class Cabinet {
     this.paused = false;
   }
 
-  /** Streams from here: the machine as it is now, or online as of the last confirmed frame. */
+  /**
+   * Streams from here: the machine as it is now, or online as of the last confirmed frame. An
+   * arcade cabinet counts its frames from its start, the number its link packets carry.
+   */
   #startStream() {
-    const frame = this.#session ? this.#session.confirmedFrame() + 1 : 0;
-    this.#stream = { id: ++this.#streams, frame, inputs: [], sentAt: 0 };
+    const link = this.#arcade instanceof CabinetLink ? this.#arcade : undefined;
+    const frame = this.#session ? this.#session.confirmedFrame() + 1 : link ? link.frame : 0;
+    this.#stream = { id: ++this.#streams, frame, inputs: [], records: [], sentAt: 0 };
     this.#sendState();
   }
 
@@ -736,6 +857,16 @@ class Cabinet {
    */
   #flush(now = false) {
     const stream = this.#stream;
+    if (this.#arcade) {
+      if (stream.packing || !stream.records.length || (!now && performance.now() - stream.sentAt < STREAM_EVERY)) return;
+      const bytes = new Uint8Array(stream.records.reduce((total, record) => total + record.length, 0));
+      stream.records.reduce((at, record) => (bytes.set(record, at), at + record.length), 0);
+      postMessage({ type: "watch-frames", stream: stream.id, frame: stream.frame, bytes }, [bytes.buffer]);
+      stream.frame += stream.records.length;
+      stream.records = [];
+      stream.sentAt = performance.now();
+      return;
+    }
     if (this.#session) {
       const players = this.#seats.length;
       const confirmed = this.#session.confirmedInputs(stream.frame + stream.inputs.length / PORTS);
@@ -757,34 +888,144 @@ class Cabinet {
    * save GGRS made before that frame, unless the machine is there now (always, in lockstep).
    */
   async #sendState(to) {
-    this.#flush(true);
     const stream = this.#stream;
+    // One at a time: while a state packs, inputs wait, so a second one taken meanwhile would
+    // be for a frame the watchers' inputs haven't reached (the machine's, ahead of them).
+    while (stream.packing) await stream.packing;
+    if (this.#stream !== stream) return; // the stream started over meanwhile
+    this.#flush(true);
     const { id, frame } = stream;
     const session = this.#session;
     const saved = session && !this.#lockstep && frame < session.currentFrame();
-    stream.packing = true;
+    let packed;
+    stream.packing = new Promise((resolve) => (packed = resolve));
+    // An arcade cabinet's link goes with it: the blocks it has from the others, which its
+    // state leaves out. Taken with the state, before anything else runs.
+    const link = this.#arcade instanceof CabinetLink ? this.#arcade.table() : new Uint8Array(0);
     const state = await pack(saved ? this.core.slotBytes(session.slot(frame)) : this.core.serialize());
-    stream.packing = false;
+    stream.packing = undefined;
+    packed();
     if (this.#stream !== stream) return; // the stream started over meanwhile
-    const bytes = new Uint8Array(4 + state.length);
+    const bytes = new Uint8Array(4 + link.length + state.length);
     new DataView(bytes.buffer).setUint32(0, frame, true);
-    bytes.set(state, 4);
+    bytes.set(link, 4);
+    bytes.set(state, 4 + link.length);
     postMessage({ type: "watch-state", stream: id, bytes, to }, [bytes.buffer]);
     this.#flush(true); // the frames run while packing
   }
 
-  async #watchFrom(bytes) {
+  async #watchFrom(bytes, seat) {
     const frame = new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, true);
+    // An arcade cabinet's: the blocks the player's machine had then, the base its frames' blocks
+    // are written against.
+    const link = this.#arcade ? readLinkTable(bytes, 4, this.core.linkBlockSize) : undefined;
     // The stream's inputs from this frame on may arrive while the state inflates: kept from
     // now, run once the machine is at the state.
-    const watch = (this.#watch = { frames: [], end: frame, waiting: true });
+    const watch = (this.#watch = { frames: [], end: frame, waiting: true, blocks: link?.blocks.map((block) => block.slice()) });
     this.paused = true;
-    const state = await unpack(bytes.subarray(4));
+    const state = await unpack(bytes.subarray(link ? link.end : 4));
     if (this.#watch !== watch) return; // a newer state came meanwhile
+    // An arcade cabinet is the seat's: set before its state, which carries the core's link
+    // table, so nothing goes in but what the frames say (the table here is only their base).
+    if (link && seat !== undefined) this.core.setOption("seat", String(seat));
     this.core.reset();
     this.core.unserialize(state);
+    this.show();
     this.paused = false;
     this.#alarm.now();
+  }
+
+  /** Watching an arcade cabinet: its frames (see the top), kept to run in turn. */
+  #watchFrames({ frame, bytes }) {
+    const watch = this.#watch;
+    if (!watch?.blocks) return;
+    if (frame > watch.end) {
+      console.warn(`Watching: frames ${watch.end}-${frame - 1} never came`);
+      return;
+    }
+    try {
+      for (let at = 0; at < bytes.length; frame++) {
+        const mask = bytes[at] | (bytes[at + 1] << 8);
+        const count = bytes[at + 2];
+        at += 3;
+        // Frames the machine has already are read past, not into the blocks.
+        const keep = frame >= watch.end;
+        const blocks = [];
+        for (let i = 0; i < count; i++) {
+          const seat = bytes[at++] ?? LINK_SEATS;
+          if ((seat & 0x7f) >= LINK_SEATS) throw new Error(`seat ${seat}`);
+          if (seat & 0x80) {
+            blocks.push([seat & 0x7f, null]);
+            continue;
+          }
+          const block = keep ? watch.blocks[seat] : watch.blocks[seat].slice();
+          at = readChange(bytes, at, block);
+          blocks.push([seat, block.slice()]);
+        }
+        if (keep) watch.frames.push({ mask, blocks });
+      }
+      watch.end = Math.max(watch.end, frame);
+    } catch (error) {
+      console.warn(`Watching: frames from ${frame} don't read (${error.message})`);
+      this.#watch = undefined;
+      this.paused = true;
+    }
+  }
+
+  /** Watching an arcade cabinet: a frame of it, with the blocks the player's took in before it. */
+  #watchLinked({ mask, blocks }) {
+    for (const [seat, block] of blocks) {
+      if (block) this.core.linkIn(seat, block);
+      else this.core.linkAbsent(seat);
+    }
+    const ports = new Uint16Array(PORTS);
+    ports[0] = mask;
+    this.#run(ports, true);
+    this.core.linkOut(); // as the player's machine did after it
+  }
+
+  /**
+   * An arcade game: a frame of the player's cabinet, the others' newest blocks into it first and
+   * its own out after, and for watchers what it took in and the controls.
+   */
+  #runLinked(mask) {
+    const link = this.#arcade;
+    const record = this.#stream ? [mask & 0xff, mask >> 8] : undefined;
+    link.feed(record);
+    // The machine is one cabinet, on the first controller.
+    const ports = new Uint16Array(PORTS);
+    ports[0] = mask;
+    this.#run(ports, true);
+    const stranded = link.ran();
+    if (record) this.#stream.records.push(Uint8Array.from(record));
+    if (stranded && this.seatState) this.#backToAttract();
+  }
+
+  /**
+   * An arcade game: our cabinet's race is waiting for good for a player who left before it
+   * began (see CabinetLink). The cabinet goes back to the seat's state, the attract mode, still
+   * on the link, and watchers start over from there.
+   */
+  #backToAttract() {
+    console.warn(`Frame ${this.#arcade.frame}: the race waits for a player who left; back to the attract mode`);
+    this.core.reset();
+    this.core.unserialize(this.seatState);
+    this.#arcade.reloaded();
+    if (this.#stream) this.#startStream();
+    postMessage({ type: "arcade-cancelled" });
+  }
+
+  /** An arcade game, once a second: how its cabinet and the link are doing, to the page. */
+  #linkStats(now) {
+    if (now < this.#nextStats) return;
+    const link = this.#arcade;
+    const fps = Math.round((this.#frames * 1000) / (now - this.#framesSince));
+    const { frame, blocksIn, blocksOut } = link;
+    postMessage({ type: "arcade", fps, frame, blocksIn, blocksOut, link: this.core.linkStatus() });
+    link.blocksIn = link.blocksOut = 0;
+    this.#frames = 0;
+    this.#framesSince = now;
+    this.#nextStats = now + 1000;
   }
 
   #watchInputs({ frame, inputs }) {
@@ -799,6 +1040,220 @@ class Cabinet {
     }
     watch.end = Math.max(watch.end, frame + inputs.length / PORTS);
   }
+}
+
+/**
+ * An arcade game's cabinet on its link (see the top): the other seats' blocks as they come in,
+ * the newest of each into the core before a frame, this cabinet's out after one. What went into
+ * the core is kept for watchers: each seat's latest block (zeros before any), whether one ever
+ * came, and whether the seat is off the link.
+ */
+class CabinetLink {
+  /** Frames this cabinet has run, the number its packets carry. */
+  frame = 0;
+  /** Blocks taken in from the others, and sent out, since the page last heard. */
+  blocksIn = 0;
+  blocksOut = 0;
+  #core;
+  #seat;
+  #port;
+  #size;
+  #blocks;
+  #seats = Array.from({ length: LINK_SEATS }, () => ({ taken: false, absent: false }));
+  /** Per seat: who sits there (a player id, or null), and the newest frame of theirs taken. */
+  #peers = Array.from({ length: LINK_SEATS }, () => ({ id: null, newest: -1 }));
+  /** What goes into the core before the next frame, by seat: a block, or null (off the link). */
+  #pending = new Map();
+  /** Our block as it last went out, and the frame it did. */
+  #sent;
+  #sentAt = 0;
+  /**
+   * The game, for a race left waiting by a player who stood up (Daytona USA's RAM: see MODE):
+   * the frame our cabinet entered a session (undefined outside one, and once racing), and
+   * whether a player left it meanwhile.
+   */
+  #enteredAt;
+  #someoneLeft = false;
+
+  constructor(core, seat, port) {
+    this.#core = core;
+    this.#seat = seat;
+    this.#port = port;
+    this.#size = core.linkBlockSize;
+    if (!this.#size) console.warn("This core has no link: the cabinet plays alone");
+    this.#blocks = Array.from({ length: LINK_SEATS }, () => new Uint8Array(this.#size));
+    port.onmessage = ({ data: [seat, packet] }) => this.#receive(seat, new Uint8Array(packet));
+  }
+
+  /** Who sits where now ({ seat: player id, or null }): a seat left empty goes off the link. */
+  seated(seats) {
+    for (let seat = 0; seat < LINK_SEATS; seat++) {
+      const id = seats[seat] ?? null;
+      const peer = this.#peers[seat];
+      if (seat === this.#seat || peer.id === id) continue;
+      peer.id = id;
+      peer.newest = -1;
+      if (id === null) {
+        this.#pending.set(seat, null);
+        this.#left();
+      }
+    }
+  }
+
+  /**
+   * Someone left. If our cabinet is in a session with others that hasn't begun its race, the
+   * leaver may have been in it, and then it waits for them for good (Daytona USA has no
+   * timeout): see #watchGame. Their block is still in, so they still count among the entrants.
+   */
+  #left() {
+    if (this.#enteredAt !== undefined && this.#core.systemRam()[ENTRANTS] >= 2) this.#someoneLeft = true;
+  }
+
+  /** Another cabinet's packet; only the newest block of each seat's counts. */
+  #receive(seat, bytes) {
+    if (bytes.length !== 6 + this.#size || bytes[0] !== LINK_PACKET || bytes[1] !== seat || seat === this.#seat) return;
+    const peer = this.#peers[seat];
+    if (!peer || peer.id === null) return; // nobody there, as far as the page said
+    const frame = new DataView(bytes.buffer, bytes.byteOffset).getUint32(2, true);
+    if (frame <= peer.newest) return; // a newer one came first (another way round)
+    peer.newest = frame;
+    this.#pending.set(seat, bytes.subarray(6));
+  }
+
+  /** Before a frame: the newest blocks into the core, and written down in `record`, if any. */
+  feed(record) {
+    record?.push(this.#pending.size);
+    for (const [seat, block] of this.#pending) {
+      const known = this.#seats[seat];
+      if (block === null) {
+        this.#core.linkAbsent(seat);
+        known.absent = true;
+        record?.push(seat | 0x80);
+        continue;
+      }
+      this.#core.linkIn(seat, block);
+      if (record) {
+        record.push(seat);
+        writeChange(block, this.#blocks[seat], record);
+      }
+      this.#blocks[seat].set(block);
+      known.taken = true;
+      known.absent = false;
+      this.blocksIn++;
+    }
+    this.#pending.clear();
+  }
+
+  /**
+   * After a frame: our block out to the others when it changed, or again after a while. True
+   * when our cabinet is stranded in a session someone left before its race (#watchGame).
+   */
+  ran() {
+    this.frame++;
+    if (!this.#size) return false;
+    const stranded = this.#watchGame();
+    this.#send();
+    return stranded;
+  }
+
+  /**
+   * Whether our cabinet is stranded: ENTERED for longer than any session takes to start its race,
+   * and someone left while it was. Never in the attract mode, idle, or racing (its mode then
+   * isn't ENTERED). The entrant count can't tell: the leaver's zeros take them off it, down to
+   * none when the first to press Start left.
+   */
+  #watchGame() {
+    const ram = this.#core.systemRam();
+    if (ram.length <= ENTRANTS) return false;
+    if (ram[MODE] !== ENTERED || ram[CARS] !== NO_RACE) {
+      this.#enteredAt = undefined;
+      this.#someoneLeft = false;
+      return false;
+    }
+    this.#enteredAt ??= this.frame;
+    return this.#someoneLeft && this.frame - this.#enteredAt >= STRANDED_FRAMES;
+  }
+
+  /** The cabinet went back to its seat's state: the others' newest blocks go in again. */
+  reloaded() {
+    this.#seats.forEach((known, seat) => {
+      if (known.taken && !known.absent && this.#peers[seat].id !== null && !this.#pending.has(seat)) {
+        this.#pending.set(seat, this.#blocks[seat].slice());
+      }
+      known.taken = known.absent = false;
+      this.#blocks[seat].fill(0);
+    });
+    this.#enteredAt = undefined;
+    this.#someoneLeft = false;
+  }
+
+  #send() {
+    const block = this.#core.linkOut();
+    if (block) this.#sent = block;
+    else if (!this.#sent || this.frame - this.#sentAt < RESEND_FRAMES) return;
+    const packet = new Uint8Array(6 + this.#size);
+    packet[0] = LINK_PACKET;
+    packet[1] = this.#seat;
+    new DataView(packet.buffer).setUint32(2, this.frame, true);
+    packet.set(this.#sent, 6);
+    this.#port.postMessage(packet.buffer, [packet.buffer]);
+    this.#sentAt = this.frame;
+    this.blocksOut++;
+  }
+
+  /** The link as it is in the core, for a watcher to start from (see the top). */
+  table() {
+    const bytes = [];
+    this.#seats.forEach(({ taken, absent }, seat) => {
+      bytes.push((taken ? 1 : 0) | (absent ? 2 : 0));
+      if (taken) bytes.push(...this.#blocks[seat]);
+    });
+    return Uint8Array.from(bytes);
+  }
+}
+
+/** A link written by CabinetLink.table, from `at` in `bytes`: each seat's block, and where it ends. */
+function readLinkTable(bytes, at, size) {
+  const blocks = [];
+  for (let seat = 0; seat < LINK_SEATS; seat++) {
+    const taken = Boolean(bytes[at++] & 1);
+    blocks.push(taken ? bytes.slice(at, at + size) : new Uint8Array(size));
+    if (taken) at += size;
+  }
+  return { blocks, end: at };
+}
+
+/**
+ * Writes `block` to `out` (an array of bytes) as its changes from `base`, the same size: runs of
+ * [unchanged: u8][changed: u8][the changed bytes], to the end of the block. A block changes by
+ * a few dozen bytes a frame, so a frame's blocks for a watcher come to little.
+ */
+function writeChange(block, base, out) {
+  for (let at = 0; at < block.length; ) {
+    let same = 0;
+    while (at < block.length && block[at] === base[at] && same < 255) {
+      at++;
+      same++;
+    }
+    const from = at;
+    while (at < block.length && block[at] !== base[at] && at - from < 255) at++;
+    out.push(same, at - from);
+    for (let i = from; i < at; i++) out.push(block[i]);
+  }
+}
+
+/** Reads what writeChange wrote, from `at` in `bytes`, onto `block` (the base); returns where it ends. */
+function readChange(bytes, at, block) {
+  for (let pos = 0; pos < block.length; ) {
+    if (at + 2 > bytes.length) throw new Error("a block is cut short");
+    pos += bytes[at++];
+    const count = bytes[at++];
+    if (pos + count > block.length || at + count > bytes.length) throw new Error("a block runs over");
+    block.set(bytes.subarray(at, at + count), pos);
+    at += count;
+    pos += count;
+  }
+  return at;
 }
 
 /**
