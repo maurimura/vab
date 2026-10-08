@@ -350,7 +350,23 @@ mod tests {
     }
 
     /// Games whose cabinet skin isn't drawn yet: they stand in plain cabinets for now.
-    const SKIN_TO_COME: [&str; 0] = [];
+    const SKIN_TO_COME: [&str; 2] = ["outrun", "crusnusa41"];
+
+    #[test]
+    fn out_run_is_one_player_on_its_own_core() {
+        let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
+        let outrun = games.iter().find(|g| g.rom == "outrun").unwrap();
+        assert_eq!(outrun.core, "outrun");
+        assert_eq!(outrun.title, "Out Run");
+        // One player; whoever presses E next watches.
+        assert_eq!(outrun.players, 1);
+        assert!(outrun.bios.is_none() && outrun.options.is_empty());
+        assert!(
+            !outrun.turns && !outrun.lockstep && !outrun.gun && !outrun.linked && !outrun.arcade
+        );
+        // The one-player games: Out Run and Cruis'n USA.
+        assert_eq!(games.iter().filter(|g| g.players == 1).count(), 2);
+    }
 
     #[test]
     fn mame_catalog_has_tekken_and_the_lightgun_game() {
@@ -372,11 +388,31 @@ mod tests {
     }
 
     #[test]
+    fn cruisn_usa_is_one_player_on_mame() {
+        let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
+        let cruisn = games.iter().find(|g| g.rom == "crusnusa41").unwrap();
+        assert_eq!(cruisn.core, "mame");
+        assert_eq!(cruisn.title, "Cruis'n USA");
+        // One driver; the next to press E watches.
+        assert_eq!(cruisn.players, 1);
+        assert!(
+            !cruisn.gun && !cruisn.linked && !cruisn.lockstep && !cruisn.turns && !cruisn.arcade
+        );
+        assert!(cruisn.bios.is_none() && cruisn.options.is_empty());
+        // Its skin is still to come: a plain cabinet on the bar's map runs it.
+        assert!(cruisn.cabinets.is_empty());
+        let map = Map::from_ron(include_str!("../../assets/maps/bar.ron")).unwrap();
+        assert!(map.objects.iter().any(|object| {
+            object.tile == "objects/cabinet" && object.game.as_deref() == Some("crusnusa41")
+        }));
+    }
+
+    #[test]
     fn catalog_cabinet_skins_have_all_four_views() {
         let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
         let tiles =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets/tiles/objects");
-        // A game without a skin yet (Tekken 3, Time Crisis II) runs on a plain cabinet.
+        // A game without a skin yet (Out Run) runs on a plain cabinet.
         for game in games {
             let to_come = SKIN_TO_COME.contains(&game.rom.as_str());
             assert_eq!(

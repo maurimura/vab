@@ -54,14 +54,28 @@ for as long as it's down, and the pedal is a button. Its cabinet is the game's t
 players each play their own screen and gun, linked (see [Online play](#online-play)); the next
 to press E watches.
 
+Cruis'n USA (Midway V-Unit, 1994; MAME's `crusnusa41`, v4.1) is one player's: the next to press
+E watches. The arrows drive, as at Daytona USA: Left and Right turn the wheel (it turns for as
+long as one is held, to full lock in under half a second, and comes back to the middle when let
+go: MAME's own handling of a wheel on keys), Up is the gas and Down the brake. Z and X shift down
+and up, which matters with the manual transmission the game offers before each race (the
+automatic is the default); A, S and D are its three views and C the radio. Its menus are "turn
+to select, step to choose": Left and Right, then Up. The game starts from a start-up state with
+12 credits (3 start a game), made by `mame/crusnusa-state.mjs`, which also does the controls
+calibration the game asks for on its first power-on. A frame of a race takes about 9.5 ms in
+Chrome on an M1 Max (14 ms in Node; the budget is 17.3 ms at its 57.9 Hz), and the worker shows
+one every 34.5 ms, the game drawing every other frame. [mame/README.md](mame/README.md) has the
+numbers, the ROM set it needs (our `crusnusa.zip` uploaded as `crusnusa41.zip`, with one PAL in
+it renamed) and how its controls are mapped.
+
 | Path | What | Built with |
 | --- | --- | --- |
 | `client/` | Bevy app, mounted on `<canvas id="bevy">`; its text font (Fira Mono cut to Latin-1, OFL) is in `fonts/` | `cargo` + `wasm-bindgen` → `web/pkg/` |
 | `server/` | Worker + `Room` Durable Object (WebSocket Hibernation) | `workers-rs` template, `wrangler` |
 | `netplay/` | Rollback for two players at a cabinet (GGRS), run by the emulator worker | `cargo` + `wasm-bindgen` → `web/netplay/` |
-| `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
+| `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules, one of them Sega's Out Run board (see [Out Run](#out-run)) | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
 | `supermodel/`, `daytona/` | The Sega cores, each an Emscripten ES module behind the libretro API: Supermodel for the Model 3 (Virtua Striker 2) and Daytona USA's Model 2 (see [Daytona USA](#daytona-usa)) | their `build.sh` → `supermodel/dist/`, `daytona/dist/` |
-| `mame/` | MAME (libretro's fork) with the Namco System 12 and System 23 drivers only, for Tekken 3 and Time Crisis II, as an Emscripten ES module: see [mame/README.md](mame/README.md) | emsdk + MAME's own build (`mame/build.sh`) → `mame/dist/` |
+| `mame/` | MAME (libretro's fork) with the Namco System 12 and System 23 and Midway V-Unit drivers only, for Tekken 3, Time Crisis II and Cruis'n USA, as an Emscripten ES module: see [mame/README.md](mame/README.md) | emsdk + MAME's own build (`mame/build.sh`) → `mame/dist/` |
 | `hockey/` | Air hockey physics and the bot, without Bevy, tested natively (`cargo test -p hockey`) | |
 | `darts/` | Darts scoring, a game of 301 and the throwing hand's sway, without Bevy, tested natively (`cargo test -p darts`) | |
 | `shuffleboard/` | Table shuffleboard physics and scoring, without Bevy, tested natively (`cargo test -p shuffleboard`) | |
@@ -210,8 +224,9 @@ ROM sets must match the FBNeo commit; bump them together. FBNeo's license is non
 
 Online play re-runs frames from save states, so both players' machines must end up identical.
 `emulator/patches/` adds state FBNeo keeps outside its save states (the 4-way joystick's last
-direction, the YM2151's render position). After rebuilding the cores or bumping FBNeo, check each
-game (a rollback on every frame, compared with playing straight through on another instance):
+direction, the YM2151's render position, a gear shifter's last input). After rebuilding the cores
+or bumping FBNeo, check each game (a rollback on every frame, compared with playing straight
+through on another instance; Out Run with `DRAW=1`, see [Out Run](#out-run)):
 
 ```sh
 node emulator/rollback-check.mjs emulator/dist/midway/fbneo.mjs $HOME/Downloads/mk2.zip emulator/dist/mk2.state
@@ -221,8 +236,8 @@ node emulator/rollback-check.mjs emulator/dist/midway/fbneo.mjs $HOME/Downloads/
 
 Players take a cabinet's free seats in order: as many as its game takes (`players` in
 `assets/games.ron`, 2 unless said, up to 4 as in Sunset Riders, 8 at Daytona USA's linked
-cabinets, which play another way: see [Daytona USA](#daytona-usa), or 1, when the next to press
-E watches), each on their seat's controls.
+cabinets, which play another way: see [Daytona USA](#daytona-usa), or 1 as at Out Run and
+Cruis'n USA, when the next to press E watches), each on their seat's controls.
 The first plays alone right away. Whoever sits down later joins that game as it is: the lowest
 seat among those playing captures its machine and hands it to everyone through the room, and all
 of them start a new GGRS session (`netplay/`) from it. Someone leaving works the same way. Each
@@ -263,9 +278,12 @@ link is set at power-on, for now.
 A player's input for a frame, what GGRS sends and confirms and the watchers get, is 32 bits: the
 RetroPad's buttons in the low 16 (bit `1 << id`, ids from libretro.h), and at a lightgun game
 where the gun points in the high 16, 8 bits across the screen (0 its left edge, 255 its right)
-and 8 down (0 the top). Other games leave those 0. The emulator worker answers the core's
-RetroPad from the low half and, at a lightgun game only, its lightgun from both
+and 8 down (0 the top); at a driving game (Out Run) bits 16-23 are where its wheel is turned, a
+signed byte, which the worker works out from the player's arrows (see [Out Run](#out-run)).
+Other games leave those 0. The emulator worker answers the core's RetroPad from the low half
+and, at a lightgun game only, its lightgun from both, at a driving game its wheel from bits 16-23
 (`web/emulator/libretro.js`).
+
 ## Daytona USA
 
 Daytona USA (Sega Model 2, 1994) runs on its own core, `daytona/`, built and put in the local
@@ -331,6 +349,48 @@ Its cabinet skin is still to come: for now it stands in a plain cabinet next to 
 in `assets/maps/bar.ron`, and in the editor a plain cabinet can be given the game.
 `daytona/harness/arcade-lab.mjs` tries the arcade mode end to end in headless Chromes.
 
+## Out Run
+
+Out Run (Sega, 1986) runs on an FBNeo core of its own, `outrun` (`emulator/build.sh`; `make
+emulator` builds it with the rest): Sega's Out Run board and the System 16 code it shares with
+Sega's other boards, whose drivers it leaves out (`emulator/stubs/outrun.cpp` stands in for what
+that code calls in them), 5.1 MiB, 3.1 MB gzipped. Its ROM set is FBNeo's `outrun` (sitdown/
+upright, Rev B), and its start-up state comes out of `emulator/snapshot.mjs` like the others'
+(there's no settings screen to get past): the radio, SELECT MUSIC BY STEERING, with 9 credits.
+
+```sh
+make upload-rom ROM=$HOME/Downloads/outrun.zip
+node emulator/snapshot.mjs emulator/dist/outrun/fbneo.mjs $HOME/Downloads/outrun.zip emulator/dist/outrun.state
+make upload-rom ROM=emulator/dist/outrun.state
+```
+
+It's one player (`players: 1`): the next to press E at its cabinet watches. The player steers to
+pick a song and presses Start (the radio starts the race by itself after half a minute or so),
+then drives as at Daytona USA: Up accelerates, Down brakes, Left and Right steer, and Z shifts
+between low and high gear (a toggle: the L or H in the bottom right corner). The help card lists
+them so. FBNeo puts the pedals on R2 and L2, which no key presses, and the wheel on the analog
+stick, a d-pad turning it to full lock at once: a second of that and the car is off the road.
+So at an FBNeo driving game, one whose controls (as the core names them) have the pedals on R2
+and L2 and nothing on Up or Down, `web/emulator/controller-routing.js` has Up and Down press the
+pedals, and the arrows turn a wheel (`web/emulator/wheel.js`): a step a frame toward the arrow
+held, full lock in 0.3 s, back to the middle as fast once let go, straight to the middle when
+the other arrow goes down, as Cannonball (Out Run's engine, ported) turns its wheel from keys.
+The worker turns it as it samples the player's keys, once a frame, and the wheel goes out in the
+input (bits 16-23), so a watcher's machine turns the game's wheel just as the player's did. The
+game sees nothing in the first third of the stick (FBNeo's dead zone and the driver's) and is at
+full lock from 72%, so `libretro.js` spreads the wheel over that span.
+
+A frame takes 1.35 ms in Node and 1.4 ms in Chrome on an M-series Mac (p50, drawn and with
+sound), and the worker posts 60 frames a second, 16.7 ms apart (p99 under 23 ms), to the player
+and to a watcher alike. A state is 229 KiB. Its sprite chip writes back to sprite RAM as it draws,
+as the real one does, so a frame run without drawing (a rollback's re-runs) leaves the RAM
+otherwise than a drawn one: no matter for a one-player game, which never re-runs frames (a
+watcher's machine draws every frame it plays). `DRAW=1 node emulator/rollback-check.mjs ...`
+checks its states with the re-runs drawn, and `PLAYERS=1 node emulator/netplay-check.mjs ...`
+its stream to a watcher. FBNeo toggles the gear when the shifter input differs from the frame
+before's, which its states left out (`emulator/patches/burn-shift-state.patch`). Its cabinet skin
+is still to come: it stands in a plain cabinet next to Daytona USA's in `assets/maps/bar.ron`.
+
 ## Voice
 
 Players sitting together talk, wherever that is: a cabinet, a table, any place with seats in the
@@ -389,13 +449,19 @@ node mame/link-states.mjs $HOME/Downloads/timecrs2.zip          # -> mame/.cache
 node mame/linked-check.mjs $HOME/Downloads/timecrs2.zip
 ```
 
+`mame/cruisn-lab.mjs` watches a one-player game the same way in two headless Chromes: a player
+drives Cruis'n USA, a second player's E at the full cabinet watches, and the watcher's machine
+is checked against the player's at the same frames (with Cruis'n USA's start-up state made by
+`mame/crusnusa-state.mjs` and uploaded next to its ROM set).
+
 `emulator/netplay-check.mjs` plays a game between workers in Node over a simulated network:
-player 1 alone, the others dropping in one by one, then player 2 leaving. Player 1 streams to a
-watcher the whole time, and a machine in the script checks the stream against fresh states from
-player 1 every 1.5 s (needs `make netplay`):
+player 1 alone, the others dropping in one by one, then player 2 leaving (with `PLAYERS=1`, player
+1 alone only). Player 1 streams to a watcher the whole time, and a machine in the script checks
+the stream against fresh states from player 1 every 1.5 s (needs `make netplay`):
 
 ```sh
 PLAYERS=4 node emulator/netplay-check.mjs emulator/dist/konami/fbneo.mjs $HOME/Downloads/ssriders.zip emulator/dist/ssriders.state
+PLAYERS=1 node emulator/netplay-check.mjs emulator/dist/outrun/fbneo.mjs $HOME/Downloads/outrun.zip emulator/dist/outrun.state
 ```
 
 ## Sizes
@@ -406,7 +472,9 @@ Players download each file once (compressed sizes; Workers static assets cap fil
 | --- | --- | --- |
 | Bevy client (lean features, logs below `warn` compiled out, `wasm-opt -Oz`) | ~13.8 MiB | ~4.6 MB |
 | Bar editor on the web (Bevy's `2d` profile + egui, `wasm-opt -Oz`; only editors load it) | ~19.9 MiB | ~6.8 MB |
-| One FBNeo core (neogeo, midway, snowbros, capcom, konami, classics) | ~5–6 MiB | ~3–3.3 MB |
+| One FBNeo core (neogeo, midway, snowbros, capcom, konami, classics, outrun) | ~5–6 MiB | ~3–3.3 MB |
 
 A cabinet loads only its system's core. To add a system, add a line to `CORES` in
-`emulator/build.sh` (driver files live under `src/burn/drv` in the FBNeo checkout).
+`emulator/build.sh` (driver files live under `src/burn/drv` in the FBNeo checkout), and, if the
+files it keeps call into drivers it leaves out, stand-ins for those in `emulator/stubs/<core>.cpp`
+(as Out Run's core has).

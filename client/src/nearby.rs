@@ -296,6 +296,13 @@ mod tests {
         assert_eq!(chosen(true, false, 1, 2), Some(Use::Sit));
         assert_eq!(chosen(true, false, 2, 2), Some(Use::Watch));
         assert_eq!(chosen(false, true, 1, 2), Some(Use::Watch));
+        // A one-player game (Out Run): the next to press E watches.
+        assert_eq!(chosen(true, false, 0, 1), Some(Use::Sit));
+        assert_eq!(chosen(true, false, 1, 1), Some(Use::Watch));
+        assert_eq!(
+            hint_text("Out Run", 1, 1, 0, false),
+            "E  Watch Out Run - 1 playing"
+        );
         // Nobody to watch, and nothing pressed.
         assert_eq!(chosen(false, true, 0, 2), None);
         assert_eq!(chosen(false, false, 1, 2), None);

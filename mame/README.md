@@ -1,8 +1,9 @@
 # MAME in the browser
 
 [MAME](https://www.mamedev.org/)'s Namco System 12 and System 23 drivers (Tekken 3, Time Crisis
-II, and the other machines in those two driver files) built to WebAssembly behind the libretro
-API, so the bar's emulator worker runs them the way it runs the FBNeo cores and Supermodel. It
+II) and its Midway V-Unit driver (Cruis'n USA), with the other machines in those three driver
+files, built to WebAssembly behind the libretro API, so the bar's emulator worker runs them the
+way it runs the FBNeo cores and Supermodel. It
 is the libretro fork of MAME ([libretro/mame](https://github.com/libretro/mame), MAME 0.289): its
 libretro OSD steps the machine one frame per `retro_run()` and returns (no threads, no
 coroutines), and its save states are MAME's own, written straight into the caller's buffer.
@@ -10,8 +11,9 @@ Time Crisis II also links two boards for its two-cabinet co-op, each board in it
 (below, "Linked cabinets").
 
 - `build.sh` fetches the pinned fork, applies `patches/`, runs MAME's own GENie build for
-  Emscripten (`TARGETOS=asmjs`, `OSD=retro`, `SUBTARGET=vab`, `SOURCES=` the two drivers; makedep
-  finds their devices) with the pinned emsdk, then links `dist/mame.mjs` + `dist/mame.wasm`
+  Emscripten (`TARGETOS=asmjs`, `OSD=retro`, `SUBTARGET=vab`, `SOURCES=` the three drivers;
+  makedep finds their devices and sibling files: midvunit_v.cpp, the DCS sound board, the ADC0844)
+  with the pinned emsdk, then links `dist/mame.mjs` + `dist/mame.wasm`
   itself, exporting `exports.json` (the libretro API, as FBNeo's, and the link API). `EMSDK_DIR`
   overrides where the emsdk is (default `emulator/.cache/emsdk`). `./mame/build.sh link` only
   relinks.
@@ -19,15 +21,21 @@ Time Crisis II also links two boards for its two-cabinet co-op, each board in it
   through `web/emulator/libretro.js`: `node mame/bench.mjs ~/Downloads/tekken3je1.zip`, or
   `GUN=1 node mame/bench.mjs ~/Downloads/timecrs2.zip` (`FRAMES`, `WARMUP`, `SHOT=frame.png`;
   `GUN=1` answers the core's lightgun, aimed at the middle; `COIN=1200` inserts a credit then
-  and pulls the trigger now and then, so the timed frames are a game; `DRC=1`/`DRC=0` sets the
+  and pulls the trigger now and then, so the timed frames are a game, or at a driving game
+  presses Start and drives; `STATE=` a start-up state to begin from; `DRC=1`/`DRC=0` sets the
   core option `mame_drc`).
 - `link-check.mjs` runs two Time Crisis II boards linked back to back (below).
+- `crusnusa-state.mjs` makes Cruis'n USA's start-up state, past its first-boot calibration (below),
+  and `cruisn-lab.mjs` plays it in two headless Chromes against the site, a player and a watcher.
 - `core-options.mjs` lets those scripts set core options libretro.js doesn't answer.
 - `make mame` builds and puts the core in local R2 (served at /mame/), `make mame-remote` uploads
   it to production.
 
-A full build from scratch took about 6 minutes on an M1 Max (the build tree is ~360 MB); after
-a change to a driver, seconds plus the link (~1.5 min).
+A full build from scratch took about 6 minutes on an M1 Max (the build tree is ~360 MB); with
+the three drivers, on 2026-10-08 on the same machine, about 1 minute for the checkout and GENie,
+150 s for MAME's libraries and 69 s for the link. After a change to a driver, seconds plus the
+link (~1.2 min); a change to a header of MAME's core (`src/emu/ioport.h`) rebuilds nearly all
+of it (~4 min).
 
 From the page or worker, exactly as an FBNeo core:
 
@@ -52,6 +60,24 @@ MAME picks the system from the zip's name and finds files by name or, failing th
   file names (`tet1vere.2e/.2j`, CRCs 8b01113b / df4c96fb): MAME's **`tekken3je1`**. Loaded as
   `tekken3.zip` MAME stops with "tet2vere1.2e NOT FOUND"; loaded as `tekken3je1.zip` (the same
   bytes) it runs. So the file the worker hands the core must be named `tekken3je1.zip`.
+- **Cruis'n USA**: the `crusnusa.zip` we have (33 files, 14.7 MB of ROM) is MAME's
+  **`crusnusa41`**, "Cruis'n USA (v4.1)": its program ROMs are the "L4.1 dual game linking" ones
+  (`cusa-l41.u10`-`u13`, CRCs eb9372d1 76f3cd40 9021a376 1687c932); the game ROMs `cusa.u14`-`u29`
+  and sound ROMs `cusa.u2`-`u9` are the parent's, by CRC. Old file names, so MAME finds them by
+  CRC, and only as that clone: the parent `crusnusa` is v4.5, other program ROMs. Two things
+  besides the name:
+  - Its five PALs are named `a-19993.u38.bin` and so on. Four match MAME's (BAD_DUMP) CRCs and
+    are found by CRC; `a-19993.u38` doesn't (b6323e94, 0x2dd bytes, against MAME's 7e8b7b0d,
+    0x2e5), so it was "NOT FOUND", which stops MAME. Renamed `a-19993.u38` in the zip, MAME finds
+    it by name and only warns ("WRONG CHECKSUMS"); PALs aren't emulated anyway. So the zip for
+    the bar is the same files with that one renamed, uploaded as `crusnusa41.zip`:
+
+    ```sh
+    mkdir /tmp/cusa && cd /tmp/cusa && unzip ~/Downloads/crusnusa.zip && mv a-19993.u38.bin a-19993.u38 && zip -9 ../crusnusa41.zip * && cd - && make upload-rom ROM=/tmp/crusnusa41.zip
+    ```
+  - MAME 0.289's TMS320C31 wants its internal boot loader ROM, `c31boot.bin` (MAME's `tms320c31`
+    device set, assembled from TI's source), which the set doesn't have. Midway V-Unit never maps
+    it (its C31 boots from the game's ROMs), so `patches/0007` makes it optional.
 
 ## Measured
 
@@ -98,7 +124,38 @@ took ~60 ms (recompiler) / ~95 ms (interpreter) in Node.
 
 Sizes: `mame.wasm` 26,611,631 bytes (25.4 MiB; 4.74 MB gzipped), `mame.mjs` 104,589 bytes
 (28 KB gzipped). The wasm is larger than the 25 MiB a static asset may be, so it is served from
-R2 like the other cores.
+R2 like the other cores. With Midway V-Unit too (2026-10-08): `mame.wasm` 27,089,251 bytes
+(25.8 MiB; 4.87 MB gzipped with `gzip -9`), `mame.mjs` unchanged.
+
+**Cruis'n USA** (`crusnusa41`), measured on 2026-10-08 on the same M1 Max (load average in
+brackets), from its start-up state (`crusnusa-state.mjs`): "attract" is frames 600-1200 after
+the state, "race" frames 1500-2100 after Start, taps of the gas through the menus (the race, the
+automatic transmission, the car) and the gas held with a touch of the wheel now and then
+(`bench.mjs` with `STATE=` and `COIN=0`; in Chrome the same on the page's main thread).
+
+| ms per frame | p50 | p95 |
+|---|---|---|
+| Chrome 154 headless, page's main thread: attract | 5.0-5.1 (2.6-3.1) | 12.0-12.1 |
+| Chrome: race | **9.5-9.6** (2.6-3.1) | 11.7-11.9 |
+| Node 24 (`bench.mjs`, CPU time): attract | 7.5 (5.6) | 17.1 |
+| Node: race | 13.8-15.4 (2.7-3.7) | 16.8-18.0 |
+
+The budget is 17.26 ms (57.928 Hz, MAME's 512x400 raw screen). The game draws 1 frame in 2 in a
+race, its attract mode 4 in 5 (MAME skips the frames whose screen didn't change); in the bar,
+the worker posts one every 34.5 ms in a race, p99 under 40 ms (`cruisn-lab.mjs`). The
+first boot (power-on tests, DCS sound board test, calibration, texture download) is ~2,300
+frames.
+
+| | Cruis'n USA |
+|---|---|
+| frame, refresh | 512x400 at 57.928 Hz |
+| save state | 12,717,465 bytes (12.1 MiB: 8 MiB of texture RAM, the video RAM, the TMS32031's RAM, the DCS board's) |
+| serialize / unserialize (through JS), Chrome | 1.6 / 0.75 ms |
+| `saveSlot` / `loadSlot` (in wasm), Chrome | 0.47 / 0.47 ms |
+| system RAM (`retro_get_memory_data`) | 512 KiB, the TMS32031's RAM |
+| audio | 828.6 sample frames per frame at 48 kHz; the attract mode is silent (the game's own setting), coins, menus and races sound |
+| load (inflate + checksum 14.7 MB of ROM) | 0.3 s in Node, 0.45 s in Chrome |
+| start-up state (`crusnusa41.state`) | 2,965,503 bytes: the state deflated, as the worker packs states ("vabz") |
 
 Checked with the real sets:
 
@@ -111,6 +168,21 @@ Checked with the real sets:
 - Link off is exactly the game as before the link patch: against a core built without
   `patches/0004`, 3000 frames from power-on with a credit, the trigger, the pedal and a moving
   aim had the same RAM, picture and sound at every 30-frame checkpoint.
+- Cruis'n USA (`crusnusa41`, 2026-10-08) boots, calibrates (`crusnusa-state.mjs`), runs its
+  attract mode and plays: Start, the race, the transmission (automatic, or manual with Z and X
+  through N, 1-4 and back), the car, a race on the gas with the wheel and the brake (screenshots
+  checked: 115 MPH on the gas, off the road at full lock left and right, 15 MPH on the brake).
+  `bench.mjs`'s replay and fresh instance, from a state taken mid-race with the gas and the wheel
+  held, end with the same RAM and whole state, and so does a fresh machine loading the start-up
+  state over 1200 frames of Start, gas, wheel and brake (`crusnusa-state.mjs`). In the bar
+  (`cruisn-lab.mjs`, `wrangler dev --local`): the player sits, the game starts from the state with
+  12 credits, the help card lists the controls above, Start and the arrows drive; a second
+  player's E at the full cabinet watches, and the watcher's machine had the same RAM as the
+  player's at every frame probed (4 of 4, about 6 s apart, mid-race).
+- Tekken 3 and Time Crisis II with Midway V-Unit in the core and `patches/0007`/`0008` (2026-10-08,
+  Node): the same buttons as before, attract 9.1 ms (Tekken 3) and 17.2 ms (Time Crisis II) p50,
+  states 198 and 332 bytes bigger (`patches/0008`), replay and fresh instance the same, and
+  `link-check.mjs` passes.
 - Tekken 3 (`tekken3je1`) boots and plays in the System 12 + 23 build (8.3 MB state, frames
   above), its first power-on screen reads "Thu. 1 Jan. 1998", and its states are complete
   (`patches/0006`, below): `bench.mjs`'s replay and fresh instance end with the same RAM and
@@ -181,6 +253,46 @@ RetroPad Select; 4 coins a credit at the default settings, then the trigger star
 Start for player 1, and nothing should press port 1 (the board's development buttons). The
 Link ID and DIP:5 are set by `mame_link_set`, not by input.
 
+**Cruis'n USA** (`midvunit.cpp`, `INPUT_PORTS_START(crusnusa)`, one player): a wheel (`WHEEL`,
+IPT_PADDLE 0x10..0xf0, centre 0x80), a gas pedal (`ACCEL`, IPT_PEDAL 0..0xff) and a brake
+(`BRAKE`, IPT_PEDAL2), each sensitivity 25 and key delta 20, read by the board's ADC0844; Radio
+and View 1-3 (`IN1`, Button 1-4); a four-speed shifter, which MAME offers four ways (`CONF`
+"Shifter Type": a button per gear and one for neutral, toggling, sequential, H-pattern); Coin
+1-4, Start, Tilt, Service and the test switch "Enter" (MAME's F2 key, `IN0`); DIP switches
+(`DSW`: Link Status master, Linking off, upright, coinage USA-8 = 1 coin 1 credit and 3 credits a
+game, motion off, test off) and the motion seat's status (`MOTION`). `patches/0007` lays it out
+as the bar's Daytona USA, through the fork's per-game table (`mame_buttons_profiles`), and makes
+the shifter sequential:
+
+| RetroPad id | the bar's key | MAME | descriptor (help card) |
+|---|---|---|---|
+| 6, 7 Left, Right | Left, Right | the wheel: `WHEEL`'s decrement / increment | "Steer left", "Steer right" |
+| 4 Up | Up | the gas: `ACCEL`'s increment | "Accelerate" |
+| 5 Down | Down | the brake: `BRAKE`'s increment | "Brake" |
+| 0 B | Z | Button 5, "Shift Down" (`FAKE`) | "Shift Down" |
+| 8 A | X | Button 6, "Shift Up" (`FAKE`) | "Shift Up" |
+| 1 Y | A | Button 2, "View 1" | "View 1" |
+| 9 X | S | Button 3, "View 2" | "View 2" |
+| 10 L | D | Button 4, "View 3" | "View 3" |
+| 11 R | C | Button 1, "Radio" | "Radio" |
+| 3 Start | 1 | Start 1 | "Start" |
+| 2 Select | 5 | Coin 1 | "Coin" |
+
+- The arrows are MAME's own key handling of an analog control, as the arrow keys on a keyboard:
+  each frame one is held the control moves by its key delta at its sensitivity (20 x 25%, 5 of
+  the ADC's 256 steps), and when let go it goes back the same way, so the wheel takes ~22 frames
+  (0.4 s) from the centre to full lock and back, the gas ~51 frames (0.9 s) to the floor. The d-pad
+  is bound only for this game (the fork's `retro_driving`), so other games' d-pads are as before.
+- The shifter is "Sequential" (`patches/0007`; MAME's default was a button per gear): Shift Up
+  from neutral is 1st, then 2nd, 3rd, 4th, Shift Down back to neutral. It matters only with the
+  game's manual transmission (it asks "automatic or manual" at each race; the gears show
+  bottom right, "N" to start with); the automatic ignores it. The shifter's position is the
+  driver's (saved with states), and stays where it was from one race to the next, as a lever.
+- The game's menus are "turn to select, step to choose": Left/Right pick, a fresh press of Up
+  chooses (holding it from before the screen came up doesn't).
+- Nothing presses the test switch: the first power-on's calibration ("CALIBRATE CONTROLS") is
+  done by `crusnusa-state.mjs` and kept in the start-up state (Known gaps).
+
 ## Core options
 
 Unanswered `GET_VARIABLE`s take the defaults of the fork's option table (`patches/0002`), which
@@ -192,7 +304,7 @@ are the bar's, so the frontend needs to set none of them:
 | `mame_thread_mode` | disabled (and Emscripten forces 1 processor, no work-queue threads) | enabled |
 | `mame_lightgun_mode` | lightgun | none |
 | `mame_mouse_enable` | disabled | enabled |
-| `mame_buttons_profiles` | enabled (Tekken 3's layout above) | disabled |
+| `mame_buttons_profiles` | enabled (Tekken 3's and Cruis'n USA's layouts above) | disabled |
 | `mame_throttle`, `mame_boot_to_osd`, `mame_boot_to_bios`, `mame_read_config`, `mame_write_config`, `mame_auto_save`, `mame_cheats_enable`, `mame_alternate_renderer` | disabled | (same) |
 | `mame_softlists_enable` / `mame_media_type` | enabled / rom | (same) |
 
@@ -202,7 +314,12 @@ Changing options needs `GET_VARIABLE_UPDATE` or a reload.
 
 - Pixels: the core asks for format 100 (the bar's RGBA8888) first and draws opaque R G B A bytes;
   XRGB8888 if refused. The frame is MAME's own size for the game (it can change with the game's
-  video mode: the frontend takes each frame's).
+  video mode: the frontend takes each frame's), its screen alone: MAME's `-artwork_crop`
+  (`patches/0002`) leaves out what a game's layout draws around it (Cruis'n USA's layout puts a
+  dashboard of button lamps under the screen, 512x451 instead of 512x400).
+- A frame whose screen didn't change isn't drawn (MAME skips up to 3 in a row; the frontend keeps
+  the last picture): a still menu draws 1 frame in 4, Cruis'n USA's races 1 in 2 (the game
+  renders at half the refresh).
 - `retro_get_system_av_info` after load reports the refresh after the first frame (patches/0002
   runs it inside `retro_load_game`). 48000 Hz audio, about one frame's worth per `retro_run`.
 - `GET_AUDIO_VIDEO_ENABLE` without the video bit: MAME skips drawing the frame and sends none
@@ -222,6 +339,16 @@ first, the boot frame run inside `retro_load_game`, reset at a frame boundary. S
 nothing else from the host (its NVRAM starts zeroed: the in-memory file system has none), its
 JVS devices use only zero-delay synchronize timers, and the R4650's recompiler checks its code
 blocks against RAM, so a cold cache after a state load runs the same (measured above).
+
+Midway V-Unit (Cruis'n USA) reads nothing from the host either: its NVRAM starts empty (hence the
+first power-on's calibration, "Inputs"), and it is in the state.
+
+`patches/0008` puts the input ports' own state in save states: an analog control's position (the
+wheel and pedals the arrows move a little each frame, a light gun's last position), each digital
+field's last state, and the last value a change callback saw (Cruis'n USA's shift buttons).
+Without it a machine that loaded a state taken while the player steered started from its own
+wheel position, and a watcher's race went its own way. `crusnusa-state.mjs` and `bench.mjs` check
+it: a fresh machine from a state taken mid-drive, gas and wheel held, runs the same.
 
 `patches/0006` makes the states complete (found with Tekken 3, whose replay from a state went
 its own way): a machine that loads a state, once or several times in a row, goes on exactly as
@@ -398,3 +525,15 @@ frames.
   `tekken3je1` only; other System 12 games and boards, e.g. CD-XA or tektagt's DMA, are not).
 - Anonymous MAME timers (`timer_set`) aren't saved; the compiled devices use only zero-delay ones.
 - 25 MiB of wasm (Lua, SQLite and the UI's menus come along with MAME's core).
+- Cruis'n USA needs its start-up state: without it (none uploaded, or one from another core
+  build, which doesn't load) the game boots to "CALIBRATE CONTROLS" and waits for a test switch
+  the bar has no key for. Make it again with `crusnusa-state.mjs` after every rebuild of the core.
+- Cruis'n USA is one player at one cabinet. Its "dual game linking" (two cabinets racing each
+  other, `crusnusa41`'s L4.1 programs) isn't emulated by MAME's driver (the DIP "Linking" is off);
+  a watcher sees the race, nobody races alongside.
+- The other machines in `midvunit.cpp` (Cruis'n World, Off Road Challenge, War Gods) are in the
+  core but untried; `patches/0007`'s shifter default reaches Cruis'n World and Off Road Challenge
+  too, its controls only `crusnusa` and its clones.
+- The arrows are digital: the wheel is at full lock ~0.4 s after a key goes down, the throttle
+  floored after ~0.9 s, as MAME's keyboard does it; a gamepad's analog stick would need the
+  frontend to answer `RETRO_DEVICE_ANALOG`.

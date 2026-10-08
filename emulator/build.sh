@@ -30,7 +30,11 @@ CORES=(
   "classics|/drv/pre90s/d_(pacman|atetris|invaders|asteroids)\.cpp$|/drv/sega/d_sys1\.cpp$"
   # Psikyo 68EC020 hardware: Strikers 1945, Gunbird, Samurai Aces, ...
   "psikyo|/drv/psikyo/(d_psikyo|psikyo_(palette|sprite|tile))\.cpp$"
+  # Sega's Out Run board (Out Run, Turbo Out Run, Super Hang-On), with the System 16 code it
+  # shares with Sega's other boards but not their drivers: stubs/outrun.cpp stands in for them.
+  "outrun|/drv/sega/(d_outrun|sys16_run|sys16_gfx|sys16_fd1094|fd1089|fd1094|fd1094_intf|sega_315_5195|genesis_vid)\.cpp$"
 )
+# A core whose kept files call into drivers it leaves out also links emulator/stubs/<core>.cpp.
 # FBNeo's libretro frontend always references PGM2 and the Neo Geo machine (not its games),
 # so every core keeps those files.
 ALWAYS_KEEP='/drv/pgm2/|/drv/neogeo/(neo_|neogeo\.cpp)'
@@ -105,7 +109,12 @@ for core in "${CORES[@]}"; do
 
   # 4. Standalone ES module. Memory/stack sizes follow RetroArch's Makefile.emscripten.
   mkdir -p "$OUT_DIR/$name"
-  em++ "$CACHE/$name.a" "${COMMON_OBJS[@]}" -O3 -o "$OUT_DIR/$name/fbneo.mjs" \
+  stubs=()
+  if [ -f "$ROOT/emulator/stubs/$name.cpp" ]; then
+    em++ -O3 -c "$ROOT/emulator/stubs/$name.cpp" -o "$CACHE/$name-stubs.o"
+    stubs=("$CACHE/$name-stubs.o")
+  fi
+  em++ "$CACHE/$name.a" "${COMMON_OBJS[@]}" ${stubs[@]+"${stubs[@]}"} -O3 -o "$OUT_DIR/$name/fbneo.mjs" \
     -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createFBNeo \
     -sENVIRONMENT=web,worker,node \
     -sINITIAL_MEMORY=134217728 -sALLOW_MEMORY_GROWTH=1 -sSTACK_SIZE=4194304 \

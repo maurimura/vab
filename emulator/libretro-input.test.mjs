@@ -6,6 +6,7 @@ import { Core } from '../web/emulator/libretro.js';
 // stand-in for an Emscripten core: just enough memory for the input descriptors.
 const JOYPAD = 1;
 const LIGHTGUN = 4;
+const ANALOG = 5;
 const POINTER = 6;
 const GUN = { SCREEN_X: 13, SCREEN_Y: 14, IS_OFFSCREEN: 15, TRIGGER: 2, RELOAD: 16, AUX_A: 3, AUX_B: 4, AUX_C: 8, START: 6, SELECT: 7, UP: 9, DOWN: 10, LEFT: 11, RIGHT: 12 };
 const SET_INPUT_DESCRIPTORS = 11;
@@ -47,7 +48,7 @@ async function core({ gun = false, descriptors = [] } = {}) {
     heap.setUint8(strings++, 0);
   });
   environment(SET_INPUT_DESCRIPTORS, 0);
-  it.ask = (port, device, id) => inputState(port, device, 0, id);
+  it.ask = (port, device, id, index = 0) => inputState(port, device, index, id);
   return it;
 }
 
@@ -134,4 +135,69 @@ test("a lightgun game's buttons take its gun's names, others keep the RetroPad's
   assert.deepEqual([...gun.buttons].sort(([a], [b]) => a - b), [[0, 'Gun Trigger'], [3, 'Start'], [8, 'Foot Pedal']]);
   const pad = await core({ descriptors });
   assert.deepEqual([...pad.buttons].sort(([a], [b]) => a - b), [[0, 'B'], [3, 'Start'], [8, 'A']]);
+});
+
+/** Out Run's controls, as FBNeo names them. */
+const OUT_RUN = [
+  [0, JOYPAD, 2, 'Coin 1'],
+  [0, JOYPAD, 3, 'Start 1'],
+  [0, ANALOG, 0, 'Steering'],
+  [0, JOYPAD, 13, 'Accelerate'],
+  [0, JOYPAD, 12, 'Brake'],
+  [0, JOYPAD, 0, 'Gear'],
+  [0, JOYPAD, 6, 'Steering (Fake Digital Left)'],
+  [0, JOYPAD, 7, 'Steering (Fake Digital Right)'],
+];
+/** A wheel turned `turn` (-127..127) in an input's bits 16-23 (wheel.js). */
+const turned = (buttons, turn) => (buttons | ((turn & 0xff) << 16)) >>> 0;
+
+test("a driving game's wheel is the left stick, from bits 16-23, past FBNeo's dead zones", async () => {
+  const car = await core({ descriptors: OUT_RUN });
+  assert.equal(car.steers(0), true);
+  assert.equal(car.steers(1), false);
+  const stick = (turn) => {
+    car.inputs[0] = turned(bit(6), turn);
+    return car.ask(0, ANALOG, 0, 0);
+  };
+  assert.equal(stick(0), 0);
+  // A turn's first step is already past the third of the stick FBNeo leaves dead...
+  assert.ok(stick(-7) < -10600 && stick(7) > 10600);
+  assert.equal(stick(-7), -stick(7));
+  // ...and the rest goes on to full lock, 72% of it.
+  assert.equal(stick(127), 23500);
+  assert.equal(stick(-127), -23500);
+  for (let turn = 2; turn <= 127; turn++) {
+    assert.ok(stick(turn) > stick(turn - 1));
+    assert.equal(stick(-turn), -stick(turn));
+  }
+  // Only the left stick's X; the arrows reach the game only as the wheel.
+  car.inputs[0] = turned(bit(6) | bit(7), 50);
+  assert.equal(car.ask(0, ANALOG, 1, 0), 0);
+  assert.equal(car.ask(0, ANALOG, 0, 1), 0);
+  assert.equal(car.ask(0, JOYPAD, 6), 0);
+  assert.equal(car.ask(0, JOYPAD, 7), 0);
+  // The pedals answer Up and Down.
+  car.inputs[0] = bit(4);
+  assert.deepEqual([car.ask(0, JOYPAD, 13), car.ask(0, JOYPAD, 12)], [1, 0]);
+  car.inputs[0] = bit(5);
+  assert.deepEqual([car.ask(0, JOYPAD, 13), car.ask(0, JOYPAD, 12)], [0, 1]);
+});
+
+test("a game that isn't driven reads no wheel, whatever its input's high bits", async () => {
+  const pad = await core({ descriptors: [[0, JOYPAD, 0, 'B'], [0, JOYPAD, 6, 'Left'], [0, ANALOG, 0, 'Gun X']] });
+  assert.equal(pad.steers(0), false);
+  pad.inputs[0] = turned(bit(6), 100);
+  assert.equal(pad.ask(0, ANALOG, 0, 0), 0);
+  assert.equal(pad.ask(0, JOYPAD, 6), 1);
+});
+
+test("a driving game's arrows are named for what they do, for the help card", async () => {
+  const car = await core({ descriptors: OUT_RUN });
+  const names = Object.fromEntries(car.buttons);
+  assert.equal(names[4], 'Accelerate');
+  assert.equal(names[5], 'Brake');
+  assert.equal(names[6], 'Steer left');
+  assert.equal(names[7], 'Steer right');
+  assert.equal(names[0], 'Gear');
+  assert.equal(names[3], 'Start 1');
 });

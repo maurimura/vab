@@ -7,7 +7,10 @@
 //
 // FRAMES (default 1200) and ROLLBACK (default 8) env vars change the run, TURNS=1 is for a
 // turn-based game and GUN=1 for a lightgun game (the core's lightgun follows each player's
-// random aim). Rerun after rebuilding the cores: determinism is a property of the core build.
+// random aim; at a driving game the same bits turn its wheel). DRAW=1 draws the re-run frames
+// too, which the worker never does: for a game whose drawing changes its machine, as Out Run's
+// sprite chip writes back to sprite RAM as it draws, to check its states on their own. Rerun
+// after rebuilding the cores: determinism is a property of the core build.
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
@@ -99,7 +102,7 @@ for (let now = 0; now < FRAMES; now++) {
   if (now > 0) {
     const from = Math.max(0, now - ROLLBACK);
     core.loadSlot(slot(from));
-    core.present = false;
+    core.present = process.env.DRAW === "1";
     for (let f = from; f < now; f++) {
       if (f > from) core.saveSlot(slot(f));
       core.inputs[0] = p1[f];

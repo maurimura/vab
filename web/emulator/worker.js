@@ -59,7 +59,9 @@
 //
 // Each player's controls for a frame are a u32 (the "input"): the RetroPad mask in the low 16
 // bits, and for a `gun` game where the lightgun aims in the high 16, x in bits 16-23 (0 the
-// left edge of the screen, 255 the right) and y in bits 24-31 (0 the top, 255 the bottom).
+// left edge of the screen, 255 the right) and y in bits 24-31 (0 the top, 255 the bottom). At a
+// driving game (Out Run) bits 16-23 are where the wheel is turned, which this worker works out
+// from the local player's arrows as it samples them (wheel.js); the page only sends buttons.
 //
 // In:  { type: "start", core, rom, files, state, seat, turns, lockstep, gun, linked, linkState,
 //        arcade, options, port, hold }
@@ -94,7 +96,8 @@
 //        that another state of it can be passed over, and an arcade game's state is the
 //        cabinet at `seat` (the core's seat is set before it loads).
 //      { type: "probe", at } For checks: a "probe" message when the machine gets to frame `at`
-//        (playing online or watching), or without `at` after the next frame it runs.
+//        (playing online or watching, or alone while streaming: frames numbered as the watchers'
+//        machines number them), or without `at` after the next frame it runs (frame -1 alone).
 //      { type: "input", input } the local player's controls (a u32, above) |
 //      { type: "audio", port, sampleRate } the speaker's port and rate
 // Out: { type: "ready", state } the game is loaded (`state`: from the start's state) |
@@ -134,6 +137,7 @@
 import { Core } from "./libretro.js";
 import { LinkedSession, decodeRecords, encodeRecords, markLinked, parseLinkState, unmarkLinked } from "./linked.js";
 import { Resampler } from "./resample.js";
+import { Wheel } from "./wheel.js";
 
 /** Controller ports, as many as libretro.js has. */
 const PORTS = 4;
@@ -278,11 +282,17 @@ onmessage = ({ data: msg }) => {
   else waiting.push(msg);
 };
 
-/** The local controls for the frame about to run. */
+/** At a driving game, the wheel the local player's arrows turn (wheel.js). */
+const wheel = new Wheel();
+
+/**
+ * The local controls for the frame about to run. At a driving game the wheel, turned a frame's
+ * worth by the arrows held, goes in it (bits 16-23), so whoever runs the frame turns it the same.
+ */
 function sampleInput() {
   const input = (localInput | pressed) >>> 0;
   pressed = 0;
-  return input;
+  return cabinet?.steers ? wheel.turn(input) : input;
 }
 
 // "no-cache" checks with the server every time (a 304 when unchanged), so newly uploaded or
@@ -588,6 +598,14 @@ class Cabinet {
     this.core.setOption("view", String(view));
   }
 
+  /**
+   * Whether the local player steers a wheel (a driving game): on their own controller port, the
+   * seat's, or the first on a linked board or an arcade cabinet.
+   */
+  get steers() {
+    return this.core.steers(this.#linked || this.#arcade ? 0 : this.#seat);
+  }
+
   /** Frames to run per wake-up at most: one for a heavy core, a few to catch up otherwise. */
   #perWake() {
     return this.#runMs > HEAVY_RERUN_MS ? 1 : 4;
@@ -694,8 +712,12 @@ class Cabinet {
         // A linked game's player plays their own board, on its player 1 controls.
         const ports = byPort([sampleInput()], [this.#linked ? 0 : this.#seat]);
         this.#run(ports, true);
-        this.#probe(NEXT_FRAME);
-        this.#stream?.inputs.push(...ports);
+        const stream = this.#stream;
+        stream?.inputs.push(...ports);
+        // Streaming, a check can probe this machine and a watcher's at the same frame: by the
+        // number the watchers' machines give it (#watchInputs).
+        const numbered = stream && stream.frame + stream.inputs.length / PORTS;
+        this.#probe(stream && this.#probes.has(numbered) ? numbered : NEXT_FRAME);
         this.#next += frameMs;
       }
       this.#alarm.at(this.#next);
