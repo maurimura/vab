@@ -1,0 +1,156 @@
+Keep the compiled code across a state load and a reset.
+
+Why: the WASM JIT compiles each SH4 block into its own WebAssembly module, synchronously
+(patches/0005 made that deterministic), and a cache reset throws all of them away: the game
+then recompiles about 2600 blocks over the next 4-5 s, frames of 100-300 ms among them. The
+bar's worker loads a state into a power-on machine on every machine whenever the players
+change (retro_reset, then retro_unserialize), and in lockstep each machine's hitch is a wait
+on the others, so the game crawled for seconds after every join. The blocks are verified
+against the RAM they were compiled from at dispatch (the fork's page-generation gate and
+full-block hash, its answer to self-modifying code), so on this backend a cache reset now
+only marks every RAM page as written: each block re-verifies once, and only code that really
+changed is recompiled. The compiled code bakes the addresses of the RAM, VRAM and sound RAM
+in, and the SH4 context block's, and a game reload (retro_reset) freed and allocated them again,
+elsewhere once the JIT had allocated in between: they now stay put across a reload, and one that did
+move still costs the full reset. Nothing the compiled code does depends on when it was
+compiled.
+
+--- a/core/hw/sh4/dyna/driver.cpp
++++ b/core/hw/sh4/dyna/driver.cpp
+@@ -11,6 +11,8 @@
+ 
+ #include "hw/sh4/sh4_mem.h"
+ #include "hw/sh4/modules/mmu.h"
++#include "hw/pvr/pvr_mem.h"
++#include "hw/aica/aica_if.h"
+ 
+ #include "blockmanager.h"
+ #include "ngen.h"
+@@ -83,9 +85,45 @@
+ 	codeBuffer.reset(true);
+ 	bm_ResetTempCache(full);
+ }
++
++#if defined(__EMSCRIPTEN__) && HOST_CPU == CPU_GENERIC
++// Whether a memory region is somewhere else than when this was last asked: the WASM backend's
++// compiled modules bake the regions' addresses in, so modules made before a move are stale.
++// Records the addresses for the next time.
++static bool memoryRegionsMoved()
++{
++	static u8 *ramAt, *vramAt, *aramAt, *ctxAt;
++	u8 *ram = &mem_b[0], *vr = &vram[0], *ar = &aica::aica_ram[0], *cx = (u8 *)p_sh4rcb;
++	bool moved = ramAt != nullptr && (ram != ramAt || vr != vramAt || ar != aramAt || cx != ctxAt);
++	ramAt = ram;
++	vramAt = vr;
++	aramAt = ar;
++	ctxAt = cx;
++	return moved;
++}
++#endif
+ 
+ void Sh4Recompiler::ResetCache()
+ {
++#if defined(__EMSCRIPTEN__) && HOST_CPU == CPU_GENERIC
++	// The WASM backend keeps its compiled modules. A reset discards every one, and the game then
++	// recompiles its ~2.6k blocks over the next 4-5 s (compilePC's note below): a storm that a
++	// state load brings on, and the bar's worker loads a state into a power-on machine every time
++	// players join, on every machine at once. Compiled blocks are verified against the RAM they
++	// were compiled from at dispatch (the page-generation gate, then the full-block hash), so
++	// marking every page as written makes each block re-verify once at its next dispatch, and only
++	// code that really changed is recompiled. The compiled code bakes the memory regions' addresses
++	// in, so if a region moved (a reload at another size; RamRegion keeps them put otherwise) the
++	// modules are stale and the full reset below is the only answer.
++	extern void fly_mark_all_ram_written();
++	if (!memoryRegionsMoved())
++	{
++		INFO_LOG(DYNAREC, "recSh4:Dynarec cache kept at %08X: every RAM page marked written", getContext()->pc);
++		fly_mark_all_ram_written();
++		return;
++	}
++	INFO_LOG(DYNAREC, "recSh4:Dynarec a memory region moved: the cache goes");
++#endif
+ 	INFO_LOG(DYNAREC, "recSh4:Dynarec Cache clear at %08X free space %d", getContext()->pc, codeBuffer.getFreeSpace());
+ 	codeBuffer.reset(false);
+ 	bm_ResetCache();
+--- a/core/rec-wasm/rec_wasm.cpp
++++ b/core/rec-wasm/rec_wasm.cpp
+@@ -538,6 +538,13 @@
+ 		    || (p1 >= g_rwatch_lo[i] && p1 <= g_rwatch_hi[i]))
+ 			(*g_rwatch_cell[i])++;
+ }
++// Every RAM page marked as written at once (a state load, a reset: Sh4Recompiler::ResetCache
++// keeps the compiled modules on this backend): each compiled block, chain and region re-verifies
++// its hash at its next dispatch, as after any write to its pages.
++void fly_mark_all_ram_written() {
++	for (u32 i = 0; i < FLY_PAGE_GEN_COUNT; i++) g_fly_page_gen[i]++;
++	for (u32 i = 0; i < g_rwatch_n; i++) (*g_rwatch_cell[i])++;
++}
+ 
+ static u32 jit_dispatch_table[JIT_TABLE_SIZE];  // PC hash → table index (0 = miss)
+ static u32 jit_dispatch_pc[JIT_TABLE_SIZE];    // PC hash → actual PC (collision guard)
+--- a/core/stdclass.cpp
++++ b/core/stdclass.cpp
+@@ -223,6 +223,18 @@
+ 
+ void RamRegion::alloc(size_t size)
+ {
++#ifdef __EMSCRIPTEN__
++	// A region freed and allocated again at the same size stays where it was (free() keeps it): the
++	// SH4 -> WebAssembly JIT bakes the regions' addresses into the code it compiles, and keeps that
++	// code across a game reload (hw/sh4/dyna/driver.cpp, Sh4Recompiler::ResetCache). The caller
++	// zeroes the region as it always did.
++	if (ownsMemory && data != nullptr)
++	{
++		if (this->size == size)
++			return;
++		freeAligned(data);
++	}
++#endif
+ 	this->size = size;
+ 	data = (u8 *)allocAligned(PAGE_SIZE, size);
+ 	ownsMemory = true;
+@@ -230,6 +242,10 @@
+ 
+ void RamRegion::free()
+ {
++#ifdef __EMSCRIPTEN__
++	if (ownsMemory)
++		return; // kept for the next alloc (above)
++#endif
+ 	this->size = 0;
+ 	if (ownsMemory)
+ 		freeAligned(data);
+--- a/core/hw/mem/addrspace.cpp
++++ b/core/hw/mem/addrspace.cpp
+@@ -418,8 +418,12 @@
+ {
+ 	if (ram_base == nullptr)
+ 	{
++#ifndef __EMSCRIPTEN__
++		// Kept on WebAssembly: the JIT bakes the context's address into its compiled code, and
++		// keeps that code across a game reload (hw/sh4/dyna/driver.cpp, Sh4Recompiler::ResetCache).
+ 		free_pages(p_sh4rcb);
+ 		p_sh4rcb = nullptr;
++#endif
+ 		mem_b.free();
+ 		vram.free();
+ 		aica::aica_ram.free();
+@@ -440,6 +444,10 @@
+ #if defined(__EMSCRIPTEN__) && !defined(JIT_PROD_BUILD)
+ 		EM_ASM({ console.log('[rec_wasm] initMappings: allocating Sh4RCB, size=' + $0); }, (int)sizeof(Sh4RCB));
+ #endif
++		// On WebAssembly the block is kept across a game reload (termMappings), with its block
++		// lookup table as it was: the JIT's compiled code, kept too, bakes the context's address in.
++		if (p_sh4rcb == nullptr)
++		{
+ 		p_sh4rcb = (Sh4RCB*)malloc_pages(sizeof(Sh4RCB));
+ #if defined(__EMSCRIPTEN__) && !defined(JIT_PROD_BUILD)
+ 		EM_ASM({ console.log('[rec_wasm] initMappings: p_sh4rcb=' + $0); }, (int)(uintptr_t)p_sh4rcb);
+@@ -453,6 +461,7 @@
+ 		EM_ASM({ console.log('[rec_wasm] initMappings: bm_vmem_pagefill done'); });
+ #endif
+ #endif
++		}
+ 		memset(&p_sh4rcb->cntx, 0, sizeof(p_sh4rcb->cntx));
+ 
+ 		mem_b.alloc(RAM_SIZE);

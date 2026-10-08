@@ -1,6 +1,6 @@
-// Runs a cabinet's core (FBNeo, Supermodel, MAME or Daytona USA's, through libretro.js) off the
-// main thread. Posts each frame to the page (which hands it to Bevy) and streams audio to the
-// AudioWorklet (audio.js).
+// Runs a cabinet's core (FBNeo, Supermodel, MAME, Flycast or Daytona USA's, through libretro.js)
+// off the main thread. Posts each frame to the page (which hands it to Bevy) and streams audio to
+// the AudioWorklet (audio.js).
 //
 // Alone, the local player's buttons drive their seat's controller port. Online, every seated
 // player's machine runs the same game in step with rollback (netplay/src/lib.rs): GGRS guesses
@@ -63,16 +63,20 @@
 //
 // In:  { type: "start", core, rom, files, state, seat, turns, lockstep, gun, linked, linkState,
 //        arcade, options, port, hold }
-//        Loads the game. `files` (a BIOS) and `state` are optional: skipped if missing. Plays
-//        alone right away, or with `hold` waits for "online" (joining a game in progress) or
-//        "watch-state" (watching; no `seat` or `port` then). `linkState`, for a linked game's
-//        player: their side's start-up state for linked play (mame/link-states.mjs). `options`
-//        are the core's own settings ({ key: value }, strings; Core.setOption), made before the
-//        game loads. With a `view` among them the machine has a screen per seat (Daytona USA as
-//        the twin cabinet): it shows `seat`'s (a watcher's, seat 0's), set again after every
-//        state it loads, since states may carry the one of the machine that made them.
-//        An `arcade` game also gets `seat` among them (a watcher's: the seat it watches), and
-//        `state` is the seat's (start-up states may be deflated, as below).
+//        Loads the game. `files` (a BIOS, a NAOMI game's disc: romPath in libretro.js) and `state`
+//        are optional: skipped if missing. Plays alone right away, or with `hold` waits for
+//        "online" (joining a game in progress) or "watch-state" (watching; no `seat` or `port`
+//        then). `linkState`, for a linked game's player: their side's start-up state for linked
+//        play (mame/link-states.mjs). `options` are the core's own settings ({ key: value },
+//        strings; Core.setOption), made before the game loads. With a `view` among them the machine
+//        has a screen per seat (Daytona USA as the twin cabinet): it shows `seat`'s (a watcher's,
+//        seat 0's), set again after every state it loads, since states may carry the one of the
+//        machine that made them. An `arcade` game also gets `seat` among them (a watcher's: the
+//        seat it watches), and `state` is the seat's (start-up states may be deflated, as below).
+//        `vab_warmup` among them is for this worker, not the core: a core that compiles the
+//        game's code as it runs (Flycast's JIT) plays that many frames blind after loading a
+//        game handed over by another machine, then goes back to it, so the session starts with
+//        the code compiled rather than compiling it a hitch at a time while the others wait.
 //      { type: "view", view } Watching such a game: shows seat `view`'s screen instead.
 //      { type: "link-seats", seats } An arcade game: who sits at each seat ({ seat: player id },
 //        or null). A seat left empty is off the link before the next frame (Core.linkAbsent);
@@ -131,7 +135,7 @@
 //      (the session's next frame), runMs (what a frame costs the core, on average); and
 //      for a linked game `link`: the board's link as the game has it (linked.js) and `lost`,
 //      true while nothing comes from the other board.
-import { Core } from "./libretro.js";
+import { Core, romPath } from "./libretro.js";
 import { LinkedSession, decodeRecords, encodeRecords, markLinked, parseLinkState, unmarkLinked } from "./linked.js";
 import { Resampler } from "./resample.js";
 
@@ -325,10 +329,13 @@ async function start({
   const core = cab.core;
   core.netplay = true;
   core.gun = gun;
-  files.forEach((url, i) => extras[i] && core.addFile(url.split("/").pop(), extras[i]));
+  files.forEach((url, i) => extras[i] && core.addFile(romPath(url), extras[i]));
   // An arcade game's machine is the seat's cabinet.
   if (arcade) options = { ...options, seat: String(seat) };
-  for (const [key, value] of Object.entries(options)) core.setOption(key, String(value));
+  cab.warmUp = Number(options.vab_warmup ?? 0);
+  for (const [key, value] of Object.entries(options)) {
+    if (key !== "vab_warmup") core.setOption(key, String(value));
+  }
   const { fps, sampleRate } = core.loadGame(romUrl.split("/").pop(), rom);
   // Pacing, input delay and the stats all go by the core's rate, whatever it is (see the top).
   cab.fps = fps;
@@ -907,6 +914,33 @@ class Cabinet {
     }
   }
 
+  /**
+   * Plays `frames` frames blind (nothing shown or heard) from the machine as it is, then puts
+   * it back: what the game runs in the next seconds is compiled before the session starts, so
+   * it isn't compiled a hitch at a time while the others wait on each. Both players mash
+   * buttons and directions meanwhile (the same every time), so the game runs more of itself
+   * than it would left alone.
+   */
+  #warmUp(frames) {
+    const core = this.core;
+    const at = core.serialize();
+    const started = performance.now();
+    this.muted = true;
+    core.present = false;
+    const USABLE = 0b0000_0001_1111_1001; // B, Start, the directions, A
+    let seed = 0x9e3779b9;
+    const random = () => ((seed = Math.imul(seed ^ (seed >>> 15), 0x2c1b3c6d) ^ (seed >>> 12)) >>> 0);
+    for (let i = 0; i < frames; i++) {
+      if (i % 8 === 0) for (let port = 0; port < 2; port++) core.inputs[port] = random() & USABLE;
+      core.run();
+    }
+    core.inputs.fill(0);
+    core.present = true;
+    this.muted = false;
+    core.unserialize(at);
+    console.log(`warm-up: ${frames} frames in ${Math.round(performance.now() - started)} ms`);
+  }
+
   async #capture(epoch) {
     const state = this.core.serialize();
     this.#captured = { epoch, state };
@@ -917,12 +951,17 @@ class Cabinet {
 
   async #online({ epoch, seats, state, roundTrip }) {
     if (this.#linked) return this.#linkUp(epoch, seats, roundTrip);
+    const handed = Boolean(state);
     state = state ? await unpack(state) : this.#captured?.epoch === epoch ? this.#captured.state : undefined;
     if (!state) return;
     this.#leaveSession();
     // Power-on, then the state: every machine then has the same of what the state leaves out.
     this.core.reset();
     this.core.unserialize(state);
+    // A game from another machine is new to this core's JIT, if it has one (`vab_warmup`): the
+    // machine that captured it has the code compiled, a joiner's hasn't. Compiled code survives
+    // the state loads (flycast/patches/0007).
+    if (handed && this.warmUp) this.#warmUp(this.warmUp);
     this.show();
     this.#captured = undefined;
     if (this.#lockstep) {

@@ -1,6 +1,6 @@
 // Minimal libretro frontend for the Emscripten cores: FBNeo's (emulator/build.sh), Supermodel
-// (supermodel/), Daytona USA's (daytona/) and MAME (mame/). Runs wherever the core runs: the Web
-// Worker (worker.js) or Node.
+// (supermodel/), Daytona USA's (daytona/), MAME (mame/) and Flycast (flycast/). Runs wherever the
+// core runs: the Web Worker (worker.js) or Node.
 
 import { controllerRouting, routedButton } from './controller-routing.js';
 
@@ -42,6 +42,44 @@ const OPTIONS = {
   mame_auto_save: "disabled",
   mame_cheats_enable: "disabled",
   mame_alternate_renderer: "disabled",
+  // Flycast (flycast/), whose keys still carry its old name, reicast. One we don't answer takes the
+  // default in its code, which isn't always the one its option list shows, so these are set either
+  // way. One thread, the frame drawn within retro_run, and every frame run and shown: no frame
+  // skipping, nor a frame rate it changes on us (the worker paces frames at the rate the core gives
+  // when the game loads), and the picture is the one the game puts on the screen, when it swaps,
+  // not each one as soon as it's drawn. The NAOMI's own 640x480, transparent polygons sorted per
+  // triangle, the usual way (per pixel needs more than WebGL 2 has), and nothing the board didn't
+  // have (widescreen, texture upscaling or anisotropic filtering, custom textures) or written
+  // behind our back (texture dumps); the SH4 at its 200 MHz. The USA BIOS, from the ROM set, so the
+  // text is English (Japan's calls the game Power Smash), and NTSC, which its save states carry, so
+  // every machine says the same. The disc read at the GD-ROM's own pace and the sound's DSP on, as
+  // the board does. No network (the broadband adapter, UPnP, DCNet, outputs broadcast on a TCP
+  // port), no service button on the pad, and free play: Start plays, as at the bar's other
+  // cabinets. A NAOMI has no VMU, so none of those.
+  reicast_threaded_rendering: "disabled",
+  reicast_auto_skip_frame: "disabled",
+  reicast_frame_skipping: "disabled",
+  reicast_detect_vsync_swap_interval: "disabled",
+  reicast_delay_frame_swapping: "enabled",
+  reicast_internal_resolution: "640x480",
+  reicast_alpha_sorting: "per-triangle (normal)",
+  reicast_widescreen_hack: "disabled",
+  reicast_widescreen_cheats: "disabled",
+  reicast_texupscale: "1",
+  reicast_anisotropic_filtering: "off",
+  reicast_custom_textures: "disabled",
+  reicast_dump_textures: "disabled",
+  reicast_sh4clock: "200",
+  reicast_region: "USA",
+  reicast_broadcast: "NTSC",
+  reicast_gdrom_fast_loading: "disabled",
+  reicast_enable_dsp: "enabled",
+  reicast_emulate_bba: "disabled",
+  reicast_upnp: "disabled",
+  reicast_dcnet: "disabled",
+  reicast_network_output: "disabled",
+  reicast_allow_service_buttons: "disabled",
+  reicast_force_freeplay: "enabled",
 };
 // RGBA8888 is ours, not libretro's: bytes R, G, B, A as the page wants them, so a core that draws
 // with WebGL (Supermodel) hands its frame over without a conversion on either side.
@@ -225,9 +263,15 @@ export class Core {
     }
   }
 
-  /** Puts a file next to the ROMs, e.g. a BIOS set like neogeo.zip. */
-  addFile(fileName, bytes) {
-    this.#m.FS.writeFile(`/roms/${fileName}`, bytes);
+  /**
+   * Puts a file under /roms, where the core finds what goes with a ROM set: a BIOS set next to
+   * it (neogeo.zip), or a file in a folder of its own, made here if need be (a NAOMI game's disc,
+   * vtennisg/gds-0011.chd, in the folder Flycast looks in, named after the ROM set).
+   */
+  addFile(path, bytes) {
+    const at = `/roms/${path}`;
+    this.#m.FS.mkdirTree(at.slice(0, at.lastIndexOf("/")));
+    this.#m.FS.writeFile(at, bytes);
   }
 
   /** Loads a ROM set (FBNeo picks the game from the file name, e.g. mk2.zip). */
@@ -581,6 +625,17 @@ export class Core {
       return String(value);
     }).trimEnd();
   }
+}
+
+/**
+ * Where a file the site serves goes in a core's file system, under /roms (Core.addFile): at its
+ * path under /roms/, folders and all, so a NAOMI game's disc (/roms/vtennisg/gds-0011.chd) lands
+ * in the folder named after its ROM set, where Flycast looks, and a BIOS set (/roms/neogeo.zip)
+ * next to the ROM set. A URL without /roms/ in it (a check's file:// URL) goes by its name.
+ */
+export function romPath(url) {
+  const at = url.lastIndexOf("/roms/");
+  return at < 0 ? url.split("/").pop() : url.slice(at + "/roms/".length);
 }
 
 /** Turns a width x height image `quarterTurns` times counter-clockwise. */

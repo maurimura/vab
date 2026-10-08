@@ -9,13 +9,15 @@
 // a state as for a new watcher, which must match what that machine got to by playing the
 // stream up to there.
 //
-//   node emulator/netplay-check.mjs <core.mjs> <rom.zip> [state] [bios.zip ...]
+//   node emulator/netplay-check.mjs <core.mjs> <rom.zip> [state] [file ...]
 //   PLAYERS=4 node emulator/netplay-check.mjs emulator/dist/konami/fbneo.mjs ~/Downloads/ssriders.zip emulator/dist/ssriders.state
 //
-// Env: PLAYERS (2), SECONDS per stage (10), LATENCY one way in ms (40), JITTER ms (10), LOSS
-// fraction (0.02), TURNS=1 for turn-based games, GUN=1 for lightgun games, BREAK=1 hands the
-// last player the start-up state instead of the game (must desync). Needs the netplay module
-// built: make netplay.
+// The files after the state go with the ROM set as the page puts them (a BIOS set next to it, a
+// NAOMI game's disc at its path after a `roms/` folder: snapshot.mjs). Env: PLAYERS (2),
+// SECONDS per stage (10), LATENCY one way in ms (40), JITTER ms (10), LOSS fraction (0.02),
+// TURNS=1 for turn-based games, GUN=1 for lightgun games, LOCKSTEP=1 for games played in
+// lockstep (`lockstep` in assets/games.ron), BREAK=1 hands the last player the start-up state
+// instead of the game (must desync). Needs the netplay module built: make netplay.
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -46,8 +48,9 @@ if (!isMainThread) {
   };
   await import(workerData.worker);
 } else {
-  const { Core } = await import("../web/emulator/libretro.js");
-  const [corePath, romPath, statePath, ...biosPaths] = process.argv.slice(2);
+  const { Core, romPath: pathUnderRoms } = await import("../web/emulator/libretro.js");
+  const [corePath, romPath, statePath, ...filePaths] = process.argv.slice(2);
+  const LOCKSTEP = process.env.LOCKSTEP === '1';
   const PLAYERS = Number(process.env.PLAYERS ?? 2);
   const SECONDS = Number(process.env.SECONDS ?? 10);
   const LATENCY = Number(process.env.LATENCY ?? 40);
@@ -75,8 +78,9 @@ if (!isMainThread) {
     type: "start",
     core: url(corePath),
     rom: url(romPath),
-    files: biosPaths.map(url),
+    files: filePaths.map(url),
     turns: process.env.TURNS === '1',
+    lockstep: LOCKSTEP,
     gun: process.env.GUN === '1',
     hold: true,
   });
@@ -102,7 +106,7 @@ if (!isMainThread) {
     core.netplay = true;
     core.turns = process.env.TURNS === '1';
     core.gun = process.env.GUN === '1';
-    for (const path of biosPaths) core.addFile(basename(path), await readFile(path));
+    for (const path of filePaths) core.addFile(pathUnderRoms(resolve(path)), await readFile(path));
     core.loadGame(basename(romPath), await readFile(romPath));
     core.present = false;
     return core;
@@ -179,10 +183,11 @@ if (!isMainThread) {
         type: "start",
         core: url(corePath),
         rom: url(romPath),
-        files: biosPaths.map(url),
+        files: filePaths.map(url),
         state: statePath && url(statePath),
         seat,
         turns: process.env.TURNS === '1',
+        lockstep: LOCKSTEP,
         gun: process.env.GUN === '1',
         port: inside,
         hold,

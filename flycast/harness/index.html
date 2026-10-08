@@ -1,0 +1,100 @@
+<!doctype html>
+<!-- The Flycast bench: Virtua Tennis (vtennisg) booted in a worker as in the bar (core-worker.mjs),
+     then timed in its attract mode and in a match, with screenshots. run.mjs drives it in a
+     headless Chrome and saves the screenshots; open it in a browser to watch.
+       node flycast/harness/serve.mjs, then http://localhost:8791/flycast/harness/index.html
+     ?boot=3000     frames run first, as fast as they go (the NAOMI BIOS and the GD-ROM load)
+     &attract=600   frames timed in the attract mode, paced at the game's 59.79 Hz
+     &coin=1500     frames with coins, Start and the menus (coin-start script), as fast as they go
+     &match=1800    frames timed in the match (play script), paced
+     &shots=300     a screenshot every that many frames
+     &det=1200      frames of check.mjs's random inputs (both players), unpaced, printing the RAM
+                    hash every 60: the same run as `node flycast/harness/det-node.mjs` (start
+                    from the same &state), to compare the browser (WebGL) with Node (no-op GL)
+     &rom=vtennisg  (served from /roms/<rom>.zip, its disc from /roms/<rom>/<disc>.chd)
+     &disc=gds-0011
+     &state=<url>   start from a state instead of booting (e.g. one check.mjs made, in a match:
+                    /flycast/.cache/states/check-start.state)
+     &reset=1       with &state: 60 frames, then retro_reset and the state again (the worker's way
+                    to take another machine's state)
+     &opt=key:value;key:value   core options for flycast_set (e.g. reicast_enable_dsp:disabled;
+                    vab_readback_latency:2) -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Flycast bench</title>
+<style>
+  body { margin: 0; background: #111; color: #ccc; font: 13px monospace; display: flex; flex-direction: column; align-items: center }
+  canvas { width: 640px; height: 480px; background: #000; image-rendering: pixelated }
+  #out { white-space: pre-wrap; padding: 8px; max-width: 1000px }
+</style>
+</head>
+<body>
+<canvas id="screen" width="640" height="480"></canvas>
+<div id="out">starting…</div>
+<script type="module">
+const params = new URLSearchParams(location.search);
+const num = (key, fallback) => Number(params.get(key) ?? fallback);
+const rom = params.get("rom") ?? "vtennisg";
+const disc = params.get("disc") ?? "gds-0011";
+const every = num("shots", 300);
+const out = document.getElementById("out");
+const screen = document.getElementById("screen");
+const ctx = screen.getContext("2d");
+const lines = [];
+const shots = [];
+const say = (line) => { lines.push(line); out.textContent = lines.join("\n"); console.log(line); };
+const range = (n, step) => Array.from({ length: Math.ceil(n / step) }, (_, i) => i * step).concat(n - 1);
+
+const worker = new Worker("/flycast/harness/core-worker.mjs", { type: "module" });
+let waiting;
+const next = (type) => new Promise((resolve, reject) => (waiting = { type, resolve, reject }));
+worker.onmessage = ({ data }) => {
+  if (data.type === "log") return say(`core: ${data.text}`);
+  if (data.type === "shot") {
+    screen.width = data.width; screen.height = data.height;
+    ctx.putImageData(new ImageData(new Uint8ClampedArray(data.rgba), data.width, data.height), 0, 0);
+    shots.push({ name: data.name, png: screen.toDataURL("image/png") });
+    return;
+  }
+  if (data.type === "error") return waiting?.reject(new Error(data.error));
+  if (waiting && data.type === waiting.type) waiting.resolve(data);
+};
+worker.onerror = (e) => waiting?.reject(new Error(e.message));
+
+const ms = (x) => x.toFixed(2);
+async function runPhase(name, frames, script, pace) {
+  if (!frames) return;
+  worker.postMessage({ type: "phase", name, frames, script, pace, shots: range(frames, every) });
+  const r = await next("phase");
+  say(`${name}: ${frames} frames (${script}, ${pace ? "paced" : "unpaced"}) in ${(r.wallMs / 1000).toFixed(1)} s; ` +
+    `retro_run ${ms(r.run.avg)} avg, ${ms(r.run.p50)} p50, ${ms(r.run.p95)} p95, ${ms(r.run.max)} max ms; ` +
+    `game frames ${r.core.presented}, shown ${r.delivered}, read-back ${ms(r.core.readbackMs / Math.max(1, r.core.presented))} + copy ${ms(r.core.copyMs / Math.max(1, r.delivered))} (of which getBufferSubData ${ms(r.core.getMs / Math.max(1, r.delivered))}) + frontend ${ms(r.core.frontendMs / Math.max(1, r.delivered))} ms each; ` +
+    `sound ${r.sound.perFrame.toFixed(1)} samples/frame, peak ${r.sound.peak}, rms ${r.sound.rms.toFixed(0)}; RAM sample ${r.ramSample}`);
+  return r;
+}
+
+window.bench = (async () => {
+  say(`${navigator.userAgent.match(/Chrome\/[\d.]+/)?.[0] ?? navigator.userAgent}, ${navigator.hardwareConcurrency} threads`);
+  const options = Object.fromEntries((params.get("opt") ?? "").split(";").filter(Boolean).map((kv) => [kv.slice(0, kv.indexOf(":")), kv.slice(kv.indexOf(":") + 1)]));
+  worker.postMessage({ type: "load", rom: `/roms/${rom}.zip`, files: [`/roms/${rom}/${disc}.chd`], options, state: params.get("state"), reset: params.get("reset") === "1" });
+  const loaded = await next("loaded");
+  say(`loaded: module ${ms(loaded.createMs)} ms, download ${ms(loaded.downloadMs)} ms, retro_load_game ${ms(loaded.loadMs)} ms; ` +
+    `${loaded.av.width}x${loaded.av.height} @ ${loaded.av.fps.toFixed(4)} Hz, ${loaded.av.sampleRate.toFixed(1)} Hz sound; system RAM ${loaded.ramBytes} bytes`);
+  say(`buttons: ${loaded.buttons.map(([id, label]) => `${id}=${label}`).join(", ")}`);
+  if (Object.keys(options).length) say(`options: ${JSON.stringify(options)}`);
+  if (loaded.stateMs !== undefined) say(`state ${params.get("state")} loaded in ${ms(loaded.stateMs)} ms`);
+  await runPhase("boot", num("boot", 3000), "idle", false);
+  await runPhase("attract", num("attract", 600), "idle", true);
+  await runPhase("coin", num("coin", 1500), "coin-start", false);
+  await runPhase("match", num("match", 1800), "play", true);
+  const det = await runPhase("det", num("det", 0), "random", false);
+  if (det) say(`det hashes: ${det.hashes.join(" ")}`);
+  worker.postMessage({ type: "state" });
+  const state = await next("state");
+  say(`state: ${state.bytes} bytes (${(state.bytes / 1048576).toFixed(1)} MiB), serialize ${ms(state.serializeMs)} ms, unserialize ${ms(state.unserializeMs)} ms`);
+  return { lines, shots };
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,24 @@
+Arcade bar: a NAOMI game's BIOS from its own ROM set.
+
+loadMameRom loaded the BIOS with the ROM set's file name only (settings.content.fileName,
+"vtennisg.zip"), which naomi_cart_LoadBios opens as an archive relative to the working directory:
+that fails, and the BIOS EPROMs inside the set are never seen, so a separate naomi.zip in
+<system>/dc was required. MAME's sets merged with their BIOS (the bar's vtennisg.zip) carry the
+EPROMs themselves: open the set by its full path (Emulator::loadGame's second BIOS load already
+does), and the BIOS is found by CRC in it, as loadBios intends.
+
+diff --git a/core/hw/naomi/naomi_cart.cpp b/core/hw/naomi/naomi_cart.cpp
+--- a/core/hw/naomi/naomi_cart.cpp
++++ b/core/hw/naomi/naomi_cart.cpp
+@@ -265,7 +265,10 @@
+ 	}
+ 
+ 	// Load the BIOS
+-	naomi_cart_LoadBios(fileName.c_str());
++	// Arcade bar (flycast/patches/0004): by the ROM set's full path, so its own copy of the BIOS
++	// is found (the file name alone is opened relative to the working directory, which fails, and
++	// only a separate <system>/dc/naomi.zip would do).
++	naomi_cart_LoadBios(path.c_str());
+ 
+ 	// Now load the cartridge data
+ 	try {

@@ -1601,6 +1601,12 @@
             game: Some("timecrs2"),
         ),
         (
+            x: 5,
+            y: -3,
+            tile: "objects/cabinet_vtennis_down_left",
+            game: Some("vtennisg"),
+        ),
+        (
             x: -5,
             y: -1,
             tile: "objects/pool_table",

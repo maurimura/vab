@@ -15,7 +15,8 @@ WASM_BINDGEN := .tools/wasm-bindgen-$(WASM_BINDGEN_VERSION)/bin/wasm-bindgen
 WASM_OPT := emulator/.cache/emsdk/upstream/bin/wasm-opt
 
 .PHONY: client netplay emulator emulator-remote upload-emulator supermodel supermodel-remote upload-supermodel \
-	mame mame-remote upload-mame daytona daytona-remote upload-daytona upload-daytona-states upload-rom dev deploy preview \
+	mame mame-remote upload-mame daytona daytona-remote upload-daytona upload-daytona-states \
+	flycast flycast-remote upload-flycast upload-rom dev deploy preview \
 	editor editor-web editor-dev editor-deploy editor-preview pull-map e2e
 
 $(WASM_BINDGEN):
@@ -84,13 +85,30 @@ daytona:
 daytona-remote:
 	$(MAKE) upload-daytona R2_TARGET=--remote
 
+# The Flycast core (Sega NAOMI: Virtua Tennis) -> flycast/dist/, then into local R2 (served at
+# /flycast/*), the same way. flycast-remote uploads to production. A GD-ROM game is two files,
+# the ROM set (BIOS and security chip) and the disc, in a folder named after the ROM set:
+# make upload-rom ROM=$HOME/Downloads/vtennisg.zip
+# make upload-rom ROM=$HOME/Downloads/vtennisg/gds-0011.chd KEY=vtennisg/gds-0011.chd
+flycast:
+	./flycast/build.sh
+	$(MAKE) upload-flycast R2_TARGET=--local
+
+flycast-remote:
+	$(MAKE) upload-flycast R2_TARGET=--remote
+
 # A ROM set (or its start-up .state) into R2, served at /roms/<file>:
 # make upload-rom ROM=$HOME/Downloads/mk2.zip (local R2, for `make dev BUCKET=local`; add
 # R2_TARGET=--remote for production, and R2_BUCKET=vab-preview for the preview Worker's bucket).
+# KEY puts it at another path under /roms/, folders and all, for a file a core looks for in a
+# folder (a NAOMI game's disc, `files` in assets/games.ron): KEY=vtennisg/gds-0011.chd. It's the
+# file's name unless KEY is given on the command line (one in the environment doesn't count, so
+# a stray KEY never sends a ROM somewhere else).
 R2_TARGET ?= --local
 R2_BUCKET ?= vab
+ROM_KEY = $(if $(filter command line,$(origin KEY)),$(KEY),$(notdir $(ROM)))
 upload-rom:
-	cd server && npx wrangler r2 object put $(R2_BUCKET)/roms/$(notdir $(ROM)) $(R2_TARGET) \
+	cd server && npx wrangler r2 object put $(R2_BUCKET)/roms/$(ROM_KEY) $(R2_TARGET) \
 		--file $(abspath $(ROM)) \
 		--content-type $(if $(filter %.zip,$(ROM)),application/zip,application/octet-stream)
 
@@ -110,6 +128,12 @@ upload-daytona:
 		--file ../daytona/dist/daytona.mjs --content-type text/javascript && \
 	npx wrangler r2 object put $(R2_BUCKET)/daytona/daytona.wasm $(R2_TARGET) \
 		--file ../daytona/dist/daytona.wasm --content-type application/wasm
+
+upload-flycast:
+	cd server && npx wrangler r2 object put $(R2_BUCKET)/flycast/flycast.mjs $(R2_TARGET) \
+		--file ../flycast/dist/flycast.mjs --content-type text/javascript && \
+	npx wrangler r2 object put $(R2_BUCKET)/flycast/flycast.wasm $(R2_TARGET) \
+		--file ../flycast/dist/flycast.wasm --content-type application/wasm
 
 # Daytona USA's arcade-mode seat states (node daytona/make-states.mjs; ROM-derived, like the ROM
 # set) into R2 next to it, served at /roms/daytona.seat<k>.state: one per seat 0-7.

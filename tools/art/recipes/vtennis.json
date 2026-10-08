@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "skin": "vtennis",
+  "rom": "vtennisg",
+  "title": "VIRTUA TENNIS / SEGA NAOMI UNIVERSAL",
+  "variant": "Original Virtua Tennis (Sega Professional Tennis, 1999) in the white standing NAOMI Universal shown in Sega Amusements Europe's operator flyer; not the red conversion pedestal or Virtua Tennis 2",
+  "renderer": "naomi",
+  "size": [40, 60],
+  "players": 2,
+  "control_stations": 2,
+  "buttons_per_player": 3,
+  "game_actions_per_player": 2,
+  "stations": [12, 5.5],
+  "station_colors": [[53, 192, 94], [237, 108, 159]],
+  "buttons": [
+    {"position": [11.9, -1.2], "color": [231, 211, 61]},
+    {"position": [11.6, -2.2], "color": [61, 165, 217]},
+    {"position": [11.3, -3.2], "color": [226, 84, 99]}
+  ],
+  "colors": {
+    "body": [232, 232, 222],
+    "side": [232, 232, 222],
+    "trim": [232, 232, 222],
+    "stick": [53, 192, 94],
+    "dark": [35, 41, 47],
+    "lamp": [255, 160, 30],
+    "seam": [165, 43, 48],
+    "door_edge": [168, 174, 170]
+  },
+  "preview_note": "40 x 60 px | white NAOMI / green title / 2 sticks + 6 physical actions / flyer display",
+  "dimensions": {
+    "flyer": "W 75 cm, D 98 cm, H 180 cm, 29-inch 31 kHz monitor; billboard adds height",
+    "sprite": "Estimated world-space geometry; base/CRT/rails/billboard are separate. Low-resolution proportions are not dimensionally exact."
+  },
+  "sources": {
+    "flyer": {
+      "file": "flyer.png",
+      "kind": "original-art-scan",
+      "purpose": "Archived Sega Amusements Europe printed operator flyer. Corroborates NAOMI hardware, original game's eight tennis players, white standing shell, green game marquee, orange lamp, dark rails, white two-station deck and photographed tennis-court display. Supplies rectified marquee, deck and screen.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/88783",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadeflyers168/vtennisg.png",
+      "rights": "Underlying Sega artwork/trademarks and printed flyer copyright remain retained. Archive hosting is not publisher authorization. Scan author, restoration status and redistribution permission are unknown.",
+      "sha256": "61a1b79c0caa02c68d95bd706cdfd3bbad1ca1f79a8b042c32eb8aaf87ef9f7d"
+    },
+    "naomi_shell": {
+      "file": "naomi-cabinet.jpg",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Generic NAOMI Universal three-quarter photograph and documented cabinet construction: standing rails, projecting control panel, open knee space, lower enclosure and deep rear CRT pod. Geometry corroboration only; this different game's panel and loading screen are NOT extracted.",
+      "page_url": "https://wiki.arcadeotaku.com/w/Sega_Naomi_Universal",
+      "image_url": "https://wiki.arcadeotaku.com/images/3/3f/Naomi_Universal_1.jpg",
+      "rights": "Photo author and image-specific license unverified; underlying Sega hardware/artwork rights retained. Wiki access does not establish image redistribution permission.",
+      "sha256": "03b1c0c5d5ac15174964aaffaf3537e65e9cef313c96e51b01225a4c7f3a0a40"
+    },
+    "conversion_cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Research-only red/yellow/blue operator conversion pedestal showing original Virtua Tennis, not Virtua Tennis 2. Distinct alternative shell; none of its red shell, green bezel or blue deck is mixed into the selected NAOMI variant.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/98807",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/vtennis.png",
+      "rights": "Underlying Sega game artwork/trademarks retained. Photo author, cabinet provenance and redistribution rights unknown; archive hosting is not publisher authorization.",
+      "sha256": "3d4a3e2204bdee30586250cf567bdd48c18e241feb9472257b3a7ae9b54358db"
+    },
+    "conversion_controls": {
+      "file": "controls.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Research-only alternative conversion panel: confirms three physical action buttons and separate Start per station, despite two used shot actions. Not used as the white NAOMI panel texture.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/6300",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/vtennis.png",
+      "rights": "Underlying Sega operator artwork/trademarks retained. Photo author, replacement-print authenticity and redistribution rights unknown; archive hosting is not publisher authorization.",
+      "sha256": "d1547985fc2199bb92f357bbd933bc91fe16ab95bc3446815204add4665b2aba"
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "flyer",
+      "quad": [[648, 220], [776, 211], [793, 266], [643, 276]],
+      "rectified_size": [240, 96],
+      "size": [28, 8]
+    },
+    "controls": {
+      "source": "flyer",
+      "quad": [[554, 496], [680, 500], [707, 521], [536, 512]],
+      "rectified_size": [240, 48],
+      "size": [30, 8]
+    },
+    "screen": {
+      "source": "flyer",
+      "quad": [[608, 343], [766, 337], [737, 473], [579, 461]],
+      "rectified_size": [200, 150],
+      "size": [24, 19],
+      "fit": "contain",
+      "brightness": 1.15
+    }
+  },
+  "uncertainties": [
+    "Chosen original-game white NAOMI Universal is supported by Sega Europe's flyer, not claimed to be the only factory or conversion cabinet. Exact region/revision and original-versus-restored archive scan authenticity are unverified.",
+    "The title, white panel and actual tennis display are rectified from the flyer cabinet photograph, not publisher-hosted production masters or a local emulator capture. Detail is limited by the printed scan; screen brightness receives 1.15x at sprite scale.",
+    "Three raised physical actions per station follow the photographed three-button panels. Virtua Tennis uses Shot/Lob (two actions); Start details remain in the deck photograph, not additional modeled raised buttons. Button colors/spacing and ball-top shape are small-scale approximations of the selected flyer, not the red conversion's hardware.",
+    "No dedicated tennis-player side print is evidenced. Sides remain plain dark rails with white edging and a narrow red seam. The generic shell photo's NAOMI lettering and different game's six-button deck/loading display are not reused.",
+    "The yellow-looking space under the flyer's control deck is the flyer background visible through the open frame, not invented yellow front artwork. Lower service/cash doors and rear vents are geometry estimates corroborated by the generic shell.",
+    "Sega artwork and photograph redistribution rights remain unresolved. Archive/wiki availability is not deployment permission.",
+    "Skin vtennis selects the existing vtennisg GD-ROM game entry. The original game's operator flyer guides the cabinet; it is not asserted to be a GD-ROM-specific decal kit. Catalog core, files, player count and lockstep settings are preserved; no map placement or emulator work is part of this art."
+  ]
+}

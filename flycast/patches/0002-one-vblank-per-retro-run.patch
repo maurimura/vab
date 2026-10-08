@@ -1,0 +1,62 @@
+Arcade bar: one vblank of the machine per retro_run.
+
+Upstream Flycast (single-threaded) stops the SH4 when the game presents a frame, or after a render
+timeout (50 ms of guest time; the fork made it 25 ms); retro_run then lasts as long as the game
+takes to draw, two vblanks for a 30 fps game, three at a scene change. The bar's worker calls
+retro_run at the fps the core reports and its netplay counts frames: guest time per call must be
+constant. So the SH4 stops at every vblank (Emulator::vblank, at the end of that timeslice) and
+never when a frame is presented (Renderer_if.cpp); a vblank without a new frame is a duplicate.
+Stops always fall on the same guest cycles, so where a frame ends is the same on every machine.
+
+diff --git a/core/emulator.cpp b/core/emulator.cpp
+--- a/core/emulator.cpp
++++ b/core/emulator.cpp
+@@ -1078,24 +1078,18 @@
+ {
+ 	EventManager::event(Event::VBlank);
+ 	runner.execTasks();
+-	// Time out if a frame hasn't been rendered for 50 ms
+ #ifdef __EMSCRIPTEN__
+-	// ★ PACER-SPREAD (2026-07-24): stop a render-less run at the SECOND vblank
+-	// (~33ms guest), not the third (50ms). Transitions skip ~3 vblanks without
+-	// presenting; at the upstream threshold one emu.render() gulps 50ms of
+-	// guest time inside a single host frame (the [SPIKE2] guest_ms=50.0
+-	// signature) and the wall cost lands as a 60-220ms hitch. Returning the
+-	// host frame earlier lets unpaid debt carry in fly_owed and drain across
+-	// the next ticks as brief slowmo instead of a freeze. Threshold grid is
+-	// discrete (check runs only at vblanks): <=1.5 vblanks selects stop-at-#2.
+-	// 30fps-native titles present from the vblank-#2 ISR, which runs AFTER
+-	// this callback — they now dupe at #2 and present at the top of the next
+-	// tick; JGR feel-check is the eyes gate for that.
+-	const u64 fly_render_timeout_cycles = 5000000;
+-#else
+-	const u64 fly_render_timeout_cycles = 10000000;
++	// Arcade bar (flycast/patches/0002): every retro_run emulates exactly one vblank, so the
++	// frontend's frame is the machine's and its pacing, input delay and rollback all count in
++	// the same frames. The SH4 stops here (at the end of this timeslice), never when the game
++	// presents a frame (Renderer_if.cpp) nor after a render timeout: guest time per call is
++	// constant, whatever the game draws.
++	if (!config::ThreadedRendering)
++		getSh4Executor()->Stop();
++	return;
+ #endif
+-	if (sh4_sched_now64() - startTime <= fly_render_timeout_cycles)
++	// Time out if a frame hasn't been rendered for 50 ms
++	if (sh4_sched_now64() - startTime <= 10000000)
+ 		return;
+ 	renderTimeout = true;
+ 	if (ggpo::active())
+diff --git a/core/hw/pvr/Renderer_if.cpp b/core/hw/pvr/Renderer_if.cpp
+--- a/core/hw/pvr/Renderer_if.cpp
++++ b/core/hw/pvr/Renderer_if.cpp
+@@ -270,8 +270,10 @@
+ #endif
+ 		{
+ 			presented = true;
++#ifndef __EMSCRIPTEN__	// arcade bar: the SH4 stops at each vblank instead (emulator.cpp)
+ 			if (!config::ThreadedRendering && !ggpo::active())
+ 				emu.getSh4Executor()->Stop();
++#endif
+ #ifdef LIBRETRO
+ 			retro_rend_present();
+ #endif

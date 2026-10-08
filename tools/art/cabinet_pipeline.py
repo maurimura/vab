@@ -20,12 +20,13 @@ import cabinet_upright
 import cabinet_wide
 import cabinet_twin
 import cabinet_racing
+import cabinet_naomi
 
 ROOT = base.ROOT
 RECIPES = ROOT / 'tools/art/recipes'
 RENDERERS = {'simpsons-legacy': build_simpsons, 'mvs': cabinet_mvs,
              'upright': cabinet_upright, 'wide': cabinet_wide, 'twin-gun': cabinet_twin,
-             'racing': cabinet_racing}
+             'racing': cabinet_racing, 'naomi': cabinet_naomi}
 
 
 def load_recipe(name):
