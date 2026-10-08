@@ -50,16 +50,18 @@ const PIXEL_FORMAT = { RGB1555: 0, XRGB8888: 1, RGB565: 2, RGBA8888: 100 };
 const DEVICE = { JOYPAD: 1, LIGHTGUN: 4, ANALOG: 5, POINTER: 6 };
 /** RetroPad ids (libretro.h) a driving game's arrows are named after (see #namePedals). */
 const PAD = { UP: 4, DOWN: 5, LEFT: 6, RIGHT: 7, L2: 12, R2: 13 };
+/** The left stick's X, all of it: -0x7fff full left .. 0x7fff full right. */
+const STICK = 0x7fff;
 /**
- * A wheel (wheel.js) as the left stick's X, -0x7fff..0x7fff. FBNeo reads a driving game's
- * stick through two dead zones, its frontend's and the driver's: Out Run's wheel stays straight
- * up to about a third of the stick and is at full lock from 72% (measured), so the wheel's 1 to
- * 127 go over that span, every step of it a turn of the game's wheel.
+ * A wheel (wheel.js, -127..127) as the left stick's X, spread over `span`, [from, to] of the
+ * stick's 0..0x7fff each way (world::Game's `wheel`): a core may see nothing in the first part of
+ * the stick and be at full lock before its end. Out Run's FBNeo core does both, its frontend's
+ * dead zone and the driver's: its wheel stays straight up to about a third of the stick and is
+ * at full lock from 72% (measured), so the wheel's 1 to 127 go over that span, every step of it
+ * a turn of the game's wheel. MAME reads the whole stick, one to one onto the wheel's range.
  */
-const WHEEL_DEAD = 10600;
-const WHEEL_FULL = 23500;
-const wheelAxis = (wheel) =>
-  wheel === 0 ? 0 : Math.sign(wheel) * Math.round(WHEEL_DEAD + (Math.abs(wheel) * (WHEEL_FULL - WHEEL_DEAD)) / WHEEL_LOCK);
+const wheelAxis = (wheel, [from, to] = [0, STICK]) =>
+  wheel === 0 ? 0 : Math.sign(wheel) * Math.round(from + (Math.abs(wheel) * (to - from)) / WHEEL_LOCK);
 /**
  * A lightgun's buttons (libretro.h RETRO_DEVICE_ID_LIGHTGUN_*) and the RetroPad buttons that
  * press them: the trigger is B (key Z, the left mouse button), Aux A is A (key X, the right
@@ -98,6 +100,12 @@ export class Core {
    */
   inputs = new Uint32Array(4);
   /**
+   * A driving game's wheel, world::Game's `wheel` (assets/games.ron), or undefined: every port
+   * then steers (steers), and the wheel's `span` says where on the stick the core turns the
+   * game's wheel (wheelAxis). Set it before the game loads, as the other settings here.
+   */
+  wheel;
+  /**
    * A lightgun game (Time Crisis II): the core's lightgun (and pointer) reads are answered from
    * each port's aim and buttons. Otherwise they read nothing: MAME also maps a lightgun's
    * buttons onto a game's Button 1-4, which would press a second button in Tekken 3.
@@ -122,16 +130,19 @@ export class Core {
    * under the RetroPad buttons that press them (GUN_BUTTONS).
    */
   get buttons() {
-    return this.gun ? new Map([...this.#padNames, ...this.#gunNames]) : this.#padNames;
+    if (this.gun) return new Map([...this.#padNames, ...this.#gunNames]);
+    // A driving game's Left and Right turn its wheel, whatever the core calls them (FBNeo's
+    // "Steering (Fake Digital Left)"), so the help card lists them as Daytona USA's are.
+    if (this.wheel) return new Map([...this.#padNames, [PAD.LEFT, "Steer left"], [PAD.RIGHT, "Steer right"]]);
+    return this.#padNames;
   }
 
   /**
    * Whether the game on `port` is steered with a wheel, which the arrows turn (wheel.js) and the
-   * port's input carries in bits 16-23: an FBNeo driving game's (controller-routing.js).
-   * Known once the core has named its controls.
+   * port's input carries in bits 16-23: a driving game's, one with a `wheel`.
    */
   steers(port) {
-    return Boolean(this.#routing.wheel[port]);
+    return Boolean(this.wheel) && port >= 0 && port < this.inputs.length;
   }
 
   #m;
@@ -146,7 +157,7 @@ export class Core {
   #slotSize = 0;
   #pixelFormat = PIXEL_FORMAT.RGB1555;
   #rotation = 0; // quarter turns counter-clockwise, for vertical games like Pac-Man
-  #routing = { sharedCoin: false, secondStart: undefined, pedals: [], wheel: [] };
+  #routing = { sharedCoin: false, secondStart: undefined, pedals: [] };
   /** Player 1's button names from the core's descriptors, for the RetroPad and for a lightgun. */
   #padNames = new Map();
   #gunNames = new Map();
@@ -421,19 +432,14 @@ export class Core {
   }
 
   /**
-   * A driving game's arrows, by what they do there (controller-routing.js): Up and Down take
-   * the pedals' names (Out Run's "Accelerate" and "Brake"), and Left and Right turn the wheel,
-   * so the help card lists them as Daytona USA's are.
+   * An FBNeo driving game's Up and Down, by what they do there (controller-routing.js): they take
+   * the pedals' names (Out Run's "Accelerate" and "Brake"), so the help card lists them so.
    */
   #namePedals() {
     const names = this.#padNames;
     if (this.#routing.pedals[0]) {
       if (names.has(PAD.R2)) names.set(PAD.UP, names.get(PAD.R2));
       if (names.has(PAD.L2)) names.set(PAD.DOWN, names.get(PAD.L2));
-    }
-    if (this.#routing.wheel[0]) {
-      names.set(PAD.LEFT, "Steer left");
-      names.set(PAD.RIGHT, "Steer right");
     }
   }
 
@@ -458,7 +464,6 @@ export class Core {
         this.#padNames = new Map();
         this.#gunNames = new Map();
         const descriptors = Array.from({ length: this.inputs.length }, () => new Map());
-        const analog = Array.from({ length: this.inputs.length }, () => new Map());
         for (let at = data; ; at += 20) {
           const description = m.getValue(at + 16, "i32");
           if (!description) break;
@@ -467,13 +472,11 @@ export class Core {
             const label = m.UTF8ToString(description);
             descriptors[port].set(id, label);
             if (port === 0) this.#padNames.set(id, label);
-          } else if (device === DEVICE.ANALOG && analog[port]) {
-            analog[port].set(`${index}/${id}`, m.UTF8ToString(description));
           } else if (device === DEVICE.LIGHTGUN && port === 0 && GUN_BUTTONS.has(id)) {
             this.#gunNames.set(GUN_BUTTONS.get(id), m.UTF8ToString(description));
           }
         }
-        this.#routing = controllerRouting(descriptors, analog);
+        this.#routing = controllerRouting(descriptors);
         this.#namePedals();
         return 1;
       }
@@ -522,14 +525,16 @@ export class Core {
    * game's gun (MAME asks every frame, for every port) is where the port aims, from the high 16
    * bits, with GUN_BUTTONS for its buttons; as a pointer (MAME's "touchscreen" lightgun mode)
    * the trigger is a press, the pedal a second finger. A driving game's wheel (steers) is the
-   * left stick's X, from bits 16-23 (wheel.js), and its arrows are only that wheel.
+   * left stick's X, from bits 16-23 (wheel.js), and its arrows are only that wheel: never the
+   * core's own Left and Right, FBNeo's "fake digital" full lock at once or MAME's key ramp.
    */
   #inputState(port, device, index, id) {
     if (device === DEVICE.JOYPAD) {
+      if (this.steers(port) && (id === PAD.LEFT || id === PAD.RIGHT)) return 0;
       return id < 16 ? routedButton(this.inputs, port, id, this.#routing, this.turns) : 0;
     }
     if (device === DEVICE.ANALOG) {
-      return index === 0 && id === 0 && this.steers(port) ? wheelAxis(wheelIn(this.inputs[port])) : 0;
+      return index === 0 && id === 0 && this.steers(port) ? wheelAxis(wheelIn(this.inputs[port]), this.wheel.span) : 0;
     }
     if (!this.gun || port >= this.inputs.length) return 0;
     const input = this.inputs[port];

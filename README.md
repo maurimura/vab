@@ -55,9 +55,11 @@ players each play their own screen and gun, linked (see [Online play](#online-pl
 to press E watches.
 
 Cruis'n USA (Midway V-Unit, 1994; MAME's `crusnusa41`, v4.1) is one player's: the next to press
-E watches. The arrows drive, as at Daytona USA: Left and Right turn the wheel (it turns for as
-long as one is held, to full lock in under half a second, and comes back to the middle when let
-go: MAME's own handling of a wheel on keys), Up is the gas and Down the brake. Z and X shift down
+E watches. The arrows drive, as at Daytona USA: Left and Right turn a steering wheel as at Out
+Run (a tap barely turns it, a hold takes it to full lock in 0.6 s, and let go it's back in the
+middle in 0.1 s; `/wheel` in the chat tunes that: see
+[Steering with the arrows](#steering-with-the-arrows-out-run-cruisn-usa)), Up is the gas and
+Down the brake (MAME's own handling of a pedal on keys, 0.9 s to the floor). Z and X shift down
 and up, which matters with the manual transmission the game offers before each race (the
 automatic is the default); A, S and D are its three views and C the radio. Its menus are "turn
 to select, step to choose": Left and Right, then Up. The game starts from a start-up state with
@@ -278,8 +280,9 @@ link is set at power-on, for now.
 A player's input for a frame, what GGRS sends and confirms and the watchers get, is 32 bits: the
 RetroPad's buttons in the low 16 (bit `1 << id`, ids from libretro.h), and at a lightgun game
 where the gun points in the high 16, 8 bits across the screen (0 its left edge, 255 its right)
-and 8 down (0 the top); at a driving game (Out Run) bits 16-23 are where its wheel is turned, a
-signed byte, which the worker works out from the player's arrows (see [Out Run](#out-run)).
+and 8 down (0 the top); at a driving game (Out Run, Cruis'n USA) bits 16-23 are where its wheel
+is turned, a signed byte, which the worker works out from the player's arrows (see
+[Steering with the arrows](#steering-with-the-arrows-out-run-cruisn-usa)).
 Other games leave those 0. The emulator worker answers the core's RetroPad from the low half
 and, at a lightgun game only, its lightgun from both, at a driving game its wheel from bits 16-23
 (`web/emulator/libretro.js`).
@@ -368,17 +371,10 @@ It's one player (`players: 1`): the next to press E at its cabinet watches. The 
 pick a song and presses Start (the radio starts the race by itself after half a minute or so),
 then drives as at Daytona USA: Up accelerates, Down brakes, Left and Right steer, and Z shifts
 between low and high gear (a toggle: the L or H in the bottom right corner). The help card lists
-them so. FBNeo puts the pedals on R2 and L2, which no key presses, and the wheel on the analog
-stick, a d-pad turning it to full lock at once: a second of that and the car is off the road.
-So at an FBNeo driving game, one whose controls (as the core names them) have the pedals on R2
-and L2 and nothing on Up or Down, `web/emulator/controller-routing.js` has Up and Down press the
-pedals, and the arrows turn a wheel (`web/emulator/wheel.js`): a step a frame toward the arrow
-held, full lock in 0.3 s, back to the middle as fast once let go, straight to the middle when
-the other arrow goes down, as Cannonball (Out Run's engine, ported) turns its wheel from keys.
-The worker turns it as it samples the player's keys, once a frame, and the wheel goes out in the
-input (bits 16-23), so a watcher's machine turns the game's wheel just as the player's did. The
-game sees nothing in the first third of the stick (FBNeo's dead zone and the driver's) and is at
-full lock from 72%, so `libretro.js` spreads the wheel over that span.
+them so. FBNeo puts the pedals on R2 and L2, which no key presses, so at an FBNeo driving game,
+one whose controls (as the core names them) have the pedals on R2 and L2 and nothing on Up or
+Down, `web/emulator/controller-routing.js` has Up and Down press the pedals. The wheel is the
+bar's own, below.
 
 A frame takes 1.35 ms in Node and 1.4 ms in Chrome on an M-series Mac (p50, drawn and with
 sound), and the worker posts 60 frames a second, 16.7 ms apart (p99 under 23 ms), to the player
@@ -390,6 +386,65 @@ checks its states with the re-runs drawn, and `PLAYERS=1 node emulator/netplay-c
 its stream to a watcher. FBNeo toggles the gear when the shifter input differs from the frame
 before's, which its states left out (`emulator/patches/burn-shift-state.patch`). Its cabinet skin
 is still to come: it stands in a plain cabinet next to Daytona USA's in `assets/maps/bar.ron`.
+
+### Steering with the arrows (Out Run, Cruis'n USA)
+
+A driving cabinet has a wheel, a keyboard two arrows, and the cores' own answers to arrows are
+far too quick for a tap: FBNeo's "fake digital" Left and Right put Out Run's wheel at full lock
+at once, and MAME's key ramp took Cruis'n USA's to full lock in 0.4 s, so a 0.1 s tap had the
+car more than a car width across the road within a second (below). So at a game with a `wheel`
+in `assets/games.ron` the arrows turn a wheel of the bar's own (`web/emulator/wheel.js`), once
+a frame, as the worker samples the player's keys:
+
+- held, an arrow turns it toward its side along a curve: `lock` seconds from the middle to full
+  lock, at f^`curve` of full lock after a fraction f of that time (1 turns evenly; 2 barely
+  turns for a tap, a quarter of the way at half the time, and speeds up toward the lock), going
+  on from wherever the wheel is;
+- let go (or both held), it comes back to the middle evenly, from full lock in `back` seconds;
+- the other arrow brings it straight to the middle and on from there, as Cannonball (Out Run's
+  engine, ported) turns its wheel from keys.
+
+The wheel goes out in the input (bits 16-23, a signed byte, -127 to 127), so a watcher's machine
+turns the game's wheel just as the player's did, and `libretro.js` answers the core's analog
+stick (left X) with it and never hands the core the arrows themselves. `span` is where on the
+stick (0 to 32767 each way) the game's wheel turns, the whole stick unless said: Out Run's FBNeo
+core sees nothing in the first third (FBNeo's dead zone and the driver's) and is at full lock
+from 72%, so its wheel is spread over (10600, 23500), every step of it a turn of the game's
+wheel; MAME reads the whole stick one to one onto Cruis'n USA's wheel (0x10 to 0xf0,
+[mame/README.md](mame/README.md#inputs)). Every machine has to read the wheel the same way, so
+`span` is `assets/games.ron`'s alone.
+
+| game | `lock` | `back` | `curve` | `span` |
+| --- | --- | --- | --- | --- |
+| Out Run | 0.3 s | 0.3 s | 1 | (10600, 23500) |
+| Cruis'n USA | 0.6 s | 0.1 s | 2 | the whole stick |
+
+Out Run's wheel turns as it did, 7 of 127 a frame. Cruis'n USA's, measured in Node from a race
+at 121 mph, Right held, against the gas alone (the car's place across the road, in the game's
+units: its wheels are 518 apart):
+
+| Right held | MAME's key ramp, before: 0.5 s, 1 s later | now: 0.5 s, 1 s later |
+| --- | --- | --- |
+| 6 frames (0.1 s) | 213, 598 | 0, 0 |
+| 15 frames (0.26 s) | 571, 2168 | 5, 93 |
+| 30 frames (0.52 s) | 567, 2671 | 110, 1589 |
+
+The game itself ignores the first sixth of its wheel's travel (its reading stays put up to
+MAME's 0x80 ± 18, the stick at ±5200, wheel ±20 of 127), is at full lock from about 88% (the
+stick at ±28900), and its reading follows the wheel over a few frames (0.22 s from the middle to
+full lock when the wheel jumps there): over the whole stick, a hold turns nothing for its first
+0.18 s. `span:
+(5200, 28900)` would put the curve where the game turns (a 6-frame tap then moves the car 151 in
+a second, a 30-frame hold 2220).
+
+`/wheel` in the chat, while driving, shows the wheel's numbers, and with any of them
+(`/wheel lock=0.5 back=0.15 curve=1.5`) turns it so from the next frame: at this player's
+machine only (the others get the wheel already turned, in the input, so nothing online can drift
+apart), and at that game until the page reloads. Its answer ends with the game's line for
+`assets/games.ron`. To find a game's numbers: sit at it, drive a few bends, change one number at
+a time (a tap should nudge the car over, a hold take a bend, letting go straighten it as fast as
+the game wants), then paste the last answer's `wheel: Some(...)` over the game's in
+`assets/games.ron`.
 
 ## Voice
 
@@ -461,7 +516,7 @@ the stream against fresh states from player 1 every 1.5 s (needs `make netplay`)
 
 ```sh
 PLAYERS=4 node emulator/netplay-check.mjs emulator/dist/konami/fbneo.mjs $HOME/Downloads/ssriders.zip emulator/dist/ssriders.state
-PLAYERS=1 node emulator/netplay-check.mjs emulator/dist/outrun/fbneo.mjs $HOME/Downloads/outrun.zip emulator/dist/outrun.state
+PLAYERS=1 WHEEL=1 node emulator/netplay-check.mjs emulator/dist/outrun/fbneo.mjs $HOME/Downloads/outrun.zip emulator/dist/outrun.state
 ```
 
 ## Sizes

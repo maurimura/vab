@@ -266,7 +266,8 @@ the shifter sequential:
 
 | RetroPad id | the bar's key | MAME | descriptor (help card) |
 |---|---|---|---|
-| 6, 7 Left, Right | Left, Right | the wheel: `WHEEL`'s decrement / increment | "Steer left", "Steer right" |
+| left stick X | Left, Right, through the bar's wheel | the wheel, `WHEEL` (absolute) | none |
+| 6, 7 Left, Right | (never pressed: the wheel above) | `WHEEL`'s decrement / increment | "Steer left", "Steer right" |
 | 4 Up | Up | the gas: `ACCEL`'s increment | "Accelerate" |
 | 5 Down | Down | the brake: `BRAKE`'s increment | "Brake" |
 | 0 B | Z | Button 5, "Shift Down" (`FAKE`) | "Shift Down" |
@@ -278,11 +279,29 @@ the shifter sequential:
 | 3 Start | 1 | Start 1 | "Start" |
 | 2 Select | 5 | Coin 1 | "Coin" |
 
-- The arrows are MAME's own key handling of an analog control, as the arrow keys on a keyboard:
-  each frame one is held the control moves by its key delta at its sensitivity (20 x 25%, 5 of
-  the ADC's 256 steps), and when let go it goes back the same way, so the wheel takes ~22 frames
-  (0.4 s) from the centre to full lock and back, the gas ~51 frames (0.9 s) to the floor. The d-pad
-  is bound only for this game (the fork's `retro_driving`), so other games' d-pads are as before.
+- The wheel is the bar's own (`wheel` in `assets/games.ron`, `web/emulator/wheel.js`: a tap
+  barely turns it, a hold to full lock in 0.6 s; README.md, "Steering with the arrows"), handed
+  to MAME as the RetroPad's left stick X: the fork binds that absolute axis to IPT_PADDLE's
+  standard sequence (`assignmenthelper.cpp`, `add_directional_assignments`), and
+  `analog_field::frame_update` (`src/emu/ioport.cpp`) takes an absolute value whenever it
+  changes, with the inverse of the field's sensitivity, so the paddle follows the stick one to
+  one: -0x7fff (wheel -127) is 0x10, 0 is 0x80, 0x7fff is 0xf0, the ends the start-up state's
+  calibration was made at. Taken so, the field is no longer moving digitally and never
+  autocentres; the wheel comes back by itself. The frontend answers 0 for the RetroPad's Left and
+  Right at a game with a wheel, so `patches/0007`'s d-pad bindings for the paddle (its
+  decrement and increment, MAME's key ramp: 5 of the ADC's 256 steps a frame, ~22 frames, 0.4 s,
+  to full lock and back) never fire in the bar: unused, and harmless. `crusnusa-state.mjs` and
+  `bench.mjs` set no wheel and still steer that way (the calibration's ends, a touch of the
+  wheel).
+- The game itself (measured, RAM 0x32320 its reading of the wheel, 125 straight ahead) ignores
+  the paddle within 0x80 ± 18 (the stick within ±5200), is at full lock from about 0x80 ± 99
+  (±28900), and its reading follows the paddle over a few frames (0.22 s from the middle to full
+  lock when the paddle jumps there).
+- Up and Down are MAME's own key handling of an analog control, as the arrow keys on a keyboard:
+  each frame one is held the pedal moves by its key delta at its sensitivity (20 x 25%, 5 of the
+  ADC's 256 steps), ~51 frames (0.9 s) to the floor, and back up the same way when let go. The
+  d-pad is bound only for this game (the fork's `retro_driving`), so other games' d-pads are as
+  before.
 - The shifter is "Sequential" (`patches/0007`; MAME's default was a button per gear): Shift Up
   from neutral is 1st, then 2nd, 3rd, 4th, Shift Down back to neutral. It matters only with the
   game's manual transmission (it asks "automatic or manual" at each race; the gears show
