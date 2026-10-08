@@ -1,0 +1,19 @@
+# patches/0004's repro (the recomp's scripts/inputs format, the shim's script0 option): two
+# linked cabinets, only cabinet 1 (script0) starts a game: Start five times from frame 14, 300
+# frames apart, then the accelerator, a little steering. Cabinet 2 waits out its challenger
+# countdown, goes back to its attract mode, and at frame 2001 its display list runs past the
+# geometrizer's 32768 polygons (without the patch: "SEGA 3D: Max polygon limit exceeded", the
+# machine stops). Run with the twin presets (nvram/2):
+#   DAYTONA_OPTIONS="nvram_dir=$PWD/daytona/nvram/2,script0=$PWD/daytona/patches/0004-repro-inputs.txt" \
+#     daytona/.cache/native/bench ~/Downloads/daytona.zip 4200 0 2
+frames 4200
+0-4199 gear1=1
+14-30 start=1
+314-330 start=1
+614-630 start=1
+914-930 start=1
+1214-1230 start=1
+1510-4199 accel=0xe0
+1604-1618 steer=0xe0
+1733-1747 steer=0x20
+1868-1882 steer=0xe0

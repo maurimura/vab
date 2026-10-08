@@ -1,5 +1,6 @@
-// Minimal libretro frontend for the FBNeo Emscripten cores (emulator/build.sh).
-// Runs wherever the core runs: the Web Worker (worker.js) or Node.
+// Minimal libretro frontend for the Emscripten cores: FBNeo's (emulator/build.sh), Supermodel
+// (supermodel/) and Daytona USA's (daytona/). Runs wherever the core runs: the Web Worker
+// (worker.js) or Node.
 
 import { controllerRouting, routedButton } from './controller-routing.js';
 
@@ -55,6 +56,13 @@ export class Core {
   buttons = new Map();
 
   #m;
+  /** The core's own settings function, `_<core>_set(key, value)` (C strings), if it has one. */
+  #set;
+  /**
+   * The core's link exports, `_<core>_link_*`, if it has a link the frontend carries (Daytona
+   * USA's star: see linkOut), with a block-sized buffer in its memory for them.
+   */
+  #link;
   #slots = [];
   #slotSize = 0;
   #pixelFormat = PIXEL_FORMAT.RGB1555;
@@ -77,6 +85,15 @@ export class Core {
 
   constructor(module, { onFrame, onAudio, onLog = () => {} }) {
     const m = (this.#m = module);
+    // Supermodel's _supermodel_set, Daytona's _daytona_set; FBNeo has none.
+    this.#set = Object.keys(m).find((name) => /^_[a-z0-9]+_set$/.test(name) && typeof m[name] === "function");
+    const linkOut = Object.keys(m).find((name) => /^_[a-z0-9]+_link_out$/.test(name) && typeof m[name] === "function");
+    if (linkOut) {
+      const prefix = linkOut.slice(0, -"out".length);
+      const size = m[`${prefix}block_size`]?.() ?? 0;
+      const [linkIn, absent, status] = ["in", "absent", "status"].map((name) => m[`${prefix}${name}`]);
+      if (size > 0 && linkIn && absent) this.#link = { out: m[linkOut], in: linkIn, absent, status, size, buffer: m._malloc(size) };
+    }
     this.#onFrame = onFrame;
     this.#onAudio = onAudio;
     this.#onLog = onLog;
@@ -92,6 +109,58 @@ export class Core {
     m._retro_set_input_state(m.addFunction((port, device, _index, id) =>
       device === DEVICE_JOYPAD ? routedButton(this.inputs, port, id, this.#routing, this.turns) : 0, "iiiii"));
     m._retro_init();
+  }
+
+  /**
+   * Sets one of the core's own settings through the `_<core>_set` its module exports, e.g.
+   * Daytona USA's "cabinets" (before the game loads) or "view" (any time). False when the core
+   * has no settings (FBNeo); what a core does with a key it doesn't know is up to it.
+   */
+  setOption(key, value) {
+    if (!this.#set) return false;
+    this.#m[this.#set](this.#cString(key), this.#cString(value));
+    return true;
+  }
+
+  /**
+   * A link the frontend carries between machines (Daytona USA's cabinets on a star, each in its
+   * own browser): the size of a cabinet's block of link data in bytes, 0 when the core has no
+   * such link. Each frame, right after run(), linkOut() gives this cabinet's block when it
+   * changed, for every other cabinet's linkIn(); see web/emulator/worker.js.
+   */
+  get linkBlockSize() {
+    return this.#link?.size ?? 0;
+  }
+
+  /** This cabinet's block (a copy) if it changed since the last call, else undefined. */
+  linkOut() {
+    const link = this.#link;
+    if (!link?.out(link.buffer)) return undefined;
+    return this.#m.HEAPU8.slice(link.buffer, link.buffer + link.size);
+  }
+
+  /** The latest block from the cabinet at `seat`, for this one to see from the next run(). */
+  linkIn(seat, block) {
+    const link = this.#link;
+    if (!link || block.length !== link.size) return;
+    this.#m.HEAPU8.set(block, link.buffer);
+    link.in(seat, link.buffer, link.size);
+  }
+
+  /** Nobody is at `seat` (anymore): the cabinet there is off the link. */
+  linkAbsent(seat) {
+    this.#link?.absent(seat);
+  }
+
+  /** What the core says about its link, the seats on it (its JSON), or undefined. */
+  linkStatus() {
+    const status = this.#link?.status;
+    if (!status) return undefined;
+    try {
+      return JSON.parse(this.#m.UTF8ToString(status()));
+    } catch {
+      return undefined;
+    }
   }
 
   /** Puts a file next to the ROMs, e.g. a BIOS set like neogeo.zip. */

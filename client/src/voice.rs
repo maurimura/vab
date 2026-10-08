@@ -25,12 +25,16 @@ const TALKING: Color = Color::srgb(0.25, 0.85, 0.4);
 const MUTED: Color = Color::srgb(0.95, 0.4, 0.4);
 const DIM: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
 const HOVERED: Color = Color::srgba(1.0, 1.0, 1.0, 0.12);
-/// Shift with one of these mutes player 1-4.
-const SEAT_KEYS: [KeyCode; 4] = [
+/// Shift with one of these mutes player 1-8 (8 at an arcade game's linked cabinets).
+const SEAT_KEYS: [KeyCode; 8] = [
     KeyCode::Digit1,
     KeyCode::Digit2,
     KeyCode::Digit3,
     KeyCode::Digit4,
+    KeyCode::Digit5,
+    KeyCode::Digit6,
+    KeyCode::Digit7,
+    KeyCode::Digit8,
 ];
 
 /// Someone at the cabinet, as the page says.
@@ -173,10 +177,17 @@ fn show_people(
     } else {
         Visibility::Inherited
     };
+    let last = people
+        .iter()
+        .map(|person| person.seat + 1)
+        .max()
+        .unwrap_or(4)
+        .max(4);
+    let keys = format!("Click or Shift+1-{last} mutes, M your mic");
     let how = if touch.is_on() {
         "Tap someone to mute them, yourself for your mic"
     } else {
-        "Click or Shift+1-4 mutes, M your mic"
+        keys.as_str()
     };
     commands
         .entity(panel)

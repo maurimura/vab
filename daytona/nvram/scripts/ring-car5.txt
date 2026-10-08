@@ -1,0 +1,67 @@
+# Settings preset 8/4: a ring of up to 8 linked cabinets, LINK ID SLAVE, CAR NUMBER 5, COUNTRY
+# USA, FREE PLAY; all else factory (as 2/0 and 2/1, so every cabinet of the ring matches but for
+# LINK ID and CAR NUMBER). 8/0 is twin-master.txt (MASTER, car 1), 8/1 twin-slave.txt (car 2).
+# The recomp's input script format (scripts/inputs, m2run --inputs): "frames N", then
+# "<from>-<to> name=value"; frames count from power-on. The test menus (Revision A): GREEN
+# (vr4) cursor up, RED (vr1) cursor down, YELLOW (vr3) value up, BLUE (vr2) value down, START
+# chooses. TEST at 1200 opens TEST MODE with the cursor on EXIT. GAME SYSTEM: LINK ID (MASTER,
+# SLAVE, SINGLE), CAR NUMBER (1-8), CABINET, COUNTRY, ..., EXIT. As twin-slave.txt, but CAR
+# NUMBER is pressed up 4 times (30 frames apart) and everything after it is 200 frames later.
+# Checked with make-nvram.mjs explore (screens every 100 frames).
+frames 5000
+1200-1209 test=1
+# TEST MODE: up 9 to GAME SYSTEM, choose; up 8 from its EXIT to LINK ID.
+1400-1405 vr4=1
+1430-1435 vr4=1
+1460-1465 vr4=1
+1490-1495 vr4=1
+1520-1525 vr4=1
+1550-1555 vr4=1
+1580-1585 vr4=1
+1610-1615 vr4=1
+1640-1645 vr4=1
+1700-1705 start=1
+1800-1805 vr4=1
+1830-1835 vr4=1
+1860-1865 vr4=1
+1890-1895 vr4=1
+1920-1925 vr4=1
+1950-1955 vr4=1
+1980-1985 vr4=1
+2010-2015 vr4=1
+# LINK ID: one value up (SLAVE); down to CAR NUMBER, 4 values up (car 5).
+2100-2105 vr3=1
+2200-2205 vr1=1
+2300-2305 vr3=1
+2330-2335 vr3=1
+2360-2365 vr3=1
+2390-2395 vr3=1
+# Down 2 to COUNTRY, YELLOW twice (JPN -> EXPORT -> USA: English text), then down 5 to EXIT.
+2600-2605 vr1=1
+2630-2635 vr1=1
+2660-2665 vr3=1
+2690-2695 vr3=1
+2720-2725 vr1=1
+2750-2755 vr1=1
+2780-2785 vr1=1
+2810-2815 vr1=1
+2840-2845 vr1=1
+2900-2905 start=1
+# TEST MODE (cursor on GAME SYSTEM): down to COIN ASSIGNMENT, choose; up to COIN/CREDIT
+# SETTING, one value down (#1 -> #27 FREE PLAY), down to EXIT, choose.
+3050-3055 vr1=1
+3150-3155 start=1
+3250-3255 vr4=1
+3350-3355 vr2=1
+3450-3455 vr1=1
+3550-3555 start=1
+# TEST MODE (cursor on COIN ASSIGNMENT): down 8 to EXIT, choose: the game starts again.
+3650-3655 vr1=1
+3680-3685 vr1=1
+3710-3715 vr1=1
+3740-3745 vr1=1
+3770-3775 vr1=1
+3800-3805 vr1=1
+3830-3835 vr1=1
+3860-3865 vr1=1
+4000-4005 start=1

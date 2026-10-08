@@ -1,0 +1,33 @@
+diff --git a/src/runtime/m2_board.cpp b/src/runtime/m2_board.cpp
+index 9084024..4b56be4 100644
+--- a/src/runtime/m2_board.cpp
++++ b/src/runtime/m2_board.cpp
+@@ -229,7 +229,7 @@ void M2Board::set_wide_margin(int pixels) {
+ }
+ 
+ void M2Board::vblank_end() {
+-    if (frame_skip_ && frame_ % uint64_t(frame_skip_ + 1) != 0) { // draw mode: keep the last picture
++    if (!draw_ || (frame_skip_ && frame_ % uint64_t(frame_skip_ + 1) != 0)) { // not drawn, or draw mode: keep the last picture
+         ++frame_;
+         return;
+     }
+diff --git a/src/runtime/m2_board.h b/src/runtime/m2_board.h
+index 0d94aac..899a8ca 100644
+--- a/src/runtime/m2_board.h
++++ b/src/runtime/m2_board.h
+@@ -107,6 +107,15 @@ public:
+ #else
+     void set_frame_skip(int skip) { frame_skip_ = skip < 0 ? 0 : skip > 2 ? 2 : skip; }
+ #endif
++    // Drawing on or off (the host: a cabinet nobody is watching). Off, vblank_end composes
++    // nothing and the screen keeps its last picture; the game, the geometrizer and everything
++    // the video caches compare against run as ever, so the first frame drawn again is composed
++    // whole (as after a frame the draw mode skips).
++    void set_draw(bool on) { draw_ = on; }
++    bool draws() const { return draw_; }
++private:
++    bool draw_ = true;
++public:
+     IoBoard &io() { return io_; }
+     TgpBoard &tgp() { return tgp_; }
+     // Bytes sent to the sound board since the last take.

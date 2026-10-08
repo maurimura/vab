@@ -3,7 +3,8 @@
 //! page puts them on `window.vab` (web/index.html):
 //!
 //! - `vab.state()`: what the game is doing, as JSON: the mode, where the player stands, and
-//!   what each game reports of itself (`report`), refreshed every frame.
+//!   what each game reports of itself (`report`; a cabinet's game, its status line), refreshed
+//!   every frame.
 //! - `vab.goTo(name)`: puts the player next to the first object whose tile ends with `name`
 //!   ("shuffleboard", "pool_table", "air_hockey") or whose cabinet runs the game `name`, for E
 //!   to use, instead of walking there, which a headless browser's few frames a second make

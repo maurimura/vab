@@ -29,7 +29,7 @@ const IN_THE_BAR: [(&str, &str); 8] = [
     ("E", "Play the cabinet or table you're next to"),
     ("F", "Watch the game being played there"),
     ("M", "Your microphone, playing with others"),
-    ("Shift+1-4", "Mute player 1-4 (or click them)"),
+    ("Shift+1-8", "Mute player 1-8 (or click them)"),
     ("Y", "Chat (Enter sends)"),
     ("/name Mauri", "Set your name, in the chat"),
     ("/help", "These controls, in the chat"),
@@ -361,10 +361,21 @@ fn list_buttons(
                 let join = format!("No Start: coin, then {}", key_name(key));
                 row(card, "", &join, 70.0, 13.0);
             }
-            if KEYS
+            // The arrows move, unless the game names all four for something else (Daytona
+            // USA: steer, accelerate, brake): then each gets a row.
+            let arrows: Vec<_> = KEYS
                 .into_iter()
-                .any(|(key, id)| arrow(key) && named(id).is_some())
-            {
+                .filter(|(key, _)| arrow(*key))
+                .filter_map(|(key, id)| Some((key, named(id)?)))
+                .collect();
+            let directions = arrows
+                .iter()
+                .all(|(key, name)| name.eq_ignore_ascii_case(key_name(*key)));
+            if arrows.len() == 4 && !directions {
+                for (key, name) in arrows {
+                    row(card, key_name(key), name, 70.0, 13.0);
+                }
+            } else if !arrows.is_empty() {
                 row(card, "Arrows", "Move", 70.0, 13.0);
             }
             for (key, id) in KEYS
@@ -401,6 +412,10 @@ fn show_card(
 /// The label on a key the game uses.
 fn key_name(key: KeyCode) -> &'static str {
     match key {
+        KeyCode::ArrowUp => "Up",
+        KeyCode::ArrowDown => "Down",
+        KeyCode::ArrowLeft => "Left",
+        KeyCode::ArrowRight => "Right",
         KeyCode::Digit1 => "1",
         KeyCode::Digit5 => "5",
         KeyCode::KeyA => "A",

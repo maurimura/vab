@@ -53,6 +53,7 @@ as long as its pixel ratio is left at the computer's own (an emulated one gets t
 | `server/` | Worker + `Room` Durable Object (WebSocket Hibernation) | `workers-rs` template, `wrangler` |
 | `netplay/` | Rollback for two players at a cabinet (GGRS), run by the emulator worker | `cargo` + `wasm-bindgen` → `web/netplay/` |
 | `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
+| `supermodel/`, `daytona/` | The Sega cores, each an Emscripten ES module behind the libretro API: Supermodel for the Model 3 (Virtua Striker 2) and Daytona USA's Model 2 (see [Daytona USA](#daytona-usa)) | their `build.sh` → `supermodel/dist/`, `daytona/dist/` |
 | `hockey/` | Air hockey physics and the bot, without Bevy, tested natively (`cargo test -p hockey`) | |
 | `darts/` | Darts scoring, a game of 301 and the throwing hand's sway, without Bevy, tested natively (`cargo test -p darts`) | |
 | `shuffleboard/` | Table shuffleboard physics and scoring, without Bevy, tested natively (`cargo test -p shuffleboard`) | |
@@ -63,7 +64,7 @@ as long as its pixel ratio is left at the computer's own (an emulated one gets t
 | `assets/` | Tile art (`tiles/`) and maps (`maps/`) | |
 | `web/` | Static assets: `index.html`, the room connection (`room.js`), Bevy's `pkg/`, the emulator worker + libretro frontend in `emulator/` | |
 
-Routes: static files from `web/`, `GET /ws/:room` (WebSocket to that room's Durable Object), `GET /ice` (WebRTC servers), `GET /fbneo/<core>/fbneo.{mjs,wasm}` (FBNeo cores) and `GET /roms/<file>` (ROM sets), both from R2, and `GET /assets/maps/bar.ron` (the bar's map: the one last saved from the web editor, from R2, or the one in `web/`; `PUT` saves it, from the editor Worker only).
+Routes: static files from `web/`, `GET /ws/:room` (WebSocket to that room's Durable Object), `GET /ice` (WebRTC servers), `GET /fbneo/<core>/fbneo.{mjs,wasm}` (FBNeo cores), `GET /supermodel/supermodel.{mjs,wasm}` and `GET /daytona/daytona.{mjs,wasm}` (the Sega cores) and `GET /roms/<file>` (ROM sets), all from R2, and `GET /assets/maps/bar.ron` (the bar's map: the one last saved from the web editor, from R2, or the one in `web/`; `PUT` saves it, from the editor Worker only).
 
 ## Setup
 
@@ -163,6 +164,7 @@ Cores, ROMs and start-up states live in R2 and go up by hand, when they change:
 ```sh
 cd server && npx wrangler r2 bucket create vab && cd ..   # once
 make emulator-remote                                      # cores
+make supermodel-remote daytona-remote                     # the Sega cores, once built (make supermodel, make daytona)
 make upload-rom R2_TARGET=--remote ROM=$HOME/Downloads/mk2.zip   # each ROM, BIOS and .state
 make deploy                                               # or merge to main
 make editor-deploy                                        # the web editor, likewise
@@ -210,22 +212,89 @@ node emulator/rollback-check.mjs emulator/dist/midway/fbneo.mjs $HOME/Downloads/
 ## Online play
 
 Players take a cabinet's free seats in order: as many as its game takes (`players` in
-`assets/games.ron`, 2 unless said, up to 4 as in Sunset Riders), each on their seat's controls.
+`assets/games.ron`, 2 unless said, up to 4 as in Sunset Riders, 8 at Daytona USA's linked
+cabinets, which play another way: see [Daytona USA](#daytona-usa)), each on their seat's controls.
 The first plays alone right away. Whoever sits down later joins that game as it is: the lowest
 seat among those playing captures its machine and hands it to everyone through the room, and all
 of them start a new GGRS session (`netplay/`) from it. Someone leaving works the same way. Each
 machine guesses the others' input and re-runs frames when the real one arrives; the worker picks
 the rollback limit from how fast the machine runs the game (Mortal Kombat II gets 3 frames and 3
 frames of input delay on an M-series Mac, the rest 8 and 2). GGRS compares a hash of the game's
-RAM every 60 frames and reports any desync. A `lockstep` game (Virtua Striker 2, whose state is
-too big to save every frame) never guesses: it runs a frame once everyone's input for it is in,
-behind an input delay picked from the round trip and then tuned to how late the others' inputs
-actually arrive. The worker runs one frame per slot on a precise clock and sends each input as
-soon as it exists, so both machines run the same slot and swap one input per frame.
+RAM every 60 frames and reports any desync. A `lockstep` game (Virtua Striker 2, whose Sega core's
+state is too big to save every frame) never guesses: it runs a frame once
+everyone's input for it is in, behind an input delay picked from the round trip and then tuned
+to how late the others' inputs actually arrive. The worker runs one frame per slot on a precise
+clock, at the game's own rate, and sends each input as soon as it exists, so both machines run
+the same slot and swap one input per frame.
 
 Game packets go through the room's WebSocket at first and straight between the browsers over
 WebRTC once that connects (`web/room.js`). Turn-based games (`turns`) use player 1's controls for
 both players, like an upright cabinet.
+
+## Daytona USA
+
+Daytona USA (Sega Model 2, 1994) runs on its own core, `daytona/`, built and put in the local
+bucket with `make daytona` (`make daytona-remote` for the site's), served from R2 at
+`/daytona/`, with MAME's `daytona` ROM set: `make upload-rom ROM=$HOME/Downloads/daytona.zip`
+(add `R2_TARGET=--remote` for the site), and its seat states (below): `make upload-daytona-states`.
+
+It is the bar's arcade mode (`arcade: true` in `assets/games.ron`): one cabinet in the bar seats
+up to 8, like an arcade's row of linked sit-downs, and every player's browser runs only their
+own cabinet (the core's `cabinets=1`, `link_topology=star` and `seat`, which the worker sets from
+the seat). Sitting down at seat k loads `/roms/daytona.seat<k>.state`: that cabinet (link id
+k + 1, car k + 1) with its link board up, in the linked attract mode, so nothing ever boots over
+the network, the fragile part (`daytona/ring-notes.md`). From then on the cabinet runs at the
+Model 2's own 57.524 Hz whoever comes and goes: no handover, no rollback, no lockstep, nobody
+waits for anybody (`web/emulator/worker.js`, `web/index.html`'s `Arcade`). After each frame the
+worker takes the cabinet's 448-byte block of link data (`_daytona_link_out`) and, when it
+changed, sends it to every other player seated there; before the next frame the newest block from
+each seat goes in (`_daytona_link_in`), and a seat whose player stands up goes off the link
+(`_daytona_link_absent`: their car leaves the track, and a race goes on to its end without
+them). The core turns the blocks into what each
+cabinet's link board would have heard on the arcade's cable, so the game's own rules do the
+rest: Start opens a circuit select with a 15-second count, anyone who presses Start before it
+runs out races too (POSITION n/2), the idle cabinets show WAITING FOR YOUR ENTRY meanwhile, and
+a Start after that opens a race of its own. The status line says how many cabinets are on the
+link and how far the farthest is.
+
+One thing the game leaves to us: someone who stands up after pressing Start but before the race
+begins leaves the others in that session waiting for them for good (WAITING FOR OTHER
+CHALLENGERS, no timeout). So each worker watches its own cabinet's mode in RAM (0x5010a0: 18 from
+its Start until its race, 3 to 11 in the attract mode, 16 while another's session takes entries,
+22 racing). A cabinet still at 18 37.5 s after its Start, someone having left meanwhile, is past
+anything the game takes when nobody leaves (32.4 s, with no choice made and every count run
+out), and goes back to its seat's state, the attract mode: "Race cancelled: a player left before
+the start". That's 30 to 32 s after the leaver stood up.
+
+The blocks go straight between the browsers: every two players at the cabinet have a WebRTC link
+(`web/room.js`, the lower seat offering, as at any cabinet: 28 links for 8 players, 7 each),
+data channels unordered and never resent (a lost block is replaced by the next, and an unchanged
+one goes out again every 60 frames anyway). Until a link connects, or if it never does (no TURN
+and strict NATs), the blocks for all such players go through the room as one message, which the
+room passes on to each (`SEVERAL` in `server/src/lib.rs`). A block is ~26 KB/s a peer.
+Measured with `daytona/harness/arcade-lab.mjs` (headless Chromes on one M-series Mac, the site
+from `wrangler dev`): with 3 or 4 players and a watcher, every cabinet runs at 57.5 frames a
+second and a block takes 0.4 ms from one page to another (p50; p99 4.3 ms), or 2.9 ms through
+the room (p99 94 ms, the Durable Object on a busy laptop). With 100 ms added to every send the
+game plays the same: the join window, a race of two, a late Start's race of its own. 8 players
+make 28 direct links, every cabinet taking ~360 blocks a second with all 7 others present, at
+50-53 frames a second only because one machine ran all 8 browsers.
+
+A watcher sees one player's cabinet at a time, the lowest seat's to start with; Left and Right go
+to the next. The watcher asks that player, whose worker streams them its cabinet's state with the
+blocks it had then, and then each frame's controls and the blocks that went in before it (as
+changes from the seat's last block: about a kilobyte and a half a second for two others), so the
+watcher's machine sees exactly what the player's did. Voice runs over the links as at any cabinet,
+7 others at most; Shift+1-8 mutes.
+
+The arrows steer, accelerate and brake, Z and X shift down and up, and A S D C are the view
+buttons: the help card lists them as the core names them. The worker paces frames at the rate
+the core reports, so its sound (834 or 835 samples a frame at 48 kHz) neither runs dry nor piles
+up. The core can also be the arcade's twin sit-down in one machine (`cabinets: 2` with a `view`,
+each player shown their own cabinet, played online in lockstep); the bar no longer uses that.
+Its cabinet skin is still to come: for now it stands in a plain cabinet next to Virtua Striker's
+in `assets/maps/bar.ron`, and in the editor a plain cabinet can be given the game.
+`daytona/harness/arcade-lab.mjs` tries the arcade mode end to end in headless Chromes.
 
 ## Voice
 
@@ -252,7 +321,9 @@ the players: the lowest seat playing sends them a state, then every player's inp
 once GGRS has confirmed it, so no rollback can change it. Inputs go out about ten times a second,
 to everyone watching through one message to the room (address 0), and each watcher keeps a few
 frames in hand so they play evenly. When the players change, the new session starts a new stream
-with a fresh state. Watchers cost the players nothing: their game never pauses for one.
+with a fresh state. Watchers cost the players nothing: their game never pauses for one. At Daytona
+USA's linked cabinets a watcher follows one player's cabinet, streamed by that player
+([Daytona USA](#daytona-usa)).
 
 The tables and the dartboard can be watched the same way (F, or E once both seats are taken),
 through the room, which passes a message sent to address 0 on to everyone watching the sender's

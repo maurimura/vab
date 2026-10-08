@@ -1,0 +1,120 @@
+<!doctype html>
+<!-- Play Daytona USA on the recomp core, in this page: keyboard in, picture and sound out,
+     paced at the board's 57.524 frames a second. The sound goes through the bar's own
+     AudioWorklet (web/emulator/audio.js) at 48 kHz, the core's own rate.
+       node daytona/harness/serve.mjs, then open
+       http://localhost:8790/daytona/harness/play.html?rom=daytona
+     ?rom=<set> is served from /roms/<set>.zip; &cabinets=1|2 (default 2, linked in the core);
+     &view=0|1 the cabinet shown first (V switches).
+     Cabinet 1 (the bar's keys): arrows steer / accelerate / brake, Z X shift down / up,
+       A S D C view buttons 1-4, 1 start, 5 coin.
+     Cabinet 2: J L steer, I accelerate, K brake, U O shift down / up, 7 8 9 0 view buttons,
+       2 start, 6 coin. V: show the other cabinet. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Daytona USA</title>
+<style>
+  body { margin: 0; background: #000; color: #ccc; font: 14px monospace; display: flex; flex-direction: column; align-items: center; min-height: 100vh }
+  canvas { image-rendering: pixelated; width: min(100vw, calc((100vh - 64px) * 4 / 3)); aspect-ratio: 4 / 3; background: #000 }
+  #hud { padding: 8px; white-space: pre; text-align: center }
+  #start { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #000c; font-size: 22px; cursor: pointer; text-align: center; white-space: pre-line }
+</style>
+</head>
+<body>
+<canvas id="screen" width="496" height="384"></canvas>
+<div id="hud">loading…</div>
+<div id="start">loading…</div>
+<script type="module">
+import { Core } from "/web/emulator/libretro.js";
+import createDaytona from "/daytona/dist/daytona.mjs";
+
+const params = new URLSearchParams(location.search);
+const rom = params.get("rom") ?? "daytona";
+const hud = document.getElementById("hud");
+const overlay = document.getElementById("start");
+const screen = document.getElementById("screen").getContext("2d");
+
+// Keyboard -> RetroPad button ids (libretro.h): [port, id].
+const B = 0, Y = 1, SELECT = 2, START = 3, UP = 4, DOWN = 5, LEFT = 6, RIGHT = 7, A = 8, X = 9, L = 10, R = 11;
+const KEYS = {
+  ArrowUp: [0, UP], ArrowDown: [0, DOWN], ArrowLeft: [0, LEFT], ArrowRight: [0, RIGHT],
+  KeyZ: [0, B], KeyX: [0, A], KeyA: [0, Y], KeyS: [0, X], KeyD: [0, L], KeyC: [0, R], Digit1: [0, START], Digit5: [0, SELECT],
+  KeyI: [1, UP], KeyK: [1, DOWN], KeyJ: [1, LEFT], KeyL: [1, RIGHT],
+  KeyU: [1, B], KeyO: [1, A], Digit7: [1, Y], Digit8: [1, X], Digit9: [1, L], Digit0: [1, R], Digit2: [1, START], Digit6: [1, SELECT],
+};
+const HELP = "Cabinet 1: arrows, Z X shift, A S D C views, 1 start, 5 coin · Cabinet 2: I J K L, U O shift, 7-0 views, 2 start, 6 coin · V: other cabinet";
+
+const fail = (what) => { overlay.textContent = `failed: ${what}`; overlay.style.color = "#f66"; };
+addEventListener("error", (e) => fail(e.message));
+addEventListener("unhandledrejection", (e) => fail(e.reason?.message ?? e.reason));
+overlay.textContent = "starting the emulator…";
+const module = await createDaytona({ canvas: new OffscreenCanvas(1, 1) }); // ignored, as in the worker
+const alloc = (text) => { const n = module.lengthBytesUTF8(text) + 1; const p = module._malloc(n); module.stringToUTF8(text, p, n); return p; };
+const set = (key, value) => module._daytona_set(alloc(key), alloc(String(value)));
+const cabinets = Number(params.get("cabinets") ?? 2);
+let view = Number(params.get("view") ?? 0);
+set("cabinets", cabinets);
+set("view", view);
+
+const audio = new AudioContext({ sampleRate: 48000 });
+await audio.audioWorklet.addModule("/web/emulator/audio.js");
+const speaker = new AudioWorkletNode(audio, "emulator-audio", { outputChannelCount: [2] });
+speaker.connect(audio.destination);
+const sound = new MessageChannel();
+speaker.port.postMessage(sound.port1, [sound.port1]);
+
+let picture;
+const errors = [];
+const core = new Core(module, {
+  onFrame(rgba, width, height) { picture = new ImageData(rgba, width, height); },
+  onAudio(samples) { sound.port2.postMessage(samples, [samples.buffer]); },
+  onLog(level, text) { if (level >= 2) console.warn(text); if (level >= 3) errors.push(text); },
+});
+overlay.textContent = `downloading ${rom}.zip…`;
+const response = await fetch(`/roms/${rom}.zip`);
+if (!response.ok) throw new Error(`/roms/${rom}.zip: ${response.status} (serve.mjs looks for it in ~/Downloads, or ROMS=<dir>)`);
+const bytes = new Uint8Array(await response.arrayBuffer());
+overlay.textContent = "loading the ROM set…";
+await new Promise((r) => setTimeout(r)); // let the overlay repaint before the load
+const av = core.loadGame(`${rom}.zip`, bytes);
+const FPS = av.fps;
+overlay.textContent = "click to start";
+
+addEventListener("keydown", (e) => {
+  if (e.code === "KeyV" && cabinets > 1) { view = 1 - view; set("view", view); e.preventDefault(); return; }
+  const k = KEYS[e.code];
+  if (k) { core.inputs[k[0]] |= 1 << k[1]; e.preventDefault(); }
+});
+addEventListener("keyup", (e) => { const k = KEYS[e.code]; if (k) { core.inputs[k[0]] &= ~(1 << k[1]); e.preventDefault(); } });
+
+overlay.addEventListener("click", () => {
+  overlay.remove();
+  audio.resume();
+  let next = performance.now();
+  let frames = 0, work = 0, since = performance.now();
+  const tick = (now) => {
+    if (now >= next) {
+      const start = performance.now();
+      core.run();
+      work += performance.now() - start;
+      frames++;
+      next += 1000 / FPS;
+      if (now - next > 100) next = now; // too far behind to catch up: just carry on
+      if (picture) screen.putImageData(picture, 0, 0);
+    }
+    if (now - since >= 1000) {
+      const link = JSON.parse(module.UTF8ToString(module._daytona_link_status())).link
+        .map((l, k) => `${k + 1}: ${l.state}${l.state === "up" ? ` ${l.id}/${l.count}` : ""}`).join(", ");
+      hud.textContent = `${rom} · cabinet ${view + 1} of ${cabinets} shown · ${frames} fps, ${(work / Math.max(1, frames)).toFixed(1)} ms a frame` +
+        `${cabinets > 1 ? ` · link ${link}` : ""}${errors.length ? ` · ${errors.at(-1)}` : ""}\n${HELP}`;
+      frames = 0; work = 0; since = now;
+    }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}, { once: true });
+hud.textContent = HELP;
+</script>
+</body>
+</html>

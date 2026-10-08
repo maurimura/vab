@@ -1583,6 +1583,12 @@
             game: Some("vs298"),
         ),
         (
+            x: -2,
+            y: -3,
+            tile: "objects/cabinet",
+            game: Some("daytona"),
+        ),
+        (
             x: -5,
             y: -1,
             tile: "objects/pool_table",

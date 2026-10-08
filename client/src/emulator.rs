@@ -56,7 +56,9 @@ pub fn game_status(text: String) {
 #[wasm_bindgen]
 extern "C" {
     /// Sits the player at `cabinet` ("x,y") and starts its game, for up to `players` at once;
-    /// `lockstep` games don't roll back online (world::Game).
+    /// `lockstep` games don't roll back online, `options` (JSON) are the core's settings, and
+    /// `arcade` games are linked cabinets, each player's browser running only their own
+    /// (world::Game).
     #[wasm_bindgen(js_name = emulatorPlay)]
     fn emulator_play(
         core: &str,
@@ -66,10 +68,21 @@ extern "C" {
         turns: bool,
         players: u32,
         lockstep: bool,
+        options: &str,
+        arcade: bool,
     );
-    /// Watches the game at `cabinet` ("x,y"), streamed from one of its players.
+    /// Watches the game at `cabinet` ("x,y"), streamed from one of its players (an `arcade`
+    /// game's: one player's cabinet at a time).
     #[wasm_bindgen(js_name = emulatorWatch)]
-    fn emulator_watch(core: &str, rom: &str, bios: Option<String>, cabinet: &str, turns: bool);
+    fn emulator_watch(
+        core: &str,
+        rom: &str,
+        bios: Option<String>,
+        cabinet: &str,
+        turns: bool,
+        options: &str,
+        arcade: bool,
+    );
     #[wasm_bindgen(js_name = emulatorStop)]
     fn emulator_stop();
     /// Sends the player's RetroPad mask to the worker, for their seat's controller.
@@ -98,6 +111,8 @@ pub fn play(cell: IVec2, game: &Game) {
         game.turns,
         game.players,
         game.lockstep,
+        &options(game),
+        game.arcade,
     );
 }
 
@@ -107,7 +122,20 @@ pub fn watch(cell: IVec2, game: &Game) {
     LATEST_STATUS.set(None);
     let cabinet = cabinet_id(cell);
     let bios = game.bios.clone();
-    emulator_watch(&game.core, &game.rom, bios, &cabinet, game.turns);
+    emulator_watch(
+        &game.core,
+        &game.rom,
+        bios,
+        &cabinet,
+        game.turns,
+        &options(game),
+        game.arcade,
+    );
+}
+
+/// The game's settings for its core, as JSON for the page.
+fn options(game: &Game) -> String {
+    serde_json::to_string(&game.options).unwrap_or_else(|_| "{}".into())
 }
 
 /// How the page and the room name a cabinet: its cell, "x,y".
@@ -294,6 +322,9 @@ fn show_latest_frame(
 
 fn show_status(mut status: Single<&mut Text, With<Status>>) {
     if let Some(text) = LATEST_STATUS.take() {
+        // For browser tests (testing.rs): the line as shown.
+        #[cfg(feature = "test-hooks")]
+        crate::testing::report("status", serde_json::Value::String(text.clone()));
         status.0 = text;
     }
 }

@@ -32,11 +32,15 @@ async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
             "/ice",
             |_req, ctx| async move { ice_servers(&ctx.env).await },
         )
-        // FBNeo cores (/fbneo/<core>/fbneo.wasm), the Supermodel core (/supermodel/supermodel.wasm)
-        // and ROM sets (/roms/mk2.zip) live in R2.
+        // FBNeo cores (/fbneo/<core>/fbneo.wasm), the Sega cores (/supermodel/supermodel.wasm for
+        // Model 3, /daytona/daytona.wasm for Daytona USA) and ROM sets (/roms/mk2.zip) live in R2,
+        // each with the content type it was uploaded with (Makefile).
         .get_async("/fbneo/*file", |req, ctx| serve_from_r2(req, ctx, "fbneo"))
         .get_async("/supermodel/*file", |req, ctx| {
             serve_from_r2(req, ctx, "supermodel")
+        })
+        .get_async("/daytona/*file", |req, ctx| {
+            serve_from_r2(req, ctx, "daytona")
         })
         .get_async("/roms/*file", |req, ctx| serve_from_r2(req, ctx, "roms"))
         // The bar's map: the one last saved from the editor, or the one built with the site.
@@ -252,11 +256,12 @@ fn not_found() -> Result<Response> {
 
 /// A bar room: everyone in it sees each other walk around and who plays at which cabinet or
 /// table (a place with seats, named "x,y" for a cabinet and "pool:x,y" and the like for a
-/// table), and the players at one (up to 4) find each other here to play online. Anyone else
-/// can watch a place's game: one of its players streams it to them through the room. WebSockets
-/// go through the Hibernation API, so an idle room is evicted from memory while its connections
-/// stay open; what the room knows about each player lives on their socket (its attachment), and
-/// each socket is tagged with its player's id.
+/// table), and the players at one (up to 4, or `MAX_SEATS` at an arcade game's linked
+/// cabinets) find each other here to play online. Anyone else can watch a place's game: one of
+/// its players streams it to them through the room. WebSockets go through the Hibernation API,
+/// so an idle room is evicted from memory while its connections stay open; what the room knows
+/// about each player lives on their socket (its attachment), and each socket is tagged with its
+/// player's id.
 ///
 /// Players have a name, shown above their head and next to what they say in the chat.
 ///
@@ -264,7 +269,8 @@ fn not_found() -> Result<Response> {
 /// passed on as they are but for the address: `[to: u32 LE][bytes]` in, `[from: u32 LE][bytes]`
 /// out. The page sends game packets this way until WebRTC connects, and hands games over. A
 /// seated player sending to `WATCHERS`, in binary or as a `Signal`, reaches everyone watching
-/// their place.
+/// their place, and one sending to `SEVERAL` reaches the players it lists (an arcade game's
+/// link data, from each cabinet to all the others it has no direct connection to).
 #[durable_object]
 pub struct Room {
     state: State,
@@ -287,6 +293,13 @@ struct Player {
 
 /// The address of everyone watching the sender's cabinet; no player has this id.
 const WATCHERS: u32 = 0;
+/// The address of a binary message for several players, `[SEVERAL][count: u8][count × id: u32
+/// LE][bytes]`: each of them gets `[from][bytes]`, so the sender sends it once. No player has
+/// this id.
+const SEVERAL: u32 = u32::MAX;
+/// The most seats a place has: an arcade game's linked cabinets (Daytona USA's 8). Other games
+/// take up to 4 (assets/games.ron), tables 2 to 4.
+const MAX_SEATS: usize = 8;
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
 struct Position {
@@ -310,7 +323,7 @@ struct Seat {
 enum FromPlayer {
     Move(Position),
     /// Take a free seat at a cabinet whose game takes `seats` players (2 if not said, at most
-    /// 4), leaving any other.
+    /// `MAX_SEATS`), leaving any other.
     Sit {
         cabinet: String,
         seats: Option<usize>,
@@ -386,6 +399,19 @@ struct PlayerAt {
     name: String,
     #[serde(flatten)]
     at: Position,
+}
+
+/// A message for several players, after its `SEVERAL` address: who it is for, and what.
+fn several(message: &[u8]) -> Option<(Vec<u32>, &[u8])> {
+    let (&count, rest) = message.split_first()?;
+    let ids = rest.get(..usize::from(count) * 4)?;
+    let recipients = ids
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|id| u32::from_le_bytes(*id))
+        .collect();
+    Some((recipients, &rest[ids.len()..]))
 }
 
 /// Text as players may send it: one line without control characters or runs of spaces, at most
@@ -537,13 +563,28 @@ impl Room {
         self.broadcast(&ToPlayer::Left { id: player.id })
     }
 
-    /// Passes on a binary message from `player`: to another player, or to everyone watching
-    /// the player's cabinet.
+    /// Passes on a binary message from `player`: to another player, to several (`SEVERAL`), or
+    /// to everyone watching the player's cabinet.
     fn pass_on(&self, player: &Player, mut message: Vec<u8>) -> Result<()> {
         if message.len() < 4 {
             return Ok(());
         }
         let to = u32::from_le_bytes([message[0], message[1], message[2], message[3]]);
+        if to == SEVERAL {
+            let Some((recipients, bytes)) = several(&message[4..]) else {
+                return Ok(());
+            };
+            let mut out = Vec::with_capacity(4 + bytes.len());
+            out.extend_from_slice(&player.id.to_le_bytes());
+            out.extend_from_slice(bytes);
+            for id in recipients {
+                if let Some(other) = self.socket_of(id) {
+                    // A socket that is closing can't take it; the others still should.
+                    let _ = other.send_with_bytes(&out);
+                }
+            }
+            return Ok(());
+        }
         message[..4].copy_from_slice(&player.id.to_le_bytes());
         if to != WATCHERS {
             if let Some(other) = self.socket_of(to) {
@@ -603,7 +644,8 @@ impl DurableObject for Room {
         let others = self.players();
         let id = loop {
             let id = (js_sys::Math::random() * u32::MAX as f64) as u32;
-            if id != WATCHERS && !others.iter().any(|(_, player)| player.id == id) {
+            if id != WATCHERS && id != SEVERAL && !others.iter().any(|(_, player)| player.id == id)
+            {
                 break id;
             }
         };
@@ -700,7 +742,7 @@ impl DurableObject for Room {
                 }
             }
             FromPlayer::Sit { cabinet, seats } => {
-                let of = seats.unwrap_or(2).clamp(1, 4);
+                let of = seats.unwrap_or(2).clamp(1, MAX_SEATS);
                 self.sit(&ws, &mut player, cabinet, of)?;
             }
             FromPlayer::Watch { cabinet } => self.watch(&ws, &mut player, cabinet)?,
