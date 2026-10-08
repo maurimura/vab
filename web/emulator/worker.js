@@ -60,11 +60,12 @@
 // Each player's controls for a frame are a u32 (the "input"): the RetroPad mask in the low 16
 // bits, and for a `gun` game where the lightgun aims in the high 16, x in bits 16-23 (0 the
 // left edge of the screen, 255 the right) and y in bits 24-31 (0 the top, 255 the bottom). At a
-// driving game (Out Run) bits 16-23 are where the wheel is turned, which this worker works out
-// from the local player's arrows as it samples them (wheel.js); the page only sends buttons.
+// driving game (one with a `wheel`: Out Run, Cruis'n USA) bits 16-23 are where the wheel is
+// turned, which this worker works out from the local player's arrows as it samples them
+// (wheel.js); the page only sends buttons.
 //
 // In:  { type: "start", core, rom, files, state, seat, turns, lockstep, gun, linked, linkState,
-//        arcade, options, port, hold }
+//        arcade, options, wheel, port, hold }
 //        Loads the game. `files` (a BIOS) and `state` are optional: skipped if missing. Plays
 //        alone right away, or with `hold` waits for "online" (joining a game in progress) or
 //        "watch-state" (watching; no `seat` or `port` then). `linkState`, for a linked game's
@@ -74,7 +75,12 @@
 //        the twin cabinet): it shows `seat`'s (a watcher's, seat 0's), set again after every
 //        state it loads, since states may carry the one of the machine that made them.
 //        An `arcade` game also gets `seat` among them (a watcher's: the seat it watches), and
-//        `state` is the seat's (start-up states may be deflated, as below).
+//        `state` is the seat's (start-up states may be deflated, as below). `wheel`, a driving
+//        game's (world::Game's: { lock, back, curve, span }), has the arrows turn a wheel and
+//        the core read it (Core.wheel).
+//      { type: "wheel", lock, back, curve } Any of them: the arrows turn the wheel so from the
+//        next frame on (wheel.js; `/wheel` in the chat). Only this machine's ramp: the wheel
+//        goes to the others in the input, so nothing else changes.
 //      { type: "view", view } Watching such a game: shows seat `view`'s screen instead.
 //      { type: "link-seats", seats } An arcade game: who sits at each seat ({ seat: player id },
 //        or null). A seat left empty is off the link before the next frame (Core.linkAbsent);
@@ -276,6 +282,7 @@ onmessage = ({ data: msg }) => {
     pressed |= input & ~localInput & BUTTONS;
     localInput = input;
   } else if (msg.type === "audio") ({ port: audioPort, sampleRate: speakerRate = speakerRate } = msg);
+  else if (msg.type === "wheel") wheel.set(msg);
   else if (msg.type === "start") start(msg);
   // Anything else is for the loaded game; it can arrive while the game still downloads.
   else if (cabinet) cabinet.handle(msg);
@@ -306,8 +313,11 @@ const downloadIfPresent = (url) => url && download(url).catch(() => undefined);
 
 async function start({
   core: coreUrl, rom: romUrl, files = [], state: stateUrl, seat = 0, turns = false, lockstep = false, gun = false,
-  linked = false, linkState: linkStateUrl, arcade = false, options = {}, port, hold,
+  linked = false, linkState: linkStateUrl, arcade = false, options = {}, wheel: steering, port, hold,
 }) {
+  // Before anything is awaited: a "wheel" that comes while the game downloads then changes these
+  // numbers rather than being undone by them.
+  if (steering) wheel.set(steering);
   const { default: createCore } = await import(coreUrl);
   const [rom, packedState, packedLinkState, ...extras] = await Promise.all([
     download(romUrl),
@@ -335,13 +345,16 @@ async function start({
   const core = cab.core;
   core.netplay = true;
   core.gun = gun;
+  core.wheel = steering;
   files.forEach((url, i) => extras[i] && core.addFile(url.split("/").pop(), extras[i]));
   // An arcade game's machine is the seat's cabinet.
   if (arcade) options = { ...options, seat: String(seat) };
   for (const [key, value] of Object.entries(options)) core.setOption(key, String(value));
   const { fps, sampleRate } = core.loadGame(romUrl.split("/").pop(), rom);
-  // Pacing, input delay and the stats all go by the core's rate, whatever it is (see the top).
+  // Pacing, input delay, the stats and the wheel's turning all go by the core's rate, whatever
+  // it is (see the top).
   cab.fps = fps;
+  wheel.set({}, fps);
   // The speaker runs at one rate; a core at another (Supermodel, 44.1 kHz) is brought to it.
   if (Math.round(sampleRate) !== speakerRate) cab.resampler = new Resampler(sampleRate, speakerRate);
   // A start-up state (emulator/snapshot.mjs) skips the boot screens and adds credits. States

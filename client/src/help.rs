@@ -341,7 +341,8 @@ fn list_buttons(
         .as_ref()
         .map(|game| game.title.clone())
         .unwrap_or_default();
-    let gun = game.is_some_and(|game| game.aims());
+    let gun = game.as_ref().is_some_and(|game| game.aims());
+    let steers = game.as_ref().is_some_and(|game| game.steers());
     // Wide enough for "Right click".
     let key_width = if gun { 96.0 } else { 70.0 };
     let arrow = |key: KeyCode| {
@@ -405,6 +406,10 @@ fn list_buttons(
             }
             row(card, "Esc", "Stand up", key_width, 13.0);
             row(card, "Y", "Chat", key_width, 13.0);
+            // A driving game's wheel: how the arrows turn it can be tuned (emulator.rs).
+            if steers {
+                row(card, "/wheel", "Tune the steering", key_width, 13.0);
+            }
         });
     game_buttons.0 = buttons;
     if !touch.is_on() {

@@ -5,6 +5,7 @@
 //! can be tuned (settings.rs), and `/netstats` how an air hockey match's connection is doing. On a touch screen the line is typed in the
 //! page instead, with the phone's keyboard, and comes in through `chat_typed`. `/mute <name>`
 //! and `/unmute <name>` stop or start hearing someone's voice (voice.rs), remembered by name.
+//! `/wheel` shows or tunes how the arrows turn a driving game's wheel (emulator.rs).
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -65,6 +66,7 @@ impl Plugin for ChatPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Chat>()
             .add_message::<ShowNetStats>()
+            .add_message::<TuneWheel>()
             .add_systems(Startup, spawn_chat)
             // Before anything reads the keys this frame, so typing neither walks nor plays.
             .add_systems(PreUpdate, type_in_chat.after(InputSystems))
@@ -88,6 +90,11 @@ pub fn chat_closed(chat: Res<Chat>) -> bool {
 impl Chat {
     pub fn is_open(&self) -> bool {
         self.open
+    }
+
+    /// A line in the chat for this player only (a command's answer), `now` seconds since start.
+    pub fn say(&mut self, line: String, now: f32) {
+        self.add(line, now);
     }
 
     fn add(&mut self, line: String, now: f32) {
@@ -125,6 +132,11 @@ impl Chat {
             Some("/netstats") => {
                 panels.netstats.write(ShowNetStats);
             }
+            Some("/wheel") => {
+                panels
+                    .wheel
+                    .write(TuneWheel(line["/wheel".len()..].to_string()));
+            }
             Some("/name") => {
                 let name = line["/name".len()..]
                     .split_whitespace()
@@ -156,7 +168,8 @@ impl Chat {
             }
             Some(_) => self.add(
                 "* Commands: /name Mauri sets your name, /help shows the controls, /settings \
-                 tunes the games, /mute and /unmute someone's voice"
+                 tunes the games, /mute and /unmute someone's voice, /wheel a driving game's \
+                 steering"
                     .into(),
                 now,
             ),
@@ -164,17 +177,23 @@ impl Chat {
     }
 }
 
-/// The panels a chat command can open.
+/// The panels a chat command can open, and the commands handled elsewhere.
 #[derive(SystemParam)]
 pub struct Panels<'w> {
     help: MessageWriter<'w, ShowHelp>,
     settings: MessageWriter<'w, ShowSettings>,
     netstats: MessageWriter<'w, ShowNetStats>,
+    wheel: MessageWriter<'w, TuneWheel>,
 }
 
 /// Shows or hides how an air hockey match's connection is doing (`/netstats`).
 #[derive(Message)]
 pub struct ShowNetStats;
+
+/// `/wheel` and what follows it: shows or tunes how the arrows turn a driving game's wheel
+/// (emulator.rs).
+#[derive(Message)]
+pub struct TuneWheel(pub String);
 
 pub fn type_in_chat(
     mut keyboard: MessageReader<KeyboardInput>,
