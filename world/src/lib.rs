@@ -543,14 +543,14 @@ mod tests {
         );
         assert!(cruisn.bios.is_none() && cruisn.options.is_empty());
         // Steered with a wheel that a tap barely turns, full lock in 0.6 s held, back in 0.1 s,
-        // over the whole stick (MAME has no dead zone).
+        // over the part of the stick the game answers to (MAME reads all of it, the game not).
         assert_eq!(
             cruisn.wheel,
             Some(Wheel {
                 lock: 0.6,
                 back: 0.1,
                 curve: 2.0,
-                span: (0, 32767)
+                span: (5200, 28900)
             })
         );
         // Its skin is still to come: a plain cabinet on the bar's map runs it.

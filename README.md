@@ -411,13 +411,14 @@ stick (0 to 32767 each way) the game's wheel turns, the whole stick unless said:
 core sees nothing in the first third (FBNeo's dead zone and the driver's) and is at full lock
 from 72%, so its wheel is spread over (10600, 23500), every step of it a turn of the game's
 wheel; MAME reads the whole stick one to one onto Cruis'n USA's wheel (0x10 to 0xf0,
-[mame/README.md](mame/README.md#inputs)). Every machine has to read the wheel the same way, so
-`span` is `assets/games.ron`'s alone.
+[mame/README.md](mame/README.md#inputs)), but the game itself answers to only the middle part of
+that (below), so its wheel is spread over (5200, 28900). Every machine has to read the wheel the
+same way, so `span` is `assets/games.ron`'s alone.
 
 | game | `lock` | `back` | `curve` | `span` |
 | --- | --- | --- | --- | --- |
 | Out Run | 0.3 s | 0.3 s | 1 | (10600, 23500) |
-| Cruis'n USA | 0.6 s | 0.1 s | 2 | the whole stick |
+| Cruis'n USA | 0.6 s | 0.1 s | 2 | (5200, 28900) |
 
 Out Run's wheel turns as it did, 7 of 127 a frame. Cruis'n USA's, measured in Node from a race
 at 121 mph, Right held, against the gas alone (the car's place across the road, in the game's
@@ -425,17 +426,18 @@ units: its wheels are 518 apart):
 
 | Right held | MAME's key ramp, before: 0.5 s, 1 s later | now: 0.5 s, 1 s later |
 | --- | --- | --- |
-| 6 frames (0.1 s) | 213, 598 | 0, 0 |
-| 15 frames (0.26 s) | 571, 2168 | 5, 93 |
-| 30 frames (0.52 s) | 567, 2671 | 110, 1589 |
+| 6 frames (0.1 s) | 213, 598 | 33, 151 |
+| 15 frames (0.26 s) | 571, 2168 | 128, 435 |
+| 30 frames (0.52 s) | 567, 2671 | 290, 2220 |
 
-The game itself ignores the first sixth of its wheel's travel (its reading stays put up to
-MAME's 0x80 ± 18, the stick at ±5200, wheel ±20 of 127), is at full lock from about 88% (the
-stick at ±28900), and its reading follows the wheel over a few frames (0.22 s from the middle to
-full lock when the wheel jumps there): over the whole stick, a hold turns nothing for its first
-0.18 s. `span:
-(5200, 28900)` would put the curve where the game turns (a 6-frame tap then moves the car 151 in
-a second, a 30-frame hold 2220).
+A tap now nudges the car where it used to throw it, a hold still gets to full lock, and the
+game's wheel reading is back at centre 3 to 14 frames after the arrow goes up (12 to 29 before),
+so the car stops turning when the player lets go. The game itself ignores the first sixth of its
+wheel's travel (its reading stays put up to MAME's 0x80 ± 18, the stick at ±5200, wheel ±20 of
+127), is at full lock from about 88% (the stick at ±28900), and its reading follows the wheel
+over a few frames (0.22 s from the middle to full lock when the wheel jumps there): hence its
+`span`, (5200, 28900), which puts the curve where the game turns; over the whole stick a hold
+turned nothing for its first 0.18 s, and a 6-frame tap not at all.
 
 `/wheel` in the chat, while driving, shows the wheel's numbers, and with any of them
 (`/wheel lock=0.5 back=0.15 curve=1.5`) turns it so from the next frame: at this player's

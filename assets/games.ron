@@ -46,5 +46,5 @@
     (rom: "tekken3je1", core: "mame", title: "Tekken 3", lockstep: true, cabinets: ["tekken3"]),
     (rom: "timecrs2", core: "mame", title: "Time Crisis II", players: 2, gun: true, linked: true, cabinets: ["timecrs2"]),
     (rom: "outrun", core: "outrun", title: "Out Run", players: 1, wheel: Some((lock: 0.3, back: 0.3, curve: 1.0, span: (10600, 23500))), cabinets: []),
-    (rom: "crusnusa41", core: "mame", title: "Cruis'n USA", players: 1, wheel: Some((lock: 0.6, back: 0.1, curve: 2.0)), cabinets: []),
+    (rom: "crusnusa41", core: "mame", title: "Cruis'n USA", players: 1, wheel: Some((lock: 0.6, back: 0.1, curve: 2.0, span: (5200, 28900))), cabinets: []),
 ]
