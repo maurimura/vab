@@ -211,7 +211,8 @@ pub struct MapSprite;
 /// The sprite for a placed floor tile or object.
 ///
 /// Floor tiles are centered on their cell. Objects stand on the cells they cover: the image's
-/// left edge is the area's left corner and its bottom the area's bottom point, and objects
+/// bottom is the area's bottom point and its middle the area's, so one wider than the area
+/// (a cabinet whose deck or canvas overhangs its cell) overhangs both sides alike, and objects
 /// nearer the viewer (by their front cell) draw on top.
 #[cfg(feature = "bevy")]
 pub fn map_sprite(
@@ -225,8 +226,12 @@ pub fn map_sprite(
         let front = IVec2::new(placed.x, placed.y) + size - IVec2::ONE;
         let depth = (front.x + front.y) as f32 * 0.001;
         let left = cell_to_world(placed.x, front.y).x - TILE_WIDTH / 2.0;
+        let middle = left + (size.x + size.y) as f32 * TILE_WIDTH / 4.0;
         let bottom = cell_to_world(front.x, front.y).y - TILE_HEIGHT / 2.0;
-        (Anchor::BOTTOM_LEFT, Vec3::new(left, bottom, 1.0 + depth))
+        (
+            Anchor::BOTTOM_CENTER,
+            Vec3::new(middle, bottom, 1.0 + depth),
+        )
     } else {
         let depth = (placed.x + placed.y) as f32 * 0.001;
         (

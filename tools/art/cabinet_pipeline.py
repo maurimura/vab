@@ -18,11 +18,12 @@ import build_simpsons
 import cabinet_mvs
 import cabinet_upright
 import cabinet_wide
+import cabinet_twin
 
 ROOT = base.ROOT
 RECIPES = ROOT / 'tools/art/recipes'
 RENDERERS = {'simpsons-legacy': build_simpsons, 'mvs': cabinet_mvs,
-             'upright': cabinet_upright, 'wide': cabinet_wide}
+             'upright': cabinet_upright, 'wide': cabinet_wide, 'twin-gun': cabinet_twin}
 
 
 def load_recipe(name):
@@ -38,9 +39,16 @@ def load_recipe(name):
     if recipe.get('buttons_per_player') not in range(1, 7):
         raise ValueError('Invalid physical button count')
     kind = recipe.get('control_kind', 'joystick')
-    if kind not in ('joystick', 'buttons', 'mounted-guns'):
+    if kind not in ('joystick', 'buttons', 'mounted-guns', 'holstered-guns'):
         raise ValueError('Invalid physical control kind')
-    if kind != 'joystick' and recipe['renderer'] != 'upright':
+    if kind == 'holstered-guns':
+        if recipe['renderer'] != 'twin-gun' or recipe.get('control_stations') != 2:
+            raise ValueError('Holstered guns require the reviewed two-station twin renderer')
+        if recipe['buttons_per_player'] != 1 or recipe.get('pedals') != 2:
+            raise ValueError('Twin controls require one trigger and one pedal per station')
+    elif recipe['renderer'] == 'twin-gun':
+        raise ValueError('Twin renderer requires holstered guns')
+    elif kind != 'joystick' and recipe['renderer'] != 'upright':
         raise ValueError('Special controls require the reviewed upright renderer')
     if recipe.get('control_stations', recipe['players']) not in range(1, 5):
         raise ValueError('Invalid physical station count')
@@ -157,6 +165,9 @@ def textures(recipe):
 def prepare(recipe):
     validate_sources(recipe)
     module = RENDERERS[recipe['renderer']]
+    stations = recipe.get('control_stations', recipe['players'])
+    if len(recipe.get('stations', range(stations))) != stations:
+        raise ValueError('Physical stations disagree with the recipe')
     if recipe['renderer'].endswith('-legacy'):
         tex, solids, painter = module.textures(), module.model(), module.paint
     else:
@@ -165,12 +176,13 @@ def prepare(recipe):
     sticks = sum(s.part == 'stick' for s in solids)
     balls = sum(isinstance(s, base.Ball) for s in solids)
     buttons = sum(s.part == 'button' and isinstance(s, base.Solid) for s in solids)
-    stations = recipe.get('control_stations', recipe['players'])
     kind = recipe.get('control_kind', 'joystick')
     expected_sticks = stations if kind == 'joystick' else 0
     guns = sum(s.part == 'gun' for s in solids)
-    expected_guns = stations if kind == 'mounted-guns' else 0
+    expected_guns = stations if kind in ('mounted-guns', 'holstered-guns') else 0
+    pedals = sum(s.part == 'pedal' for s in solids)
     if (sticks != expected_sticks or balls != sticks or guns != expected_guns
+            or pedals != recipe.get('pedals', 0)
             or buttons != stations * recipe['buttons_per_player']):
         raise ValueError('Physical controls disagree with the recipe')
     return tex, solids, painter
