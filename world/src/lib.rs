@@ -120,8 +120,8 @@ pub struct Game {
     /// is 32 MB).
     #[serde(default)]
     pub lockstep: bool,
-    /// A lightgun game (Time Crisis II): the player aims with the mouse or a finger on the screen,
-    /// which shows a crosshair, and the aim goes to the core with the buttons.
+    /// A lightgun game (Time Crisis II, Terminator 2): the player aims with the mouse or a finger
+    /// on the screen, which shows a crosshair, and the aim goes to the core with the buttons.
     #[serde(default)]
     pub gun: bool,
     /// Two players play on two linked boards, one each, as a twin cabinet (Time Crisis II): each
@@ -430,6 +430,8 @@ mod tests {
             assert_eq!(game.turns, turns);
             assert_eq!(game.cabinets, [rom]);
             assert!(game.bios.is_none());
+            // Terminator 2 is played with a lightgun: the mouse aims it.
+            assert_eq!(game.gun, rom == "term2");
         }
     }
 
@@ -534,8 +536,9 @@ mod tests {
         // Two players, each at their own linked cabinet with a gun.
         assert_eq!(crisis.players, 2);
         assert!(crisis.gun && crisis.linked && !crisis.lockstep && !crisis.turns);
-        // Only a lightgun game says so, and only the twin cabinet is linked.
-        assert_eq!(games.iter().filter(|g| g.gun).count(), 1);
+        // Only the lightgun games say so (Terminator 2 is the other), and only the twin cabinet
+        // is linked.
+        assert_eq!(games.iter().filter(|g| g.gun).count(), 2);
         assert_eq!(games.iter().filter(|g| g.linked).count(), 1);
     }
 

@@ -42,7 +42,7 @@
     (rom: "invaders", core: "classics", title: "Space Invaders", turns: true, cabinets: ["invaders"]),
     (rom: "asteroid", core: "classics", title: "Asteroids", turns: true, cabinets: ["asteroid"]),
     (rom: "s1945", core: "psikyo", title: "Strikers 1945", cabinets: ["s1945"]),
-    (rom: "term2", core: "midway", title: "Terminator 2: Judgment Day", cabinets: ["term2"]),
+    (rom: "term2", core: "midway", title: "Terminator 2: Judgment Day", gun: true, cabinets: ["term2"]),
     (rom: "vs298", core: "supermodel", title: "Virtua Striker 2 '98", lockstep: true, cabinets: ["vs298"]),
     (rom: "daytona", core: "daytona", title: "Daytona USA", arcade: true, players: 8, options: {"cabinets": "1", "link_topology": "star", "link_pace": "1"}, cabinets: ["daytona"]),
     (rom: "tekken3je1", core: "mame", title: "Tekken 3", lockstep: true, cabinets: ["tekken3"]),
