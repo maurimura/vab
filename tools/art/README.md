@@ -566,7 +566,7 @@ Outputs:
 - `art/objects/cabinet_mk2_v2_<facing>/`: seven editable PNG layers and `layers.ron`.
 - `art/previews/mk2-v2.png`: four views, native sizes, and the old cabinet at the same zoom.
 
-The editor offers only this v2 design, labeled `mkII`; the internal skin remains
+The editor offers only this v2 design, labeled `Mortal Kombat II`; the internal skin remains
 `mk2_v2` and the ROM remains `mk2`. Legacy `cabinet_mk2_*` assets are retained for
 existing maps but hidden from the cabinet palette. No map is replaced. The PNG
 layers can be edited in Draw mode; rebuilding replaces only the v2 layers and

@@ -366,7 +366,7 @@ mod tests {
         assert_eq!(mslug.core, "neogeo");
         assert_eq!(mslug.players, 2);
         let mk2 = games.iter().find(|g| g.rom == "mk2").unwrap();
-        assert_eq!(mk2.title, "mkII");
+        assert_eq!(mk2.title, "Mortal Kombat II");
         assert_eq!(mk2.cabinets, ["mk2_v2"]);
         for (rom, core, players, skin, bios) in [
             ("dinou", "capcom", 3, "dino", None),
