@@ -106,7 +106,7 @@ export class Core {
    */
   wheel;
   /**
-   * A lightgun game (Time Crisis II): the core's lightgun (and pointer) reads are answered from
+   * A lightgun game (Time Crisis II, Terminator 2): the core's lightgun (and pointer) reads are answered from
    * each port's aim and buttons. Otherwise they read nothing: MAME also maps a lightgun's
    * buttons onto a game's Button 1-4, which would press a second button in Tekken 3.
    */
@@ -276,10 +276,13 @@ export class Core {
     const loaded = m._retro_load_game(info);
     m._free(info);
     if (!loaded) throw new Error(`The core could not load ${fileName}`);
-    // A RetroPad on each port, a lightgun game's too: MAME reads its lightgun whatever the
-    // port's device (its retro_set_controller_port_device does nothing).
+    // A RetroPad on each port, or a lightgun at a lightgun game: FBNeo aims a game's gun with the
+    // lightgun's screen coordinates only when the port is one (a RetroPad's arrows nudge it
+    // instead, Terminator 2), and hides its own crosshair then; MAME reads its lightgun whatever
+    // the port's device (its retro_set_controller_port_device does nothing).
+    const device = this.gun ? DEVICE.LIGHTGUN : DEVICE.JOYPAD;
     for (let port = 0; port < this.inputs.length; port++) {
-      m._retro_set_controller_port_device(port, DEVICE.JOYPAD);
+      m._retro_set_controller_port_device(port, device);
     }
 
     // struct retro_system_av_info { geometry { u32 w, h, max_w, max_h; f32 aspect } timing { f64 fps, sample_rate } }

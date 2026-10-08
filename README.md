@@ -47,12 +47,13 @@ Coin, Start and Leave. The chat is typed in the page's own box, since
 a canvas can't bring up a phone's keyboard. Chrome's device toolbar shows all of it on a computer,
 as long as its pixel ratio is left at the computer's own (an emulated one gets the canvas size wrong).
 
-Time Crisis II is played with a lightgun (`gun` in `assets/games.ron`): the mouse aims over the
-game, where a crosshair stands in for the pointer, a click shoots, and the right button or Space
-works the pedal (Z and X do too). On a touch screen a finger on the game aims there and shoots
-for as long as it's down, and the pedal is a button. Its cabinet is the game's twin cabinet: two
-players each play their own screen and gun, linked (see [Online play](#online-play)); the next
-to press E watches.
+Time Crisis II and Terminator 2 are played with a lightgun (`gun` in `assets/games.ron`): the mouse
+aims over the game, where a crosshair stands in for the pointer, a click shoots, and the right
+button or Space works the second button, Time Crisis II's pedal or Terminator 2's bomb (Z and X do
+too). On a touch screen a finger on the game aims there and shoots for as long as it's down, and the
+pedal or bomb is a button. Time Crisis II's cabinet is the game's twin cabinet: two players each
+play their own screen and gun, linked (see [Online play](#online-play)); the next to press E
+watches.
 
 Cruis'n USA (Midway V-Unit, 1994; MAME's `crusnusa41`, v4.1) is one player's: the next to press
 E watches. The arrows drive, as at Daytona USA: Left and Right turn a steering wheel as at Out
