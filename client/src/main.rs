@@ -5,6 +5,7 @@ mod emulator;
 mod help;
 mod hockey;
 mod nearby;
+mod pinball;
 mod pixels;
 mod player;
 mod pointer_lock;
@@ -28,6 +29,7 @@ use emulator::EmulatorPlugin;
 use help::HelpPlugin;
 use hockey::{HockeyPlugin, HockeyTables};
 use nearby::{Kind, NearbyPlugin, Usables};
+use pinball::{PinballMachines, PinballPlugin};
 use player::{PlayerPlugin, Walkable, spawn_player};
 use pool::{PoolPlugin, PoolTables};
 use room::RoomPlugin;
@@ -77,6 +79,7 @@ fn main() {
             NearbyPlugin,
             ShuffleboardPlugin,
             DartsPlugin,
+            PinballPlugin,
         ),
         RoomPlugin,
         SettingsPlugin,
@@ -98,7 +101,7 @@ fn main() {
 }
 
 /// Waiting for the bar's map, walking around the bar, playing a cabinet's game, or at one of
-/// the tables: pool, air hockey or shuffleboard, or at the dartboard.
+/// the tables: pool, air hockey or shuffleboard, at the dartboard, or at the pinball machine.
 #[derive(States, Default, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum Mode {
     #[default]
@@ -109,6 +112,7 @@ enum Mode {
     Hockey,
     Shuffleboard,
     Darts,
+    Pinball,
 }
 
 /// The bar's map, made with the editor, while it loads.
@@ -147,6 +151,7 @@ fn build_bar(
     let hockey_tables = HockeyTables::from_map(map);
     let shuffleboard_tables = ShuffleboardTables::from_map(map);
     let dartboards = Dartboards::from_map(map);
+    let pinball_machines = PinballMachines::from_map(map);
     // Everything that can be used, for which is nearest the player (nearby.rs).
     let mut usables = Usables::default();
     for cell in cabinets.cells() {
@@ -157,6 +162,7 @@ fn build_bar(
         (Kind::Hockey, hockey_tables.placed()),
         (Kind::Shuffleboard, shuffleboard_tables.placed()),
         (Kind::Darts, dartboards.placed()),
+        (Kind::Pinball, pinball_machines.placed()),
     ] {
         for table in tables {
             usables.add(kind, table);
@@ -168,6 +174,7 @@ fn build_bar(
     commands.insert_resource(hockey_tables);
     commands.insert_resource(shuffleboard_tables);
     commands.insert_resource(dartboards);
+    commands.insert_resource(pinball_machines);
     #[cfg(feature = "test-hooks")]
     commands.insert_resource(testing::Objects(map.objects.clone()));
     commands.remove_resource::<LoadingMap>();

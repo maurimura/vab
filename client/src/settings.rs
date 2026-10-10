@@ -1,13 +1,16 @@
 //! Tuning: `/settings` in the chat opens a panel of the numbers that shape how the games play,
 //! to try changes on the spot. Up and Down pick one, Left and Right change it (with Shift, ten
 //! steps at a time), and the mouse or a finger works the - and + buttons. N racks the pool
-//! table again (as New rack does), New game starts the shuffleboard or the darts game over, R
+//! table again (as New rack does), New game starts that game over, R
 //! puts everything back and Esc closes the panel. The numbers last until the page reloads.
+
+use std::ops::Range;
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::{ButtonState, InputSystems};
 use bevy::prelude::*;
 
+use crate::Mode;
 use crate::chat::{Chat, type_in_chat};
 use crate::help::close_panel;
 
@@ -39,6 +42,17 @@ pub enum Knob {
     Scatter,
     FlickSpeed,
     FlickSpread,
+    TableSlope,
+    FlipperSwing,
+    FlipperDrop,
+    FlipperBounce,
+    WallBounce,
+    RubberBounce,
+    BumperKick,
+    SlingKick,
+    Plunger,
+    RampNeeds,
+    BallTopSpeed,
 }
 
 struct Spec {
@@ -52,7 +66,7 @@ struct Spec {
 }
 
 /// Every knob in the order the panel lists them, under the heading of the game they're for.
-const SPECS: [Spec; 25] = [
+const SPECS: [Spec; 36] = [
     Spec {
         knob: Knob::TopSpeed,
         label: "Hardest shot",
@@ -278,7 +292,110 @@ const SPECS: [Spec; 25] = [
         step: 5.0,
         decimals: 0,
     },
+    Spec {
+        knob: Knob::TableSlope,
+        label: "Table slope",
+        unit: "°",
+        min: 2.0,
+        max: 12.0,
+        step: 0.5,
+        decimals: 1,
+    },
+    Spec {
+        knob: Knob::FlipperSwing,
+        label: "Flipper swing",
+        unit: "rad/s",
+        min: 5.0,
+        max: 100.0,
+        step: 1.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::FlipperDrop,
+        label: "Flipper drop",
+        unit: "rad/s",
+        min: 5.0,
+        max: 100.0,
+        step: 1.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::FlipperBounce,
+        label: "Flipper bounce",
+        unit: "",
+        min: 0.0,
+        max: 1.0,
+        step: 0.05,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::WallBounce,
+        label: "Wall bounce",
+        unit: "",
+        min: 0.0,
+        max: 1.0,
+        step: 0.05,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::RubberBounce,
+        label: "Rubber bounce",
+        unit: "",
+        min: 0.0,
+        max: 1.0,
+        step: 0.02,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::BumperKick,
+        label: "Bumper kick",
+        unit: "in/s",
+        min: 0.0,
+        max: 600.0,
+        step: 5.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::SlingKick,
+        label: "Sling kick",
+        unit: "in/s",
+        min: 0.0,
+        max: 600.0,
+        step: 5.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::Plunger,
+        label: "Full plunge",
+        unit: "in/s",
+        min: 100.0,
+        max: 1000.0,
+        step: 10.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::RampNeeds,
+        label: "Ramp needs",
+        unit: "in/s",
+        min: 20.0,
+        max: 400.0,
+        step: 5.0,
+        decimals: 0,
+    },
+    Spec {
+        knob: Knob::BallTopSpeed,
+        label: "Ball top speed",
+        unit: "in/s",
+        min: 200.0,
+        max: 2000.0,
+        step: 25.0,
+        decimals: 0,
+    },
 ];
+
+/// The panel shows the games side by side, so it fits on the screen: the knob each column
+/// starts with.
+const FIRST_IN_COLUMN: [Knob; 3] = [Knob::TopSpeed, Knob::Sand, Knob::TableSlope];
 
 /// Shows the panel (`/settings` in the chat).
 #[derive(Message)]
@@ -295,6 +412,10 @@ pub struct NewShuffleboardGame;
 /// Starts a new game of darts (the panel's New game button, under Darts).
 #[derive(Message)]
 pub struct NewDartsGame;
+
+/// Starts a new game of pinball (the panel's New game button, under Pinball).
+#[derive(Message)]
+pub struct NewPinballGame;
 
 #[derive(Resource)]
 pub struct Settings {
@@ -369,6 +490,23 @@ impl Settings {
         }
     }
 
+    /// How the pinball machine plays.
+    pub fn pinball(&self) -> pinball::Settings {
+        pinball::Settings {
+            slope: pinball::GRAVITY * self.get(Knob::TableSlope).to_radians().sin(),
+            flipper_speed: self.get(Knob::FlipperSwing),
+            flipper_return: self.get(Knob::FlipperDrop),
+            flipper_bounce: self.get(Knob::FlipperBounce),
+            wall_bounce: self.get(Knob::WallBounce),
+            rubber_bounce: self.get(Knob::RubberBounce),
+            bumper_kick: self.get(Knob::BumperKick),
+            sling_kick: self.get(Knob::SlingKick),
+            plunger_speed: self.get(Knob::Plunger),
+            ramp_speed: self.get(Knob::RampNeeds),
+            max_speed: self.get(Knob::BallTopSpeed),
+        }
+    }
+
     /// Moves the value of the picked knob by `steps` of its step, within its range.
     fn nudge(&mut self, row: usize, steps: f32) {
         let spec = &SPECS[row];
@@ -391,6 +529,7 @@ fn defaults() -> [f32; SPECS.len()] {
     let hockey = hockey::Settings::default();
     let shuffleboard = shuffleboard::Settings::default();
     let hand = darts::Hand::default();
+    let pinball = pinball::Settings::default();
     SPECS.map(|spec| match spec.knob {
         Knob::TopSpeed => pool.max_speed,
         Knob::SoftestShot => pool.min_speed,
@@ -418,6 +557,17 @@ fn defaults() -> [f32; SPECS.len()] {
         Knob::Scatter => hand.scatter,
         Knob::FlickSpeed => hand.flick_speed,
         Knob::FlickSpread => hand.flick_spread,
+        Knob::TableSlope => pinball::SLOPE_DEGREES,
+        Knob::FlipperSwing => pinball.flipper_speed,
+        Knob::FlipperDrop => pinball.flipper_return,
+        Knob::FlipperBounce => pinball.flipper_bounce,
+        Knob::WallBounce => pinball.wall_bounce,
+        Knob::RubberBounce => pinball.rubber_bounce,
+        Knob::BumperKick => pinball.bumper_kick,
+        Knob::SlingKick => pinball.sling_kick,
+        Knob::Plunger => pinball.plunger_speed,
+        Knob::RampNeeds => pinball.ramp_speed,
+        Knob::BallTopSpeed => pinball.max_speed,
     })
 }
 
@@ -435,6 +585,7 @@ impl Plugin for SettingsPlugin {
             .add_message::<NewRack>()
             .add_message::<NewShuffleboardGame>()
             .add_message::<NewDartsGame>()
+            .add_message::<NewPinballGame>()
             .add_systems(Startup, spawn_panel)
             // After the chat and the controls panel have had the keys, so a key that closes
             // either doesn't also tune something, and before anything else reads them.
@@ -459,45 +610,168 @@ struct Row(usize);
 #[derive(Component)]
 struct Value(usize);
 
-/// The panel's buttons: - and + by row and which way they go, New rack, New game (shuffleboard
-/// and darts), and Close for a screen without Esc.
+/// The panel's buttons: - and + by row and which way they go, New rack, New game (shuffleboard,
+/// darts and pinball), and Close for a screen without Esc.
 #[derive(Component, Clone, Copy)]
 enum PanelButton {
     Step(usize, f32),
     NewRack,
     NewShuffleboardGame,
     NewDartsGame,
+    NewPinballGame,
     Close,
 }
 
 const SELECTED: Color = Color::srgba(1.0, 1.0, 1.0, 0.12);
 
+fn text(text: &str, size: f32, color: Color) -> impl Bundle {
+    (
+        Text::new(text),
+        TextFont {
+            font_size: FontSize::Px(size),
+            ..default()
+        },
+        TextColor(color),
+    )
+}
+
+fn heading(heading: &str, top: f32) -> impl Bundle {
+    (
+        text(heading, 13.0, Color::srgb(0.6, 0.85, 0.6)),
+        Node {
+            margin: UiRect::top(Val::Px(top)),
+            ..default()
+        },
+    )
+}
+
+/// A game's heading, and a button for it on the right.
+fn heading_with(heading: &str, button: PanelButton, label: &str, top: f32) -> impl Bundle {
+    (
+        Node {
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            margin: UiRect::top(Val::Px(top)),
+            ..default()
+        },
+        children![
+            text(heading, 13.0, Color::srgb(0.6, 0.85, 0.6)),
+            (
+                button,
+                Node {
+                    padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
+                    border_radius: BorderRadius::all(Val::Px(4.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
+                children![text(label, 12.0, Color::WHITE)],
+            ),
+        ],
+    )
+}
+
+fn step_button(row: usize, way: f32) -> impl Bundle {
+    (
+        PanelButton::Step(row, way),
+        Node {
+            width: Val::Px(26.0),
+            height: Val::Px(22.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            border_radius: BorderRadius::all(Val::Px(4.0)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
+        children![text(if way < 0.0 { "-" } else { "+" }, 14.0, Color::WHITE)],
+    )
+}
+
+/// A knob's line: its name, - and +, and its value between them.
+fn knob_row(row: usize) -> impl Bundle {
+    (
+        Row(row),
+        Node {
+            height: Val::Px(28.0),
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(6.0),
+            padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+            border_radius: BorderRadius::all(Val::Px(4.0)),
+            ..default()
+        },
+        BackgroundColor(Color::NONE),
+        children![
+            (
+                text(SPECS[row].label, 14.0, Color::WHITE),
+                TextLayout::new(Justify::Left, LineBreak::NoWrap),
+                Node {
+                    width: Val::Px(150.0),
+                    ..default()
+                },
+            ),
+            step_button(row, -1.0),
+            (
+                Value(row),
+                text("", 14.0, Color::srgb(1.0, 0.85, 0.3)),
+                Node {
+                    width: Val::Px(96.0),
+                    ..default()
+                },
+                TextLayout {
+                    justify: Justify::Center,
+                    linebreak: LineBreak::NoWrap,
+                },
+            ),
+            step_button(row, 1.0),
+        ],
+    )
+}
+
+/// A column of the panel: these knobs, under their games' headings.
+fn spawn_column(column: &mut ChildSpawnerCommands, rows: Range<usize>) {
+    for row in rows {
+        match SPECS[row].knob {
+            Knob::TopSpeed => {
+                column.spawn(heading_with(
+                    "Pool",
+                    PanelButton::NewRack,
+                    "New rack (N)",
+                    0.0,
+                ));
+            }
+            Knob::PuckSpeed => {
+                column.spawn(heading("Air hockey", 6.0));
+            }
+            Knob::Sand => {
+                column.spawn(heading_with(
+                    "Shuffleboard",
+                    PanelButton::NewShuffleboardGame,
+                    "New game",
+                    0.0,
+                ));
+            }
+            Knob::Sway => {
+                column.spawn(heading_with(
+                    "Darts",
+                    PanelButton::NewDartsGame,
+                    "New game",
+                    6.0,
+                ));
+            }
+            Knob::TableSlope => {
+                column.spawn(heading_with(
+                    "Pinball",
+                    PanelButton::NewPinballGame,
+                    "New game",
+                    0.0,
+                ));
+            }
+            _ => {}
+        }
+        column.spawn(knob_row(row));
+    }
+}
+
 fn spawn_panel(mut commands: Commands) {
-    let text = |text: &str, size: f32, color: Color| {
-        (
-            Text::new(text),
-            TextFont {
-                font_size: FontSize::Px(size),
-                ..default()
-            },
-            TextColor(color),
-        )
-    };
-    let step_button = |row: usize, way: f32| {
-        (
-            PanelButton::Step(row, way),
-            Node {
-                width: Val::Px(26.0),
-                height: Val::Px(22.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::Center,
-                border_radius: BorderRadius::all(Val::Px(4.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
-            children![text(if way < 0.0 { "-" } else { "+" }, 14.0, Color::WHITE)],
-        )
-    };
     commands
         .spawn((
             Panel,
@@ -527,102 +801,24 @@ fn spawn_panel(mut commands: Commands) {
                 ))
                 .with_children(|list| {
                     list.spawn(text("Settings", 18.0, Color::WHITE));
-                    // A game's heading, and a button for it on the right.
-                    let heading_with = |heading: &str, button: PanelButton, label: &str, top| {
-                        (
-                            Node {
-                                justify_content: JustifyContent::SpaceBetween,
-                                align_items: AlignItems::Center,
-                                margin: UiRect::top(Val::Px(top)),
-                                ..default()
-                            },
-                            children![
-                                text(heading, 13.0, Color::srgb(0.6, 0.85, 0.6)),
-                                (
-                                    button,
-                                    Node {
-                                        padding: UiRect::axes(Val::Px(10.0), Val::Px(3.0)),
-                                        border_radius: BorderRadius::all(Val::Px(4.0)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(Color::srgba(1.0, 1.0, 1.0, 0.15)),
-                                    children![text(label, 12.0, Color::WHITE)],
-                                ),
-                            ],
-                        )
-                    };
-                    list.spawn(heading_with(
-                        "Pool",
-                        PanelButton::NewRack,
-                        "New rack (N)",
-                        0.0,
-                    ));
-                    for (row, spec) in SPECS.iter().enumerate() {
-                        match spec.knob {
-                            Knob::PuckSpeed => {
-                                list.spawn((
-                                    text("Air hockey", 13.0, Color::srgb(0.6, 0.85, 0.6)),
-                                    Node {
-                                        margin: UiRect::top(Val::Px(6.0)),
-                                        ..default()
-                                    },
-                                ));
-                            }
-                            Knob::Sand => {
-                                list.spawn(heading_with(
-                                    "Shuffleboard",
-                                    PanelButton::NewShuffleboardGame,
-                                    "New game",
-                                    6.0,
-                                ));
-                            }
-                            Knob::Sway => {
-                                list.spawn(heading_with(
-                                    "Darts",
-                                    PanelButton::NewDartsGame,
-                                    "New game",
-                                    6.0,
-                                ));
-                            }
-                            _ => {}
+                    list.spawn(Node {
+                        column_gap: Val::Px(16.0),
+                        ..default()
+                    })
+                    .with_children(|columns| {
+                        for (i, first) in FIRST_IN_COLUMN.iter().enumerate() {
+                            let end = FIRST_IN_COLUMN
+                                .get(i + 1)
+                                .map_or(SPECS.len(), |&next| index(next));
+                            columns
+                                .spawn(Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(4.0),
+                                    ..default()
+                                })
+                                .with_children(|column| spawn_column(column, index(*first)..end));
                         }
-                        list.spawn((
-                            Row(row),
-                            Node {
-                                height: Val::Px(28.0),
-                                align_items: AlignItems::Center,
-                                column_gap: Val::Px(6.0),
-                                padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
-                                border_radius: BorderRadius::all(Val::Px(4.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::NONE),
-                        ))
-                        .with_children(|line| {
-                            line.spawn((
-                                text(spec.label, 14.0, Color::WHITE),
-                                TextLayout::new(Justify::Left, LineBreak::NoWrap),
-                                Node {
-                                    width: Val::Px(170.0),
-                                    ..default()
-                                },
-                            ));
-                            line.spawn(step_button(row, -1.0));
-                            line.spawn((
-                                Value(row),
-                                text("", 14.0, Color::srgb(1.0, 0.85, 0.3)),
-                                Node {
-                                    width: Val::Px(110.0),
-                                    ..default()
-                                },
-                                TextLayout {
-                                    justify: Justify::Center,
-                                    linebreak: LineBreak::NoWrap,
-                                },
-                            ));
-                            line.spawn(step_button(row, 1.0));
-                        });
-                    }
+                    });
                     list.spawn((
                         text(
                             "Up/Down pick  Left/Right change (Shift: x10)\nR resets all  Esc closes",
@@ -649,9 +845,26 @@ fn spawn_panel(mut commands: Commands) {
         });
 }
 
-fn open(mut asked: MessageReader<ShowSettings>, mut settings: ResMut<Settings>) {
-    if asked.read().count() > 0 {
-        settings.open = true;
+fn open(
+    mut asked: MessageReader<ShowSettings>,
+    mode: Res<State<Mode>>,
+    mut settings: ResMut<Settings>,
+) {
+    if asked.read().count() == 0 {
+        return;
+    }
+    settings.open = true;
+    // At a game, on its knobs.
+    let first = match mode.get() {
+        Mode::Pool => Some(Knob::TopSpeed),
+        Mode::Hockey => Some(Knob::PuckSpeed),
+        Mode::Shuffleboard => Some(Knob::Sand),
+        Mode::Darts => Some(Knob::Sway),
+        Mode::Pinball => Some(Knob::TableSlope),
+        _ => None,
+    };
+    if let Some(first) = first {
+        settings.selected = index(first);
     }
 }
 
@@ -711,6 +924,7 @@ fn tune_with_pointer(
     mut new_rack: MessageWriter<NewRack>,
     mut new_shuffleboard_game: MessageWriter<NewShuffleboardGame>,
     mut new_darts_game: MessageWriter<NewDartsGame>,
+    mut new_pinball_game: MessageWriter<NewPinballGame>,
 ) {
     if !settings.open {
         return;
@@ -741,6 +955,9 @@ fn tune_with_pointer(
             }
             Some(PanelButton::NewDartsGame) => {
                 new_darts_game.write(NewDartsGame);
+            }
+            Some(PanelButton::NewPinballGame) => {
+                new_pinball_game.write(NewPinballGame);
             }
             Some(PanelButton::Close) => settings.open = false,
             None => {}

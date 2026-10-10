@@ -5837,5 +5837,10 @@
             tile: "objects/cabinet_srallyc_down_right",
             game: Some("srallyc"),
         ),
+        (
+            x: 14,
+            y: -16,
+            tile: "objects/pinball_saloon",
+        ),
     ],
 )

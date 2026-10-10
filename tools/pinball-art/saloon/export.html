@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Saloon, in parts</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { width: 1920px; height: 1080px; overflow: hidden; position: relative; }
+  .layer { position: absolute; left: 0; top: 0; }
+  .floor { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+  svg { display: block; }
+</style>
+</head>
+<body>
+  <svg id="bg" class="layer" width="1920" height="1080"></svg>
+  <div id="floor" class="floor"></div>
+  <svg id="ov" class="layer" width="1920" height="1080"></svg>
+  <svg id="top" class="layer" width="1920" height="1080"></svg>
+  <svg id="head" class="layer" width="1920" height="1080"></svg>
+  <script>window.EXPORT = true;</script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>

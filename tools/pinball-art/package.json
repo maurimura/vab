@@ -1,0 +1,14 @@
+{
+  "name": "vab-pinball-art",
+  "private": true,
+  "type": "module",
+  "description": "Draws the pinball tables and exports them in parts for the game (README.md)",
+  "scripts": {
+    "preview": "node preview.mjs saloon",
+    "export": "node export.mjs saloon"
+  },
+  "dependencies": {
+    "pngjs": "^7.0.0",
+    "puppeteer-core": "^24.0.0"
+  }
+}

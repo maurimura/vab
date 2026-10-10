@@ -1,0 +1,12 @@
+[package]
+name = "pinball"
+version = "0.1.0"
+edition = "2024"
+
+# Pinball physics, without Bevy, so it tests natively (client/src/pinball). A table's layout comes
+# from its art (tools/pinball-art), as assets/pinball/<table>/layout.json.
+[dependencies]
+# The vector math Bevy uses, the same version.
+glam = { version = "0.32", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use bevy::sprite::Anchor;
 use wasm_bindgen::prelude::*;
 
+use crate::Mode;
 use crate::player::{self, Player, Zoom};
 
 /// A little faster than walking, so others catch up with where they said they are.
@@ -84,6 +85,24 @@ impl Plugin for RoomPlugin {
         app.add_systems(
             Update,
             (apply_updates, walk_others, name_player, place_names).chain(),
+        )
+        // The pinball machine fills the screen without covering the interface, as the other
+        // games' screens do: the names above the players' heads hide while it's up.
+        .add_systems(
+            OnEnter(Mode::Pinball),
+            |mut names: Query<&mut Visibility, With<NameText>>| {
+                for mut visibility in &mut names {
+                    *visibility = Visibility::Hidden;
+                }
+            },
+        )
+        .add_systems(
+            OnExit(Mode::Pinball),
+            |mut names: Query<&mut Visibility, With<NameText>>| {
+                for mut visibility in &mut names {
+                    *visibility = Visibility::Inherited;
+                }
+            },
         );
     }
 }
