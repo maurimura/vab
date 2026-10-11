@@ -51,6 +51,13 @@ impl Dots {
         self.text(text, x, y, scale);
     }
 
+    /// A dotted line across the display, at row `y`.
+    pub fn dotted(&mut self, y: i32) {
+        for x in (0..COLUMNS as i32).step_by(2) {
+            self.set(x, y);
+        }
+    }
+
     /// Writes `text` ending at the display's right edge.
     pub fn right(&mut self, text: &str, y: i32, scale: i32) {
         self.text(text, COLUMNS as i32 - text_width(text, scale), y, scale);
@@ -88,6 +95,29 @@ impl Dots {
     }
 }
 
+/// `text` broken between words into lines at most `width` dots wide (a word longer than that
+/// on a line of its own).
+pub fn wrap(text: &str, width: i32) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let longer = if line.is_empty() {
+            word.to_string()
+        } else {
+            format!("{line} {word}")
+        };
+        if line.is_empty() || text_width(&longer, 1) <= width {
+            line = longer;
+        } else {
+            lines.push(std::mem::replace(&mut line, word.to_string()));
+        }
+    }
+    if !line.is_empty() {
+        lines.push(line);
+    }
+    lines
+}
+
 /// How many dots wide `text` is, written at `scale`.
 pub fn text_width(text: &str, scale: i32) -> i32 {
     let w: i32 = text
@@ -105,14 +135,14 @@ fn glyph(ch: char) -> ([&'static str; 7], usize, usize) {
     let g = FONT
         .iter()
         .find(|(c, _)| *c == ch.to_ascii_uppercase())
-        .map_or(FONT[FONT.len() - 2].1, |(_, g)| g);
+        .map_or(BLANK, |(_, g)| g);
     let rows: [&str; 7] = std::array::from_fn(|r| &g[r * 5..r * 5 + 5]);
     if ch == ' ' {
         return (rows, 0, 2);
     }
     let blank = |c: usize| rows.iter().all(|r| r.as_bytes()[c] == b'.');
     let (mut c0, mut c1) = (0, 4);
-    if ",:.!".contains(ch) {
+    if ",:.!'".contains(ch) {
         while c0 < 4 && blank(c0) {
             c0 += 1;
         }
@@ -123,8 +153,11 @@ fn glyph(ch: char) -> ([&'static str; 7], usize, usize) {
     (rows, c0, c1)
 }
 
+/// What a character the font doesn't have shows as.
+const BLANK: &str = "...................................";
+
 /// 5 by 7 glyphs, row by row.
-const FONT: [(char, &str); 44] = [
+const FONT: [(char, &str); 46] = [
     ('A', ".###.#...##...#######...##...##...#"),
     ('B', "####.#...##...#####.#...##...#####."),
     ('C', ".###.#...##....#....#....#...#.###."),
@@ -169,6 +202,8 @@ const FONT: [(char, &str); 44] = [
     ('!', "..#....#....#....#....#.........#.."),
     (' ', "..................................."),
     ('?', ".###.#...#....#...#....#.........#."),
+    ('$', "..#...#####.#...###...#.#####...#.."),
+    ('\'', "..#....#...#......................."),
 ];
 
 #[cfg(test)]
@@ -183,6 +218,17 @@ mod tests {
         assert_eq!(text_width("AB", 2), 22);
         let mut dots = Dots::default();
         dots.centred("HI", 0, 1);
+        assert!(dots.0.iter().any(|&lit| lit));
+    }
+
+    #[test]
+    fn text_wraps_between_words() {
+        let lines = wrap("SHOOT THE PIANO TO START BULL RIDE", COLUMNS as i32);
+        assert_eq!(lines, ["SHOOT THE PIANO TO", "START BULL RIDE"]);
+        assert!(lines.iter().all(|l| text_width(l, 1) <= COLUMNS as i32));
+        // The dollar sign is there.
+        let mut dots = Dots::default();
+        dots.text("$", 0, 0, 1);
         assert!(dots.0.iter().any(|&lit| lit));
     }
 }

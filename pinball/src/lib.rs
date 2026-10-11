@@ -18,6 +18,7 @@
 
 pub mod camera;
 pub mod layout;
+pub mod rules;
 
 use glam::{Vec2, Vec3};
 
@@ -103,6 +104,9 @@ pub enum Event {
     Bull,
     /// The plunger let go of a ball.
     Launch,
+    /// A ball went through a one-way gate (by its number in the layout), its way: out of the
+    /// shooter lane, or up the left orbit and round the top.
+    Gate(usize),
     /// A ball went down the drain: `Table::balls` no longer has it.
     Drain,
 }
@@ -517,6 +521,29 @@ impl Table {
         self.drops_down.fill(false);
     }
 
+    /// Another ball into play, from the mine: it lets it out onto the playfield in a moment.
+    pub fn release_from_mine(&mut self) {
+        let mut ball = Ball::new(Vec2::from(self.layout.mine_exit));
+        ball.place = Place::Mine { held: 0.0 };
+        self.balls.push(ball);
+    }
+
+    /// Sends the ball on the playfield nearest `near` off at `velocity` (a kicker under it).
+    pub fn kick(&mut self, near: Vec2, velocity: Vec2) {
+        let nearest = self
+            .balls
+            .iter_mut()
+            .filter(|ball| ball.place == Place::Playfield)
+            .min_by(|a, b| {
+                (a.position - near)
+                    .length()
+                    .total_cmp(&(b.position - near).length())
+            });
+        if let Some(ball) = nearest {
+            ball.velocity = velocity;
+        }
+    }
+
     /// The ball's height above the playfield, for drawing: on the ramp, up it; in the scoop,
     /// sunk into it; in the mine, out of sight.
     pub fn height(&self, ball: &Ball) -> f32 {
@@ -706,7 +733,7 @@ impl Table {
         ball.position += ball.velocity * dt;
         self.collide_still(ball, events);
         self.collide_flippers(ball);
-        self.collide_gates(ball, before);
+        self.collide_gates(ball, before, events);
         self.collide_plunger(ball);
         self.cross_doors(ball, before, events);
         self.cross_rollovers(ball, events);
@@ -867,8 +894,8 @@ impl Table {
 
     /// One-way gates: a ball goes through going their way, swinging them open, and once it's
     /// all the way through they close behind it: coming back, it bounces off them.
-    fn collide_gates(&self, ball: &mut Ball, before: Vec2) {
-        for gate in &self.layout.gates {
+    fn collide_gates(&self, ball: &mut Ball, before: Vec2, events: &mut Vec<Event>) {
+        for (i, gate) in self.layout.gates.iter().enumerate() {
             let (a, b) = (Vec2::from(gate.a), Vec2::from(gate.b));
             let ab = b - a;
             let t = (ball.position - a).dot(ab) / ab.length_squared();
@@ -882,6 +909,9 @@ impl Table {
             }
             let was = (before - a).dot(normal);
             let now = (ball.position - a).dot(normal);
+            if was < 0.0 && now >= 0.0 {
+                events.push(Event::Gate(i));
+            }
             if was >= BALL_RADIUS - 0.01 && now < BALL_RADIUS {
                 ball.position += normal * (BALL_RADIUS - now);
                 let closing = ball.velocity.dot(normal);
@@ -1312,7 +1342,11 @@ mod tests {
     fn every_plunge_lands_in_play() {
         let layout = Layout::from_json(SALOON).unwrap();
         // The orbit's rollover, partway down the left orbit.
-        let orbit = layout.rollovers.len() - 1;
+        let orbit = layout
+            .rollovers
+            .iter()
+            .position(|r| r.x < 2.0 && r.y < 30.0)
+            .unwrap();
         for tenth in 0..=10 {
             let mut table = saloon();
             table.serve();

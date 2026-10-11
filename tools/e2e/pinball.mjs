@@ -23,8 +23,24 @@ await run("pinball", async () => {
   await it.page.keyboard.up("ShiftLeft");
   await it.page.keyboard.up("ShiftRight");
 
-  // Hands off: the ball drains in time, and the next one comes.
-  machine = await waitFor(it, (s) => s.pinball.ball === 2 && s.pinball.on_plunger, { what: "ball 2", timeout: 90000 }).then((s) => s.pinball);
+  // Off the plunger, the display says what to go for.
+  machine = await waitFor(it, (s) => s.pinball.screen.includes("SHOOT") || s.pinball.screen.includes("HIT "), { what: "a goal on the display" }).then((s) => s.pinball);
+  check(true, `the display says what to go for: ${machine.screen}`);
+
+  // Hands off: the ball drains in time (a ball saved comes back to the plunger: plunged again),
+  // and the next one comes.
+  machine = await waitFor(
+    it,
+    async (s) => {
+      if (s.pinball.ball === 1 && s.pinball.on_plunger) {
+        await it.page.keyboard.down("Space");
+        await sleep(400);
+        await it.page.keyboard.up("Space");
+      }
+      return s.pinball.ball === 2 && s.pinball.on_plunger;
+    },
+    { what: "ball 2", timeout: 120000 },
+  ).then((s) => s.pinball);
   check(machine.score > 0, `ball 2 comes after the first drains, the score at ${machine.score}`);
   check(it.errors.length === 0, `no errors in the page: ${it.errors}`);
 });

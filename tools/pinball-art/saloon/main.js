@@ -208,10 +208,10 @@ add(22.3, (g) => {
 }, { name: "bull-pen" });
 wallItem(G.sepL, 0.22, 1.0);
 wallItem(G.sepR, 0.22, 1.0);
-// Over each outlane, a short guide off the side wall: it turns some of the balls falling down
-// the side (out of the orbit, off the bull) into the inlane, to the flipper, and lets the rest
-// by. (Longer, and hardly a ball went down an outlane; none, and most did.)
-wallItem([[0.3, 27.0], [1.05, 28.5]], 0.24, 1.1);
+// Over the right outlane, a short guide off the side wall: it turns some of the balls falling
+// down the side (off the bull) into the inlane, to the flipper, and lets the rest by. (Longer,
+// and hardly a ball went down the outlane; none, and most did.) The left outlane has the
+// kickback instead, which a guide over it would be in the way of.
 wallItem([[18.7, 27.0], [17.95, 28.5]], 0.24, 1.1);
 wallItem([[5.96, 37.225], [6.6, 40.1]], 0.22, 0.9);
 wallItem([[13.04, 37.225], [12.4, 40.1]], 0.22, 0.9);
@@ -679,7 +679,9 @@ add(7.3, (g) => {
 }, { name: "outlaw" });
 
 // ---------------------------------------------------------------- inlane/outlane rollovers, gate, plunger
-const ROLLOVERS = [[1.1, 33.2], [2.7, 33.0], [16.3, 33.0], [17.9, 33.2], [1.25, 24.0]];
+// The outlanes and inlanes, left to right; the left orbit; and the three top lanes.
+const ROLLOVERS = [[1.1, 33.2], [2.7, 33.0], [16.3, 33.0], [17.9, 33.2], [1.25, 24.0]]
+  .concat([0, 1, 2].map((i) => [(G.guides[i] + G.guides[i + 1]) / 2, 4.5]));
 PHYS.rollovers = ROLLOVERS.map(([x, y]) => ({ x, y }));
 for (const [x, y] of ROLLOVERS) add(y, (g) => {
   el("path", { d: projPath(cam, [[x - 0.12, y - 0.5], [x - 0.12, y + 0.5], [x + 0.12, y + 0.5], [x + 0.12, y - 0.5]], 0.07, false), fill: "none", stroke: INK, "stroke-width": 3.6 }, g);

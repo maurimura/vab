@@ -13,7 +13,11 @@ fn main() {
         let s = camera.project(p);
         [s.x.round(), s.y.round()]
     };
-    let settings = pinball::Settings { flipper_speed: 26.0, flipper_bounce: 0.3, ..pinball::Settings::default() };
+    let settings = pinball::Settings {
+        flipper_speed: 26.0,
+        flipper_bounce: 0.3,
+        ..pinball::Settings::default()
+    };
     let table = Table::new(layout.clone(), settings);
     let outlines: Vec<_> = table
         .outlines()

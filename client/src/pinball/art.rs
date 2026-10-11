@@ -16,6 +16,8 @@ pub struct Sprites {
     pub states: HashMap<String, States>,
     /// Each lamp, lit, by name.
     pub lamps: HashMap<String, Placed>,
+    /// The backbox's rank lamps, lit, from the lowest rank up.
+    pub ranks: Vec<Placed>,
     pub front: Placed,
     pub backbox: Backbox,
     pub ball: BallArt,

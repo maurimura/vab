@@ -5,8 +5,9 @@
 //! The flippers are Shift (left and right), or Z and /, A and D, or the arrow keys; on a touch
 //! screen, a finger on the left or right half of the screen. Holding Space (or Down, S, Enter)
 //! pulls the plunger back, and letting go launches the ball; on a touch screen, a finger held
-//! while the ball waits on the plunger. Three balls a game. The score and the lamps are only a
-//! start: the table's rules (missions, ranks, modes) come later. Esc goes back to the bar.
+//! while the ball waits on the plunger. The table's rules (pinball::rules) score the game, light
+//! the lamps that say where to shoot, and say on the backbox's display what to go for. Esc goes
+//! back to the bar.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -18,7 +19,8 @@ use bevy::image::{ImageLoaderSettings, ImageSampler};
 use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use pinball::{BALL_RADIUS, Event, Layout, Place, Side, Table};
+use pinball::rules::{self, Body, Rules, Screen};
+use pinball::{BALL_RADIUS, Layout, Place, Side, Table};
 
 use super::art::{Placed, Sprites};
 use super::dmd::{self, Dots};
@@ -34,16 +36,8 @@ const SPRITES: &str = include_str!("../../../assets/pinball/saloon/sprites.json"
 const LAYOUT: &str = include_str!("../../../assets/pinball/saloon/layout.json");
 /// The table is drawn by a camera of its own, on its own render layer.
 const LAYER: usize = 1;
-const BALLS_PER_GAME: u32 = 3;
-/// Balls that can be drawn at once (the game has one in play; multiball will want more).
-const MOST_BALLS: usize = 4;
-/// A new ball comes this long after the last one drained (seconds).
-const SERVE_AFTER: f32 = 1.2;
-/// How long a lamp stays lit when something lights it, and a message stays on the display.
-const LAMP_FLASH: f32 = 0.6;
-const MESSAGE_FOR: f32 = 1.6;
-/// All the bottles down: they stand up again this long after (seconds).
-const BOTTLES_BACK_AFTER: f32 = 1.5;
+/// Balls that can be drawn at once: three in multiball, and one more coming out of the mine.
+const MOST_BALLS: usize = 5;
 /// Drawing order: the floor's lamps and the balls' shadows over the background, the table's
 /// parts by depth over those, and the cabinet's front and the backbox over everything.
 const LAMPS_Z: f32 = 1.0;
@@ -86,17 +80,7 @@ impl Plugin for GamePlugin {
 struct Machine {
     table: Table,
     camera: pinball::Camera,
-    /// The ball being played (1 to 3), and the score.
-    ball: u32,
-    score: u64,
-    over: bool,
-    /// Seconds until the next ball comes, and until the bottles stand up again.
-    serve_in: Option<f32>,
-    bottles_back_in: Option<f32>,
-    /// Lamps lit for a while, by name, and the seconds they have left.
-    lamps: HashMap<&'static str, f32>,
-    /// What the display says under the score, for a while.
-    message: Option<(String, f32)>,
+    rules: Rules,
     time: f32,
 }
 
@@ -107,13 +91,7 @@ impl Machine {
         let mut machine = Self {
             table: Table::new(layout, pinball::Settings::default()),
             camera,
-            ball: 1,
-            score: 0,
-            over: false,
-            serve_in: None,
-            bottles_back_in: None,
-            lamps: HashMap::new(),
-            message: None,
+            rules: Rules::new(),
             time: 0.0,
         };
         machine.new_game();
@@ -121,102 +99,16 @@ impl Machine {
     }
 
     fn new_game(&mut self) {
-        self.table.balls.clear();
-        self.table.reset_drop_targets();
-        self.table.serve();
-        self.ball = 1;
-        self.score = 0;
-        self.over = false;
-        self.serve_in = None;
-        self.message = None;
+        self.rules.start(&mut self.table);
     }
 
     /// The ball waits on the plunger to be launched.
     fn on_plunger(&self) -> bool {
-        self.table
-            .balls
-            .iter()
-            .any(|ball| self.table.in_shooter_lane(ball) && ball.velocity.length() < 20.0)
-    }
-
-    fn light(&mut self, lamp: &'static str) {
-        self.lamps.insert(lamp, LAMP_FLASH);
-    }
-
-    fn say(&mut self, message: &str) {
-        self.message = Some((message.to_string(), MESSAGE_FOR));
-    }
-
-    /// Points, lamps and messages for what happened. (A start: the rules come later.)
-    fn award(&mut self, event: Event) {
-        const ROLLOVER_LAMPS: [&str; 5] = [
-            "kickback",
-            "inlane-left",
-            "inlane-right",
-            "special",
-            "orbit-arrow",
-        ];
-        const POSTER_LAMPS: [&str; 3] = ["poster-light-0", "poster-light-1", "poster-light-2"];
-        let points = match event {
-            Event::Bumper(i) => {
-                self.light(if i == 0 {
-                    "bumper-light-0"
-                } else {
-                    "bumper-light-1"
-                });
-                100
-            }
-            Event::Sling(_) => 10,
-            Event::DropTarget(_) => {
-                self.light("bottles-arrow");
-                500
-            }
-            Event::Standup(i) => {
-                self.light(POSTER_LAMPS[i.min(2)]);
-                250
-            }
-            Event::Rollover(i) => {
-                self.light(ROLLOVER_LAMPS[i.min(4)]);
-                100
-            }
-            Event::Doors { inward } => {
-                self.light("doors-arrow");
-                if inward { 300 } else { 0 }
-            }
-            Event::Scoop => {
-                self.light("scoop-arrow");
-                self.say("PIANO");
-                1000
-            }
-            Event::RampMade => {
-                self.light("ramp-arrow");
-                self.light("lock");
-                self.say("GOLD MINE");
-                2500
-            }
-            Event::Bull => {
-                self.light("bull-arrow");
-                self.light("jackpot");
-                self.say("BULL RIDE");
-                1500
-            }
-            Event::Launch => {
-                for lamp in ["lane-0", "lane-1", "lane-2"] {
-                    self.light(lamp);
-                }
-                0
-            }
-            Event::Drain => {
-                self.light("shoot-again");
-                0
-            }
-            Event::RampBack | Event::ScoopKick | Event::MineKick => 0,
-        };
-        self.score += points;
+        self.rules.on_plunger(&self.table)
     }
 
     fn lit(&self, lamp: &str) -> bool {
-        if self.over {
+        if self.rules.over {
             // Waiting for a game: the lamps chase.
             let order = sprites()
                 .lamps
@@ -225,61 +117,61 @@ impl Machine {
                 .unwrap_or(0);
             return ((self.time * 10.0) as usize + order).is_multiple_of(7);
         }
-        if self.lamps.contains_key(lamp) {
-            return true;
-        }
-        // The six-shooter's chambers: two for each ball left.
-        if let Some(i) = lamp
-            .strip_prefix("chamber-")
-            .and_then(|i| i.parse::<u32>().ok())
-        {
-            return i < (BALLS_PER_GAME + 1 - self.ball) * 2;
-        }
-        // The ball waits on the plunger: the arrow up the lane blinks.
-        lamp == "shoot-again" && self.on_plunger() && (self.time * 3.0).fract() < 0.5
+        self.rules.lit(lamp, &self.table)
     }
 
-    /// What the display shows: the ball and the score, and a message or what to do.
+    /// What the display shows: the ball and the score along the top, and under it big news, or
+    /// what to go for.
     fn dots(&self, touch: bool) -> Dots {
         let mut dots = Dots::default();
-        if self.over {
-            dots.centred("GAME OVER", 2, 2);
-            dots.centred(&with_commas(self.score), 17, 1);
-            dots.centred(
-                if touch {
-                    "TOUCH TO PLAY"
-                } else {
-                    "PRESS SPACE TO PLAY"
-                },
-                25,
-                1,
-            );
-            return dots;
+        let width = dmd::COLUMNS as i32;
+        match self.rules.screen(&self.table, touch) {
+            Screen::Over { score } => {
+                dots.centred("GAME OVER", 2, 2);
+                dots.centred(&score, 17, 1);
+                dots.centred(
+                    if touch {
+                        "TOUCH TO PLAY"
+                    } else {
+                        "PRESS SPACE TO PLAY"
+                    },
+                    25,
+                    1,
+                );
+            }
+            Screen::Playing { left, score, body } => {
+                dots.text(&left, 1, 0, 1);
+                dots.right(&score, 0, 1);
+                dots.dotted(8);
+                match body {
+                    Body::Callout { big, line } => {
+                        let scale = if dmd::text_width(&big, 2) <= width {
+                            2
+                        } else {
+                            1
+                        };
+                        let y = if line.is_empty() { 14 } else { 10 };
+                        dots.centred(&big, if scale == 2 { y } else { y + 4 }, scale);
+                        dots.centred(&line, 25, 1);
+                    }
+                    Body::Text { title, text } => {
+                        let mut lines: Vec<String> = title.into_iter().collect();
+                        lines.extend(dmd::wrap(&text, width));
+                        lines.truncate(3);
+                        let top = match lines.len() {
+                            1 => 17,
+                            2 => 13,
+                            _ => 9,
+                        };
+                        for (i, line) in lines.iter().enumerate() {
+                            dots.centred(line, top + 8 * i as i32, 1);
+                        }
+                    }
+                }
+            }
         }
-        dots.text("P1", 1, 0, 1);
-        dots.right(&format!("BALL {}", self.ball), 0, 1);
-        dots.centred(&with_commas(self.score), 9, 2);
-        let line = match &self.message {
-            Some((message, _)) => message.clone(),
-            None if self.on_plunger() && touch => "HOLD TO PLUNGE".to_string(),
-            None if self.on_plunger() => "HOLD SPACE TO PLUNGE".to_string(),
-            None => String::new(),
-        };
-        dots.centred(&line, 25, 1);
         dots
     }
-}
-
-fn with_commas(n: u64) -> String {
-    let digits = n.to_string();
-    let mut out = String::new();
-    for (i, ch) in digits.chars().enumerate() {
-        if i > 0 && (digits.len() - i).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(ch);
-    }
-    out
 }
 
 /// What a drawn part is.
@@ -406,6 +298,14 @@ fn show_machine(
     }
     sprite(&art.front, FRONT_Z, None, true);
     sprite(&art.backbox.placed, BACKBOX_Z, None, true);
+    for (i, placed) in art.ranks.iter().enumerate() {
+        sprite(
+            placed,
+            BACKBOX_Z + 0.5,
+            Some(Part::Lamp(format!("backbox-rank-{i}"))),
+            false,
+        );
+    }
 
     // The moving parts: every state's image loaded, the first shown.
     let mut frames = HashMap::new();
@@ -601,8 +501,21 @@ fn play(
     let left = held(&LEFT) || (!finger_plunge && fingers.iter().any(|&x| x < half));
     let right = held(&RIGHT) || (!finger_plunge && fingers.iter().any(|&x| x >= half));
     let plunge = held(&PLUNGE) || finger_plunge;
+    // A flipper pressed (not held): it moves the lit top lanes along.
+    let tapped: Vec<f32> = if busy || !touch.is_on() || finger_plunge {
+        Vec::new()
+    } else {
+        touches
+            .iter_just_pressed()
+            .map(|finger| finger.position().x)
+            .collect()
+    };
+    let input = rules::Input {
+        left: pressed(&LEFT) || tapped.iter().any(|&x| x < half),
+        right: pressed(&RIGHT) || tapped.iter().any(|&x| x >= half),
+    };
 
-    if machine.over {
+    if machine.rules.over {
         let start = pressed(&PLUNGE) || (touch.is_on() && touches.any_just_pressed());
         if start {
             machine.new_game();
@@ -613,48 +526,11 @@ fn play(
         machine.table.hold_plunger(plunge);
     }
 
-    for event in machine.table.advance(seconds * settings.pinball_speed()) {
-        machine.award(event);
-    }
-    // All the bottles down: a bonus, and they stand up again.
-    if machine.bottles_back_in.is_none() && machine.table.drops_down.iter().all(|&down| down) {
-        machine.bottles_back_in = Some(BOTTLES_BACK_AFTER);
-        machine.score += 5000;
-        machine.say("LAST ROUND");
-    }
-    if let Some(left) = &mut machine.bottles_back_in {
-        *left -= seconds;
-        if *left <= 0.0 {
-            machine.bottles_back_in = None;
-            machine.table.reset_drop_targets();
-        }
-    }
-    // The ball drained: the next one, or the game is over.
-    if !machine.over && machine.table.balls.is_empty() && machine.serve_in.is_none() {
-        if machine.ball < BALLS_PER_GAME {
-            machine.serve_in = Some(SERVE_AFTER);
-        } else {
-            machine.over = true;
-        }
-    }
-    if let Some(left) = &mut machine.serve_in {
-        *left -= seconds;
-        if *left <= 0.0 {
-            machine.serve_in = None;
-            machine.ball += 1;
-            machine.table.serve();
-        }
-    }
-    machine.lamps.retain(|_, left| {
-        *left -= seconds;
-        *left > 0.0
-    });
-    if let Some((_, left)) = &mut machine.message {
-        *left -= seconds;
-        if *left <= 0.0 {
-            machine.message = None;
-        }
-    }
+    let game_seconds = seconds * settings.pinball_speed();
+    let events = machine.table.advance(game_seconds);
+    machine
+        .rules
+        .update(&mut machine.table, &events, input, game_seconds);
 }
 
 /// Puts every part where the game has it: the moving parts in their states, the lamps on or off,
@@ -881,9 +757,11 @@ fn test_hooks(machine: Res<Machine>) {
     crate::testing::report(
         "pinball",
         json!({
-            "ball": machine.ball,
-            "score": machine.score,
-            "over": machine.over,
+            "ball": machine.rules.ball,
+            "score": machine.rules.score,
+            "over": machine.rules.over,
+            // What the display says, as text.
+            "screen": format!("{:?}", machine.rules.screen(table, false)),
             "on_plunger": machine.on_plunger(),
             "balls": balls,
             "flippers": table.flippers.iter().map(|f| f.raised()).collect::<Vec<_>>(),
