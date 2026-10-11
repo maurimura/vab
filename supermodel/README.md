@@ -64,5 +64,18 @@ drifted apart: a goal on one machine only); patches/0005 makes every NaN the Pow
 produces the same one (WebAssembly leaves a NaN's bits to the host, and x86 and ARM differ).
 Joining a game in progress and spectating hand over a 32 MB state, deflated to about 5 MB.
 
+Virtua Striker 2 '98 starts from a start-up state (/roms/vs298.state) that carries the bar's
+operator settings, for 1P and VS play: a match level at full time goes to 45 seconds of
+golden-goal extra time (V GOAL SYSTEM), then to penalties, five kickers a side (PK SYSTEM).
+Sega ships both off, and a level match just ends in a draw; a shootout still level after five
+kicks each is a draw too (there's no sudden death). The board keeps its settings in its EEPROM,
+which the state carries to everyone who joins.
+`vs298-settings.mjs` walks the test menu for emulator/snapshot.mjs, through the operator's Test
+and Service buttons, which the shim puts where the bar's keys never reach (L3 and R3):
+
+    SETUP=supermodel/vs298-settings.mjs BOOT=15 node emulator/snapshot.mjs \
+      supermodel/dist/headless/supermodel.mjs ~/Downloads/vs298.zip supermodel/dist/vs298.state 9
+    make upload-rom ROM=supermodel/dist/vs298.state R2_TARGET=--remote
+
 Not done yet: the Model 3's 57.5 Hz (the core reports 60 Hz so its 735 samples a frame stay in
 step), and presenting frames from the worker itself instead of the one-frame-late read-back.
