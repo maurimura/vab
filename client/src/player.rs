@@ -72,8 +72,12 @@ impl Walkable {
         self.0.contains(&cell)
     }
 
+    pub fn cells(&self) -> impl Iterator<Item = IVec2> + '_ {
+        self.0.iter().copied()
+    }
+
     /// The free cell nearest the middle of the bar.
-    fn start(&self) -> Option<IVec2> {
+    pub fn start(&self) -> Option<IVec2> {
         let middle = self.0.iter().map(|cell| cell.as_vec2()).sum::<Vec2>() / self.0.len() as f32;
         self.0.iter().copied().min_by(|a, b| {
             let da = a.as_vec2().distance_squared(middle);

@@ -22,7 +22,7 @@ const TILE: &str = "objects/air_hockey";
 /// Two play at a table.
 const SEATS: u32 = 2;
 /// Where the hint sits: a little above the table's top, in world pixels from its middle.
-const HINT_HEIGHT: f32 = 30.0;
+pub const HINT_HEIGHT: f32 = 30.0;
 
 pub struct HockeyPlugin;
 

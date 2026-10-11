@@ -1,7 +1,8 @@
 //! Everyone else in the bar room, as the page hears about them (web/room.js): each walks to
 //! where the room last said they are. The player's own position goes out through `roomMove`.
-//! Everyone, the player too, has their name above their head, and looks as they picked: the page
-//! puts their clothes together into a picture (web/avatar.js) that becomes their sprite.
+//! Everyone, the player too, has their name above their head (as do the staff: staff.rs), and
+//! looks as they picked: the page puts their clothes together into a picture (web/avatar.js) that
+//! becomes their sprite.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -152,12 +153,12 @@ struct Other {
 
 /// The UI text with a character's name, kept above their head (`place_names`).
 #[derive(Component)]
-struct NameTag(Entity);
+pub struct NameTag(pub Entity);
 
 #[derive(Component)]
-struct NameText;
+pub struct NameText;
 
-fn spawn_name(commands: &mut Commands, name: String) -> Entity {
+pub fn spawn_name(commands: &mut Commands, name: String) -> Entity {
     commands
         .spawn((
             NameText,

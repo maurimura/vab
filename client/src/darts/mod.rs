@@ -21,7 +21,7 @@ const TILE: &str = "objects/dartboard";
 /// Two play at a board.
 const SEATS: u32 = 2;
 /// Where the hint sits: a little above the board, in world pixels from its cell.
-const HINT_HEIGHT: f32 = 44.0;
+pub const HINT_HEIGHT: f32 = 44.0;
 
 pub struct DartsPlugin;
 

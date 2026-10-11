@@ -6,7 +6,7 @@
 //! panel tells of the controls on the screen instead, a tap closes it, and there is no card:
 //! the buttons carry the game's names (touch.rs).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::{ButtonState, InputSystems};
@@ -71,6 +71,8 @@ const START: u16 = 3;
 
 thread_local! {
     static WELCOME: RefCell<bool> = const { RefCell::new(false) };
+    /// This is the player's first visit (the bartender shows them the way: talk/).
+    static FIRST_VISIT: Cell<bool> = const { Cell::new(false) };
     static BUTTONS: RefCell<Option<Vec<(u16, String)>>> = const { RefCell::new(None) };
 }
 
@@ -82,6 +84,12 @@ pub struct GameButtons(pub Vec<(u16, String)>);
 #[wasm_bindgen]
 pub fn help_welcome() {
     WELCOME.set(true);
+    FIRST_VISIT.set(true);
+}
+
+/// Whether this is the player's first visit.
+pub fn first_visit() -> bool {
+    FIRST_VISIT.get()
 }
 
 /// Called by index.html with what the game being played calls its buttons, as lines of
