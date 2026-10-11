@@ -76,7 +76,7 @@ it renamed) and how its controls are mapped.
 | `server/` | Worker + `Room` Durable Object (WebSocket Hibernation) | `workers-rs` template, `wrangler` |
 | `netplay/` | Rollback for two players at a cabinet (GGRS), run by the emulator worker | `cargo` + `wasm-bindgen` → `web/netplay/` |
 | `emulator/` | Per-system FBNeo libretro cores as Emscripten ES modules, one of them Sega's Out Run board (see [Out Run](#out-run)) | emsdk + FBNeo's Makefile → `emulator/dist/<core>/` |
-| `supermodel/`, `daytona/` | The Sega cores, each an Emscripten ES module behind the libretro API: Supermodel for the Model 3 (Virtua Striker 2) and Daytona USA's Model 2 (see [Daytona USA](#daytona-usa)) | their `build.sh` → `supermodel/dist/`, `daytona/dist/` |
+| `supermodel/`, `daytona/`, `model2/srally/` | The Sega cores, each an Emscripten ES module behind the libretro API: Supermodel for the Model 3 (Virtua Striker 2), Daytona USA's Model 2 (see [Daytona USA](#daytona-usa)) and Sega Rally Championship's Model 2A (see [Sega Rally Championship](#sega-rally-championship)) | their `build.sh` → `supermodel/dist/`, `daytona/dist/`, `model2/srally/dist/` |
 | `mame/` | MAME (libretro's fork) with the Namco System 12 and System 23 drivers only, for Tekken 3 and Time Crisis II, as an Emscripten ES module: see [mame/README.md](mame/README.md) | emsdk + MAME's own build (`mame/build.sh`) → `mame/dist/` |
 | `flycast/` | Flycast for the Sega NAOMI (Virtua Tennis), as an Emscripten ES module behind the libretro API: see [flycast/README.md](flycast/README.md) and [Virtua Tennis](#virtua-tennis) | emsdk + Flycast's CMake build (`flycast/build.sh`) → `flycast/dist/` |
 | `mame/` | MAME (libretro's fork) with the Namco System 12 and System 23 and Midway V-Unit drivers only, for Tekken 3, Time Crisis II and Cruis'n USA, as an Emscripten ES module: see [mame/README.md](mame/README.md) | emsdk + MAME's own build (`mame/build.sh`) → `mame/dist/` |
@@ -90,7 +90,7 @@ it renamed) and how its controls are mapped.
 | `assets/` | Tile art (`tiles/`) and maps (`maps/`) | |
 | `web/` | Static assets: `index.html`, the room connection (`room.js`), Bevy's `pkg/`, the emulator worker + libretro frontend in `emulator/` | |
 
-Routes: static files from `web/`, `GET /ws/:room` (WebSocket to that room's Durable Object), `GET /ice` (WebRTC servers), `GET /fbneo/<core>/fbneo.{mjs,wasm}` (FBNeo cores), `GET /supermodel/supermodel.{mjs,wasm}`, `GET /daytona/daytona.{mjs,wasm}`, `GET /mame/mame.{mjs,wasm}` and `GET /flycast/flycast.{mjs,wasm}` (the Sega, MAME and Flycast cores) and `GET /roms/<path>` (ROM sets, and the files a game needs next to one, folders and all: `/roms/vtennisg/gds-0011.chd`), all from R2, and `GET /assets/maps/bar.ron` (the bar's map: the one last saved from the web editor, from R2, or the one in `web/`; `PUT` saves it, from the editor Worker only).
+Routes: static files from `web/`, `GET /ws/:room` (WebSocket to that room's Durable Object), `GET /ice` (WebRTC servers), `GET /fbneo/<core>/fbneo.{mjs,wasm}` (FBNeo cores), `GET /supermodel/supermodel.{mjs,wasm}`, `GET /daytona/daytona.{mjs,wasm}`, `GET /srally/srally.{mjs,wasm}`, `GET /mame/mame.{mjs,wasm}` and `GET /flycast/flycast.{mjs,wasm}` (the Sega, MAME and Flycast cores) and `GET /roms/<path>` (ROM sets, and the files a game needs next to one, folders and all: `/roms/vtennisg/gds-0011.chd`), all from R2, and `GET /assets/maps/bar.ron` (the bar's map: the one last saved from the web editor, from R2, or the one in `web/`; `PUT` saves it, from the editor Worker only).
 
 ## Setup
 
@@ -192,7 +192,7 @@ Cores, ROMs and start-up states live in R2 and go up by hand, when they change:
 ```sh
 cd server && npx wrangler r2 bucket create vab && cd ..   # once
 make emulator-remote                                      # cores
-make supermodel-remote daytona-remote                     # the Sega cores, once built (make supermodel, make daytona)
+make supermodel-remote daytona-remote srally-remote       # the Sega cores, once built (make supermodel, make daytona, make srally)
 make mame-remote flycast-remote                           # MAME and Flycast, likewise (make mame, make flycast)
 make upload-rom R2_TARGET=--remote ROM=$HOME/Downloads/mk2.zip   # each ROM, BIOS and .state
 make upload-rom R2_TARGET=--remote ROM=$HOME/Downloads/vtennisg/gds-0011.chd KEY=vtennisg/gds-0011.chd   # a disc, at its path
@@ -245,8 +245,8 @@ node emulator/rollback-check.mjs emulator/dist/midway/fbneo.mjs $HOME/Downloads/
 
 Players take a cabinet's free seats in order: as many as its game takes (`players` in
 `assets/games.ron`, 2 unless said, up to 4 as in Sunset Riders, 8 at Daytona USA's linked
-cabinets, which play another way: see [Daytona USA](#daytona-usa), or 1 as at Out Run and
-Cruis'n USA, when the next to press E watches), each on their seat's controls.
+cabinets, which play another way: see [Daytona USA](#daytona-usa), or 1 as at Out Run,
+Cruis'n USA and Sega Rally, when the next to press E watches), each on their seat's controls.
 The first plays alone right away. Whoever sits down later joins that game as it is: the lowest
 seat among those playing captures its machine and hands it to everyone through the room, and all
 of them start a new GGRS session (`netplay/`) from it. Someone leaving works the same way. Each
@@ -509,6 +509,18 @@ one machine), then a watcher; with `--delay=40 --jitter=15` the pages' direct li
 one-way delay, to see the game settle after a join at a chosen ping. The machine's own
 determinism, Chrome against Node and through saves, rollbacks and the JIT's background
 compiles, is `node flycast/check.mjs` ([flycast/README.md](flycast/README.md)).
+
+## Sega Rally Championship
+
+Sega Rally Championship (Sega Model 2A, 1995) runs on its own core, `srally`, from the
+segarally95-recomp static recompilation (`model2/srally/`), built and put in the local bucket with
+`make srally` (`make srally-remote` for the site's), served from R2 at `/srally/`, with MAME's
+`srallyc` ROM set: `make upload-rom ROM=$HOME/Downloads/srallyc.zip` (add `R2_TARGET=--remote`
+for the site). It seats one player for now (`players: 1`: the cabinets' two-player link isn't
+carried yet) and is `lockstep` like Virtua Striker 2, its save state being too big to roll back.
+The controls are Daytona USA's: the arrows steer, accelerate and brake, Z and X shift down and up,
+A is the view button. It stands at the end of the driving cabinets' row in `assets/maps/bar.ron`,
+past Cruis'n USA.
 
 ## Voice
 

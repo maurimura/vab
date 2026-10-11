@@ -1,0 +1,2182 @@
+From 8586236549227528af17cb0e4cac5d7d63af4239 Mon Sep 17 00:00:00 2001
+From: Mauri <mauricio@heyglide.com>
+Date: Thu, 8 Oct 2026 14:23:10 -0500
+Subject: [PATCH] GLES 3.0 / WebGL2 renderer: 3D layer into a 496x384
+ framebuffer object
+
+model2_geo_gl.c drawn through the subset OpenGL ES 3.0 / WebGL2 and the
+desktop 2.1 compatibility context share: GLSL ES 3.00 or GLSL 1.20 shaders
+(a mat4 uniform for the projection instead of ftransform), one vertex
+buffer with each triangle's material in its vertices and one glDrawArrays
+per phase, R8 (ES) / LUMINANCE (desktop) index sheets, an RGBA8 atlas of
+the palette LUTs, no fixed-function matrices, client arrays or immediate
+mode. The 3D layer is rendered into its own 496x384 framebuffer (RGBA8 +
+depth24/stencil8; the stencil is the fillmap) and composited over the
+caller's framebuffer, so the picture does not depend on the window.
+
+New entry points for a caller that composites itself:
+model2_geo_gl_projection_matrix, _set_mvp, _set_target_size,
+_render_offscreen, _target_texture, _composite_target, _set_lut_per_frame.
+model2_gl.h: <GLES3/gl3.h> under Emscripten (MODEL2_GL_ES), the Windows
+loader extended to the new entry points, model2_gl_have_sync().
+---
+ lib/host_compat/model2_gl.c            |  110 +-
+ lib/host_compat/model2_gl.h            |  287 +++++-
+ lib/model2/geo/include/model2_geo_gl.h |   92 +-
+ lib/model2/geo/model2_geo_gl.c         | 1307 ++++++++++++++++--------
+ 4 files changed, 1286 insertions(+), 510 deletions(-)
+
+diff --git a/lib/host_compat/model2_gl.c b/lib/host_compat/model2_gl.c
+index 405171b..6cc9ae4 100644
+--- a/lib/host_compat/model2_gl.c
++++ b/lib/host_compat/model2_gl.c
+@@ -1,36 +1,21 @@
+ #include "model2_gl.h"
+ 
+ #include <stdint.h>
++#include <stdio.h>
++#include <string.h>
+ 
+ #ifdef I960_HOST_HAVE_GL
+ 
++#if defined(_WIN32) && !defined(MODEL2_GL_ES)
++
+ #ifdef I960_HOST_HAVE_SDL
+ #include <SDL.h>
+ #endif
+ 
+-#if defined(_WIN32)
+-
+-#include <stdio.h>
+-
+-PFN_model2_glCreateShader model2_glCreateShader;
+-PFN_model2_glShaderSource model2_glShaderSource;
+-PFN_model2_glCompileShader model2_glCompileShader;
+-PFN_model2_glGetShaderiv model2_glGetShaderiv;
+-PFN_model2_glGetShaderInfoLog model2_glGetShaderInfoLog;
+-PFN_model2_glDeleteShader model2_glDeleteShader;
+-PFN_model2_glCreateProgram model2_glCreateProgram;
+-PFN_model2_glAttachShader model2_glAttachShader;
+-PFN_model2_glLinkProgram model2_glLinkProgram;
+-PFN_model2_glDeleteProgram model2_glDeleteProgram;
+-PFN_model2_glGetProgramiv model2_glGetProgramiv;
+-PFN_model2_glGetProgramInfoLog model2_glGetProgramInfoLog;
+-PFN_model2_glGetUniformLocation model2_glGetUniformLocation;
+-PFN_model2_glUseProgram model2_glUseProgram;
+-PFN_model2_glActiveTexture model2_glActiveTexture;
+-PFN_model2_glUniform1i model2_glUniform1i;
+-PFN_model2_glUniform1f model2_glUniform1f;
+-PFN_model2_glUniform4f model2_glUniform4f;
+-PFN_model2_glUniform2f model2_glUniform2f;
++#define MODEL2_GL_DEFINE(name, ret, args) PFN_model2_##name model2_##name;
++MODEL2_GL_PROCS(MODEL2_GL_DEFINE)
++MODEL2_GL_PROCS_OPTIONAL(MODEL2_GL_DEFINE)
++#undef MODEL2_GL_DEFINE
+ 
+ static void *gl_get_proc(const char *name)
+ {
+@@ -54,47 +39,65 @@ int model2_gl_load(void)
+     once = 1;
+     ok = 1;
+ 
+-#define LOAD(sym, name)                                                      \
++#define MODEL2_GL_LOAD(name, ret, args)                                      \
+     do {                                                                     \
+-        sym = (PFN_##sym)gl_get_proc(name);                                  \
+-        if (!sym)                                                            \
++        model2_##name = (PFN_model2_##name)gl_get_proc(#name);               \
++        if (!model2_##name)                                                  \
+             ok = 0;                                                          \
+-    } while (0)
+-
+-    LOAD(model2_glCreateShader, "glCreateShader");
+-    LOAD(model2_glShaderSource, "glShaderSource");
+-    LOAD(model2_glCompileShader, "glCompileShader");
+-    LOAD(model2_glGetShaderiv, "glGetShaderiv");
+-    LOAD(model2_glGetShaderInfoLog, "glGetShaderInfoLog");
+-    LOAD(model2_glDeleteShader, "glDeleteShader");
+-    LOAD(model2_glCreateProgram, "glCreateProgram");
+-    LOAD(model2_glAttachShader, "glAttachShader");
+-    LOAD(model2_glLinkProgram, "glLinkProgram");
+-    LOAD(model2_glDeleteProgram, "glDeleteProgram");
+-    LOAD(model2_glGetProgramiv, "glGetProgramiv");
+-    LOAD(model2_glGetProgramInfoLog, "glGetProgramInfoLog");
+-    LOAD(model2_glGetUniformLocation, "glGetUniformLocation");
+-    LOAD(model2_glUseProgram, "glUseProgram");
+-    LOAD(model2_glActiveTexture, "glActiveTexture");
+-    LOAD(model2_glUniform1i, "glUniform1i");
+-    LOAD(model2_glUniform1f, "glUniform1f");
+-    LOAD(model2_glUniform4f, "glUniform4f");
+-    LOAD(model2_glUniform2f, "glUniform2f");
+-#undef LOAD
++    } while (0);
++#define MODEL2_GL_LOAD_OPTIONAL(name, ret, args)                             \
++    model2_##name = (PFN_model2_##name)gl_get_proc(#name);
++    MODEL2_GL_PROCS(MODEL2_GL_LOAD)
++    MODEL2_GL_PROCS_OPTIONAL(MODEL2_GL_LOAD_OPTIONAL)
++#undef MODEL2_GL_LOAD
++#undef MODEL2_GL_LOAD_OPTIONAL
+ 
+     if (!ok)
+-        fprintf(stderr, "lift: OpenGL 2.0 shader entry points missing\n");
++        fprintf(stderr, "lift: OpenGL 2.1 + framebuffer object entry points missing\n");
+     return ok;
+ }
+ 
+-#else /* !_WIN32 */
++#else /* !_WIN32 || MODEL2_GL_ES */
+ 
+ int model2_gl_load(void)
+ {
+     return 1;
+ }
+ 
+-#endif /* _WIN32 */
++#endif
++
++int model2_gl_have_sync(void)
++{
++#ifdef MODEL2_GL_ES
++    return 1;
++#else
++    static int cached = -1;
++
++    if (cached < 0) {
++        const char *ver = (const char *)glGetString(GL_VERSION);
++        int major = 0, minor = 0;
++
++        if (!ver)
++            return 0; /* no current context yet: ask again later */
++        if (sscanf(ver, "%d.%d", &major, &minor) != 2) {
++            major = 0;
++            minor = 0;
++        }
++        if (major > 3 || (major == 3 && minor >= 2)) {
++            cached = 1;
++        } else {
++            const char *ext = (const char *)glGetString(GL_EXTENSIONS);
++
++            cached = ext && strstr(ext, "GL_ARB_sync") != NULL;
++        }
++#if defined(_WIN32)
++        if (!model2_glFenceSync || !model2_glClientWaitSync || !model2_glDeleteSync)
++            cached = 0;
++#endif
++    }
++    return cached;
++#endif
++}
+ 
+ #else /* !I960_HOST_HAVE_GL */
+ 
+@@ -103,4 +106,9 @@ int model2_gl_load(void)
+     return 0;
+ }
+ 
++int model2_gl_have_sync(void)
++{
++    return 0;
++}
++
+ #endif /* I960_HOST_HAVE_GL */
+diff --git a/lib/host_compat/model2_gl.h b/lib/host_compat/model2_gl.h
+index ca60e51..5e7b754 100644
+--- a/lib/host_compat/model2_gl.h
++++ b/lib/host_compat/model2_gl.h
+@@ -1,25 +1,84 @@
+-/* Host OpenGL headers + Windows 1.2+/2.0 loader.
++/* Host OpenGL headers + Windows loader.
+  *
+- * macOS / Linux link shader entry points from the system GL library.
+- * Windows <GL/gl.h> is 1.1 — load the rest via SDL_GL_GetProcAddress (or wgl).
++ * Two flavours of the same renderer (lib/model2/geo/model2_geo_gl.c):
++ *
++ *   OpenGL ES 3.0 / WebGL2   MODEL2_GL_ES (set automatically under Emscripten):
++ *                            <GLES3/gl3.h>, GLSL ES 3.00 shaders.
++ *   desktop OpenGL 2.1       everything else (the SDL viewer's compatibility
++ *                            context): GLSL 1.20 shaders, plus
++ *                            ARB_framebuffer_object for the offscreen target
++ *                            and ARB_sync when present.
++ *
++ * The renderer only uses the subset both have: shaders, vertex/index buffers,
++ * framebuffer objects, 2D textures, depth/stencil/blend state, pixel-pack
++ * buffers and fences. No fixed-function matrices, client arrays or immediate
++ * mode.
++ *
++ * macOS / Linux link the entry points from the system GL library.
++ * Windows <GL/gl.h> is 1.1 — the rest comes from SDL_GL_GetProcAddress (or wgl).
+  */
+ #ifndef MODEL2_GL_H
+ #define MODEL2_GL_H
+ 
+ #ifdef I960_HOST_HAVE_GL
+ 
++#if defined(__EMSCRIPTEN__) && !defined(MODEL2_GL_ES)
++#define MODEL2_GL_ES 1
++#endif
++
++#ifdef MODEL2_GL_ES
++
++#include <GLES3/gl3.h>
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++/* WebGL2 has it (getBufferSubData) and Emscripten implements it, but it is
++ * not in OpenGL ES 3.0's header. Reads a pixel-pack buffer back. */
++GL_APICALL void GL_APIENTRY glGetBufferSubData(GLenum target, GLintptr offset,
++                                               GLsizeiptr size, void *data);
++#ifdef __cplusplus
++}
++#endif
++
++/*
++ * model2_geo_render_draw_gl (lib/model2/geo/model2_geo_render.c) is a desktop
++ * debug path (untextured triangles / points in immediate mode) that nothing
++ * calls on the web. ES has no immediate mode: compile those calls to nothing.
++ */
++#define glBegin(mode) ((void)(mode))
++#define glEnd() ((void)0)
++#define glVertex3f(x, y, z) ((void)(x), (void)(y), (void)(z))
++#define glColor4f(r, g, b, a) ((void)(r), (void)(g), (void)(b), (void)(a))
++#define glPointSize(size) ((void)(size))
++
++#else /* desktop OpenGL */
++
+ #if defined(__APPLE__)
+-#include <OpenGL/gl.h>
++#ifndef GL_SILENCE_DEPRECATION
++#define GL_SILENCE_DEPRECATION 1
++#endif
++#include <OpenGL/gl.h> /* also pulls in <OpenGL/glext.h> */
+ #else
+ #ifdef _WIN32
+ #ifndef WIN32_LEAN_AND_MEAN
+ #define WIN32_LEAN_AND_MEAN
+ #endif
+ #include <windows.h>
++#include <stddef.h>
++#include <GL/gl.h>
++#else
++#ifndef GL_GLEXT_PROTOTYPES
++#define GL_GLEXT_PROTOTYPES 1
+ #endif
+ #include <GL/gl.h>
++#include <GL/glext.h>
+ #endif
++#endif
++
++#endif /* MODEL2_GL_ES */
+ 
++/* Enums past GL 1.1 (Windows' <GL/gl.h> stops there; harmless elsewhere). */
+ #ifndef GL_CLAMP_TO_EDGE
+ #define GL_CLAMP_TO_EDGE 0x812Fu
+ #endif
+@@ -35,6 +94,9 @@
+ #ifndef GL_TEXTURE1
+ #define GL_TEXTURE1 0x84C1u
+ #endif
++#ifndef GL_TEXTURE2
++#define GL_TEXTURE2 0x84C2u
++#endif
+ #ifndef GL_VERTEX_SHADER
+ #define GL_VERTEX_SHADER 0x8B31u
+ #endif
+@@ -47,8 +109,80 @@
+ #ifndef GL_LINK_STATUS
+ #define GL_LINK_STATUS 0x8B82u
+ #endif
++#ifndef GL_ARRAY_BUFFER
++#define GL_ARRAY_BUFFER 0x8892u
++#endif
++#ifndef GL_ELEMENT_ARRAY_BUFFER
++#define GL_ELEMENT_ARRAY_BUFFER 0x8893u
++#endif
++#ifndef GL_ARRAY_BUFFER_BINDING
++#define GL_ARRAY_BUFFER_BINDING 0x8894u
++#endif
++#ifndef GL_ELEMENT_ARRAY_BUFFER_BINDING
++#define GL_ELEMENT_ARRAY_BUFFER_BINDING 0x8895u
++#endif
++#ifndef GL_STREAM_DRAW
++#define GL_STREAM_DRAW 0x88E0u
++#endif
++#ifndef GL_STATIC_DRAW
++#define GL_STATIC_DRAW 0x88E4u
++#endif
++#ifndef GL_STREAM_READ
++#define GL_STREAM_READ 0x88E1u
++#endif
++#ifndef GL_PIXEL_PACK_BUFFER
++#define GL_PIXEL_PACK_BUFFER 0x88EBu
++#endif
++#ifndef GL_FRAMEBUFFER
++#define GL_FRAMEBUFFER 0x8D40u
++#endif
++#ifndef GL_RENDERBUFFER
++#define GL_RENDERBUFFER 0x8D41u
++#endif
++#ifndef GL_FRAMEBUFFER_BINDING
++#define GL_FRAMEBUFFER_BINDING 0x8CA6u
++#endif
++#ifndef GL_COLOR_ATTACHMENT0
++#define GL_COLOR_ATTACHMENT0 0x8CE0u
++#endif
++#ifndef GL_DEPTH_ATTACHMENT
++#define GL_DEPTH_ATTACHMENT 0x8D00u
++#endif
++#ifndef GL_STENCIL_ATTACHMENT
++#define GL_STENCIL_ATTACHMENT 0x8D20u
++#endif
++#ifndef GL_DEPTH_STENCIL_ATTACHMENT
++#define GL_DEPTH_STENCIL_ATTACHMENT 0x821Au
++#endif
++#ifndef GL_DEPTH24_STENCIL8
++#define GL_DEPTH24_STENCIL8 0x88F0u
++#endif
++#ifndef GL_FRAMEBUFFER_COMPLETE
++#define GL_FRAMEBUFFER_COMPLETE 0x8CD5u
++#endif
++#ifndef GL_RGBA8
++#define GL_RGBA8 0x8058u
++#endif
++#ifndef GL_CURRENT_PROGRAM
++#define GL_CURRENT_PROGRAM 0x8B8Du
++#endif
++#ifndef GL_ACTIVE_TEXTURE
++#define GL_ACTIVE_TEXTURE 0x84E0u
++#endif
++#ifndef GL_SYNC_GPU_COMMANDS_COMPLETE
++#define GL_SYNC_GPU_COMMANDS_COMPLETE 0x9117u
++#endif
++#ifndef GL_ALREADY_SIGNALED
++#define GL_ALREADY_SIGNALED 0x911Au
++#endif
++#ifndef GL_CONDITION_SATISFIED
++#define GL_CONDITION_SATISFIED 0x911Cu
++#endif
++#ifndef GL_SYNC_FLUSH_COMMANDS_BIT
++#define GL_SYNC_FLUSH_COMMANDS_BIT 0x00000001u
++#endif
+ 
+-#if defined(_WIN32)
++#if defined(_WIN32) && !defined(MODEL2_GL_ES)
+ 
+ #ifndef GLAPIENTRY
+ #ifdef APIENTRY
+@@ -61,47 +195,70 @@
+ #ifndef GL_CHAR_DEFINED_HOST
+ typedef char GLchar;
+ #endif
++#ifndef GL_VERSION_1_5
++typedef ptrdiff_t GLintptr;
++typedef ptrdiff_t GLsizeiptr;
++#endif
++#ifndef GL_VERSION_3_2
++typedef struct __GLsync *GLsync;
++typedef unsigned long long GLuint64;
++#endif
+ 
+-typedef GLuint (GLAPIENTRY *PFN_model2_glCreateShader)(GLenum);
+-typedef void (GLAPIENTRY *PFN_model2_glShaderSource)(GLuint, GLsizei, const GLchar *const *,
+-                                                    const GLint *);
+-typedef void (GLAPIENTRY *PFN_model2_glCompileShader)(GLuint);
+-typedef void (GLAPIENTRY *PFN_model2_glGetShaderiv)(GLuint, GLenum, GLint *);
+-typedef void (GLAPIENTRY *PFN_model2_glGetShaderInfoLog)(GLuint, GLsizei, GLsizei *, GLchar *);
+-typedef void (GLAPIENTRY *PFN_model2_glDeleteShader)(GLuint);
+-typedef GLuint (GLAPIENTRY *PFN_model2_glCreateProgram)(void);
+-typedef void (GLAPIENTRY *PFN_model2_glAttachShader)(GLuint, GLuint);
+-typedef void (GLAPIENTRY *PFN_model2_glLinkProgram)(GLuint);
+-typedef void (GLAPIENTRY *PFN_model2_glDeleteProgram)(GLuint);
+-typedef void (GLAPIENTRY *PFN_model2_glGetProgramiv)(GLuint, GLenum, GLint *);
+-typedef void (GLAPIENTRY *PFN_model2_glGetProgramInfoLog)(GLuint, GLsizei, GLsizei *, GLchar *);
+-typedef GLint (GLAPIENTRY *PFN_model2_glGetUniformLocation)(GLuint, const GLchar *);
+-typedef void (GLAPIENTRY *PFN_model2_glUseProgram)(GLuint);
+-typedef void (GLAPIENTRY *PFN_model2_glActiveTexture)(GLenum);
+-typedef void (GLAPIENTRY *PFN_model2_glUniform1i)(GLint, GLint);
+-typedef void (GLAPIENTRY *PFN_model2_glUniform1f)(GLint, GLfloat);
+-typedef void (GLAPIENTRY *PFN_model2_glUniform4f)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
+-typedef void (GLAPIENTRY *PFN_model2_glUniform2f)(GLint, GLfloat, GLfloat);
+-
+-extern PFN_model2_glCreateShader model2_glCreateShader;
+-extern PFN_model2_glShaderSource model2_glShaderSource;
+-extern PFN_model2_glCompileShader model2_glCompileShader;
+-extern PFN_model2_glGetShaderiv model2_glGetShaderiv;
+-extern PFN_model2_glGetShaderInfoLog model2_glGetShaderInfoLog;
+-extern PFN_model2_glDeleteShader model2_glDeleteShader;
+-extern PFN_model2_glCreateProgram model2_glCreateProgram;
+-extern PFN_model2_glAttachShader model2_glAttachShader;
+-extern PFN_model2_glLinkProgram model2_glLinkProgram;
+-extern PFN_model2_glDeleteProgram model2_glDeleteProgram;
+-extern PFN_model2_glGetProgramiv model2_glGetProgramiv;
+-extern PFN_model2_glGetProgramInfoLog model2_glGetProgramInfoLog;
+-extern PFN_model2_glGetUniformLocation model2_glGetUniformLocation;
+-extern PFN_model2_glUseProgram model2_glUseProgram;
+-extern PFN_model2_glActiveTexture model2_glActiveTexture;
+-extern PFN_model2_glUniform1i model2_glUniform1i;
+-extern PFN_model2_glUniform1f model2_glUniform1f;
+-extern PFN_model2_glUniform4f model2_glUniform4f;
+-extern PFN_model2_glUniform2f model2_glUniform2f;
++/* name, return type, parameters — every entry point past GL 1.1 the renderer uses. */
++#define MODEL2_GL_PROCS(X)                                                              \
++    X(glCreateShader, GLuint, (GLenum))                                                 \
++    X(glShaderSource, void, (GLuint, GLsizei, const GLchar *const *, const GLint *))    \
++    X(glCompileShader, void, (GLuint))                                                  \
++    X(glGetShaderiv, void, (GLuint, GLenum, GLint *))                                   \
++    X(glGetShaderInfoLog, void, (GLuint, GLsizei, GLsizei *, GLchar *))                 \
++    X(glDeleteShader, void, (GLuint))                                                   \
++    X(glCreateProgram, GLuint, (void))                                                  \
++    X(glAttachShader, void, (GLuint, GLuint))                                           \
++    X(glBindAttribLocation, void, (GLuint, GLuint, const GLchar *))                     \
++    X(glLinkProgram, void, (GLuint))                                                    \
++    X(glDeleteProgram, void, (GLuint))                                                  \
++    X(glGetProgramiv, void, (GLuint, GLenum, GLint *))                                  \
++    X(glGetProgramInfoLog, void, (GLuint, GLsizei, GLsizei *, GLchar *))                \
++    X(glGetUniformLocation, GLint, (GLuint, const GLchar *))                            \
++    X(glUseProgram, void, (GLuint))                                                     \
++    X(glActiveTexture, void, (GLenum))                                                  \
++    X(glUniform1i, void, (GLint, GLint))                                                \
++    X(glUniform1f, void, (GLint, GLfloat))                                              \
++    X(glUniform2f, void, (GLint, GLfloat, GLfloat))                                     \
++    X(glUniform4f, void, (GLint, GLfloat, GLfloat, GLfloat, GLfloat))                   \
++    X(glUniformMatrix4fv, void, (GLint, GLsizei, GLboolean, const GLfloat *))           \
++    X(glVertexAttribPointer, void, (GLuint, GLint, GLenum, GLboolean, GLsizei,          \
++                                    const void *))                                      \
++    X(glEnableVertexAttribArray, void, (GLuint))                                        \
++    X(glDisableVertexAttribArray, void, (GLuint))                                       \
++    X(glGenBuffers, void, (GLsizei, GLuint *))                                          \
++    X(glDeleteBuffers, void, (GLsizei, const GLuint *))                                 \
++    X(glBindBuffer, void, (GLenum, GLuint))                                             \
++    X(glBufferData, void, (GLenum, GLsizeiptr, const void *, GLenum))                   \
++    X(glGetBufferSubData, void, (GLenum, GLintptr, GLsizeiptr, void *))                 \
++    X(glGenFramebuffers, void, (GLsizei, GLuint *))                                     \
++    X(glDeleteFramebuffers, void, (GLsizei, const GLuint *))                            \
++    X(glBindFramebuffer, void, (GLenum, GLuint))                                        \
++    X(glFramebufferTexture2D, void, (GLenum, GLenum, GLenum, GLuint, GLint))            \
++    X(glFramebufferRenderbuffer, void, (GLenum, GLenum, GLenum, GLuint))                \
++    X(glCheckFramebufferStatus, GLenum, (GLenum))                                       \
++    X(glGenRenderbuffers, void, (GLsizei, GLuint *))                                    \
++    X(glDeleteRenderbuffers, void, (GLsizei, const GLuint *))                           \
++    X(glBindRenderbuffer, void, (GLenum, GLuint))                                       \
++    X(glRenderbufferStorage, void, (GLenum, GLenum, GLsizei, GLsizei))
++
++/* Optional (ARB_sync): the fenced read-back falls back to a synchronous one. */
++#define MODEL2_GL_PROCS_OPTIONAL(X)                                                     \
++    X(glFenceSync, GLsync, (GLenum, GLbitfield))                                        \
++    X(glClientWaitSync, GLenum, (GLsync, GLbitfield, GLuint64))                         \
++    X(glDeleteSync, void, (GLsync))
++
++#define MODEL2_GL_DECLARE(name, ret, args)                                              \
++    typedef ret(GLAPIENTRY *PFN_model2_##name) args;                                    \
++    extern PFN_model2_##name model2_##name;
++MODEL2_GL_PROCS(MODEL2_GL_DECLARE)
++MODEL2_GL_PROCS_OPTIONAL(MODEL2_GL_DECLARE)
++#undef MODEL2_GL_DECLARE
+ 
+ #define glCreateShader model2_glCreateShader
+ #define glShaderSource model2_glShaderSource
+@@ -111,6 +268,7 @@ extern PFN_model2_glUniform2f model2_glUniform2f;
+ #define glDeleteShader model2_glDeleteShader
+ #define glCreateProgram model2_glCreateProgram
+ #define glAttachShader model2_glAttachShader
++#define glBindAttribLocation model2_glBindAttribLocation
+ #define glLinkProgram model2_glLinkProgram
+ #define glDeleteProgram model2_glDeleteProgram
+ #define glGetProgramiv model2_glGetProgramiv
+@@ -120,13 +278,48 @@ extern PFN_model2_glUniform2f model2_glUniform2f;
+ #define glActiveTexture model2_glActiveTexture
+ #define glUniform1i model2_glUniform1i
+ #define glUniform1f model2_glUniform1f
+-#define glUniform4f model2_glUniform4f
+ #define glUniform2f model2_glUniform2f
++#define glUniform4f model2_glUniform4f
++#define glUniformMatrix4fv model2_glUniformMatrix4fv
++#define glVertexAttribPointer model2_glVertexAttribPointer
++#define glEnableVertexAttribArray model2_glEnableVertexAttribArray
++#define glDisableVertexAttribArray model2_glDisableVertexAttribArray
++#define glGenBuffers model2_glGenBuffers
++#define glDeleteBuffers model2_glDeleteBuffers
++#define glBindBuffer model2_glBindBuffer
++#define glBufferData model2_glBufferData
++#define glGetBufferSubData model2_glGetBufferSubData
++#define glGenFramebuffers model2_glGenFramebuffers
++#define glDeleteFramebuffers model2_glDeleteFramebuffers
++#define glBindFramebuffer model2_glBindFramebuffer
++#define glFramebufferTexture2D model2_glFramebufferTexture2D
++#define glFramebufferRenderbuffer model2_glFramebufferRenderbuffer
++#define glCheckFramebufferStatus model2_glCheckFramebufferStatus
++#define glGenRenderbuffers model2_glGenRenderbuffers
++#define glDeleteRenderbuffers model2_glDeleteRenderbuffers
++#define glBindRenderbuffer model2_glBindRenderbuffer
++#define glRenderbufferStorage model2_glRenderbufferStorage
++#define glFenceSync model2_glFenceSync
++#define glClientWaitSync model2_glClientWaitSync
++#define glDeleteSync model2_glDeleteSync
+ 
+-#endif /* _WIN32 */
++#endif /* _WIN32 && !MODEL2_GL_ES */
+ 
+ #endif /* I960_HOST_HAVE_GL */
+ 
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++/* Resolve the entry points (Windows); 1 when the renderer's set is there. */
+ int model2_gl_load(void);
+ 
++/* 1 when fences (glFenceSync / glClientWaitSync) work in the current context:
++ * always on ES 3.0 / WebGL2, ARB_sync or GL >= 3.2 on desktop. */
++int model2_gl_have_sync(void);
++
++#ifdef __cplusplus
++}
++#endif
++
+ #endif /* MODEL2_GL_H */
+diff --git a/lib/model2/geo/include/model2_geo_gl.h b/lib/model2/geo/include/model2_geo_gl.h
+index e73b86b..eb25f8a 100644
+--- a/lib/model2/geo/include/model2_geo_gl.h
++++ b/lib/model2/geo/include/model2_geo_gl.h
+@@ -1,19 +1,87 @@
+ /* Host OpenGL textured geo draw — index sheet + 16-entry palette LUT.
+- * Same entry for attract and race (course_view_bind / copro_submit latch). */
++ * Same entry for attract and race (course_view_bind / copro_submit latch).
++ *
++ * The 3D layer is rendered into the renderer's own framebuffer object
++ * (MODEL2_GEO_GL_TARGET_W x _H by default, RGBA8 colour texture + 24-bit depth
++ * + 8-bit stencil), so the picture does not depend on the window size, and
++ * only through the subset of OpenGL that OpenGL ES 3.0 / WebGL2 and the
++ * desktop 2.1 compatibility context share (see model2_gl.h).
++ *
++ * Two ways to use it:
++ *   - model2_geo_gl_draw_textured(): what the SDL viewer calls. Renders into
++ *     the target, then draws the target over the caller's framebuffer and
++ *     viewport (alpha blend: transparent where no polygon landed).
++ *   - model2_geo_gl_render_offscreen() + model2_geo_gl_target_texture(): render
++ *     into the target only, for a caller that composites itself
++ *     (model2/srally/shim/video.c).
++ */
+ #ifndef MODEL2_GEO_GL_H
+ #define MODEL2_GEO_GL_H
+ 
+ #include "model2_geo.h"
+ 
++#define MODEL2_GEO_GL_TARGET_W 496
++#define MODEL2_GEO_GL_TARGET_H 384
++
++/*
++ * The clip-space transform for GEO window/focus state (MAME geo window →
++ * raster command 03, eye 0): column-major, as glLoadMatrixf / a mat4 uniform
++ * take it. Positive-Z infinite projection, no far plane. Decoded vertices are
++ * already camera-space, so this is the whole transform.
++ */
++void model2_geo_gl_projection_matrix(const model2_geo_projection_t *p, float znear,
++                                     float out[16]);
++
+ #ifdef I960_HOST_HAVE_GL
+ void model2_geo_gl_tex_init(void);
+ void model2_geo_gl_tex_shutdown(void);
+-/* Attract + race publish into the same latch; this draws it. */
++/* Attract + race publish into the same latch; this draws it (see above). */
+ void model2_geo_gl_draw_textured(const float *xyzuv, unsigned nverts,
+                                  const model2_geo_tri_mat_t *mats, unsigned ntris);
+ /* I960_GEO_FLAT=1: gray lit tris (transform debug). Default 0 = full colour. */
+ void model2_geo_gl_set_flat(int on);
+ int model2_geo_gl_want_flat(void);
++
++/*
++ * Clip-space transform for the next draws (column-major mat4), e.g. from
++ * model2_geo_gl_projection_matrix(). NULL = none set: desktop GL then takes
++ * the fixed-function GL_PROJECTION x GL_MODELVIEW the caller loaded (what the
++ * SDL viewer does); OpenGL ES uses identity.
++ */
++void model2_geo_gl_set_mvp(const float m[16]);
++
++/* Size of the offscreen target (default 496x384); takes effect on the next draw. */
++void model2_geo_gl_set_target_size(int w, int h);
++
++/*
++ * 1: rebuild the palette LUTs every frame instead of caching them until
++ * model2_palette_state_sig() changes. That signature samples colorxlat and
++ * lumaram sparsely, so cached LUTs can lag a palette change (the practice
++ * start fade); per frame, the picture depends on the current frame's state
++ * only. Default 0 (the cache, as before); costs ~0.3 ms a frame natively.
++ */
++void model2_geo_gl_set_lut_per_frame(int on);
++
++/* Drop what is cached from the emulated RAM (palette LUTs, index sheets): after
++ * a state load or a reset, the next draw rebuilds them. */
++void model2_geo_gl_invalidate(void);
++
++/*
++ * Render the 3D layer into the offscreen target only: clears it to
++ * transparent black (alpha 0), draws (alpha 1 wherever a polygon lands), and
++ * restores the caller's framebuffer binding and viewport. ntris == 0 just
++ * clears. Returns the target's colour texture (a GL texture name) or 0 when
++ * GL is not usable. The texture is top-down: texel row 0 (t = 0) is the top
++ * of the picture, as in the tile bitmaps.
++ */
++unsigned model2_geo_gl_render_offscreen(const float *xyzuv, unsigned nverts,
++                                        const model2_geo_tri_mat_t *mats,
++                                        unsigned ntris);
++/* The target's colour texture (0 before the first render). */
++unsigned model2_geo_gl_target_texture(void);
++/* Draw the target's colour texture over the bound framebuffer at the current
++ * viewport (blend: src alpha). */
++void model2_geo_gl_composite_target(void);
+ #else
+ static inline void model2_geo_gl_tex_init(void) {}
+ static inline void model2_geo_gl_tex_shutdown(void) {}
+@@ -28,6 +96,26 @@ static inline void model2_geo_gl_draw_textured(const float *xyzuv, unsigned nver
+ }
+ static inline void model2_geo_gl_set_flat(int on) { (void)on; }
+ static inline int model2_geo_gl_want_flat(void) { return 0; }
++static inline void model2_geo_gl_set_mvp(const float m[16]) { (void)m; }
++static inline void model2_geo_gl_set_target_size(int w, int h)
++{
++    (void)w;
++    (void)h;
++}
++static inline void model2_geo_gl_set_lut_per_frame(int on) { (void)on; }
++static inline void model2_geo_gl_invalidate(void) {}
++static inline unsigned model2_geo_gl_render_offscreen(const float *xyzuv, unsigned nverts,
++                                                      const model2_geo_tri_mat_t *mats,
++                                                      unsigned ntris)
++{
++    (void)xyzuv;
++    (void)nverts;
++    (void)mats;
++    (void)ntris;
++    return 0;
++}
++static inline unsigned model2_geo_gl_target_texture(void) { return 0; }
++static inline void model2_geo_gl_composite_target(void) {}
+ #endif
+ 
+ #endif
+diff --git a/lib/model2/geo/model2_geo_gl.c b/lib/model2/geo/model2_geo_gl.c
+index 450c994..cc42ca2 100644
+--- a/lib/model2/geo/model2_geo_gl.c
++++ b/lib/model2/geo/model2_geo_gl.c
+@@ -7,47 +7,144 @@
+  *   C) cutouts — fillmap after stencil clear (logos/shadows/sky cutouts;
+  *      LEQUAL vs A/B depth so they cannot steal car pixels)
+  * Emit every exportable prim (both sides) until host n·p matches hardware.
++ *
++ * The fillmap is the stencil buffer: the hardware rasterizer is first-wins
++ * per pixel over a nearest-first sorted list, so within B (and again within
++ * C) a pixel takes the first fragment that passes depth (stencil EQUAL 0,
++ * INCR on pass) and later co-planar polygons do not overwrite it.
++ *
++ * GL usage is the common subset of OpenGL ES 3.0 / WebGL2 and desktop GL 2.1
++ * (see model2_gl.h): GLSL ES 3.00 or GLSL 1.20, a mat4 uniform for the
++ * projection, one vertex buffer and glDrawArrays, R8 (ES) / LUMINANCE
++ * (desktop) index sheets, an RGBA8 atlas of the 16-entry palette LUTs, and a
++ * 496x384 framebuffer object (RGBA8 + depth24/stencil8) to render into, so the
++ * picture does not depend on the window.
++ *
++ * Every triangle carries its material in its vertices (texture patch, mirror,
++ * cutout, sheet, LUT slot or solid colour), so each phase is one draw call:
++ * GL keeps primitive order within a draw, so the depth/stencil outcome is the
++ * one per-material draws gave, with a few draws a frame instead of ~1500.
+  */
+ 
+ #include "model2_geo_gl.h"
+ #include "lift_log.h"
+ 
+-#ifdef I960_HOST_HAVE_GL
+-
+-#include "model2_geo_tex.h"
+-
+ #include <math.h>
++#include <stddef.h>
+ #include <stdint.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
+ 
++void model2_geo_gl_projection_matrix(const model2_geo_projection_t *p, float znear,
++                                     float out[16])
++{
++    float width = (float)(p->viewport[2] - p->viewport[0]);
++    float height = (float)(p->viewport[3] - p->viewport[1]);
++    float xoff = 2.f * ((float)p->center[0] - (float)p->viewport[0]) / width - 1.f;
++    float yoff = 1.f
++               - 2.f * ((float)p->viewport[3] - (float)p->center[1]) / height;
++
++    memset(out, 0, 16 * sizeof(float));
++    out[0] = 2.f / width;
++    out[5] = 2.f / height;
++    out[8] = xoff;
++    out[9] = yoff;
++    /*
++     * Positive-Z infinite projection. MAME's Model 2 raster path clips the
++     * view frustum and polygons wholly behind Z=0, but has no GL-style far
++     * plane. A finite viewer far plane discarded valid track geometry.
++     */
++    out[10] = 1.f;
++    out[11] = 1.f; /* clip W = positive Model 2 camera-space Z */
++    out[14] = -2.f * znear;
++}
++
++#ifdef I960_HOST_HAVE_GL
++
++#include "model2_geo_tex.h"
++
+ #include "model2_gl.h"
+ 
+ enum {
+-    LUT_CACHE_CAP = 512,
+-    DRAW_SCRATCH_INIT_TRIS = 8192
++    DRAW_SCRATCH_INIT_TRIS = 8192,
++    /* LUT atlas: 16 LUTs of 16 texels per 256-texel row. */
++    LUT_ATLAS_W = 256,
++    LUT_PER_ROW = LUT_ATLAS_W / 16,
++    LUT_ATLAS_ROWS_INIT = 64,   /* 1024 LUTs */
++    LUT_ATLAS_ROWS_MAX = 2048,  /* 32768 LUTs; WebGL2 guarantees 2048 */
++    LUT_HASH_BITS = 16
++};
++
++/* Vertex attribute slots (bound before link; 0 is the position, which the
++ * desktop compatibility profile requires). */
++enum {
++    ATTR_POS = 0,   /* vec3 xyz */
++    ATTR_UV = 1,    /* vec2 patch-local texel coords */
++    ATTR_PATCH = 2, /* u16 x4: patch x, y, w, h */
++    ATTR_MAT = 3,   /* u8 x4: mirror x, mirror y, cutout, sheet */
++    ATTR_COLOR = 4, /* u8 x4 normalized: solid colour */
++    ATTR_LUT = 5    /* u16 x2: LUT slot, textured */
+ };
+ 
+ typedef struct {
+-    u16 colorbase;
+-    u16 lumabase;
+-    u8 sheet;
+-    u8 flags;
+-    u8 luma;
+-    GLuint tex;
+-} lut_cache_ent_t;
+-
+-static GLuint g_prog;
+-static GLuint g_solid_prog;
++    float xyz[3];
++    float uv[2];
++    u16 patch[4];
++    u8 mat[4];
++    u8 color[4];
++    u16 lut[2];
++} geo_vert_t; /* 40 bytes */
++
++static GLuint g_prog;      /* phases A/B/C/HUD: solid colour or sheet + LUT */
++static GLuint g_blit_prog; /* target texture → caller's framebuffer */
+ static GLuint g_sheet_tex[2];
+-static int g_ready;
++static GLuint g_lut_tex;
++static int g_ready; /* g_prog usable */
++static int g_init_done;
+ static int g_sheets_uploaded;
+ static u32 g_sheets_gen_uploaded;
+ static u32 g_lut_palette_sig;
+ static int g_logged_shader;
+ static int g_flat_mode = -1; /* -1 = read env once */
+ 
++static GLuint g_vbo;
++static GLuint g_vbo_quad;
++
++/* Offscreen target. */
++static GLuint g_fbo;
++static GLuint g_fbo_color;
++static GLuint g_fbo_depth;
++static int g_fbo_w;
++static int g_fbo_h;
++static int g_target_w = MODEL2_GEO_GL_TARGET_W;
++static int g_target_h = MODEL2_GEO_GL_TARGET_H;
++
++static float g_mvp[16];
++static int g_mvp_set;
++static int g_lut_per_frame;
++
++static GLint g_loc_mvp = -1;
++static GLint g_loc_sheet0 = -1;
++static GLint g_loc_sheet1 = -1;
++static GLint g_loc_lut = -1;
++static GLint g_loc_lut_size = -1;
++static GLint g_loc_blit_tex = -1;
++
++/* LUT atlas: CPU copy, open-addressing map (key pair → slot + 1), dirty rows. */
++static u8 *g_lut_pixels; /* LUT_ATLAS_W x g_lut_rows RGBA */
++static unsigned g_lut_rows;
++static unsigned g_lut_tex_rows; /* rows the GL texture was allocated with */
++static unsigned g_lut_count;
++static u32 *g_lut_keys;  /* 2 words per hash entry */
++static u16 *g_lut_slot1; /* slot + 1; 0 = empty */
++static unsigned g_lut_dirty_lo;
++static unsigned g_lut_dirty_hi; /* exclusive; lo == hi: clean */
++
++static unsigned *g_order;
++static geo_vert_t *g_verts; /* 3 per tri, in draw order */
++static unsigned g_scratch_tris;
++
+ int model2_geo_gl_want_flat(void)
+ {
+     if (g_flat_mode < 0) {
+@@ -64,28 +161,130 @@ void model2_geo_gl_set_flat(int on)
+     g_flat_mode = on ? 1 : 0;
+ }
+ 
+-static GLint g_loc_sheet = -1;
+-static GLint g_loc_lut = -1;
+-static GLint g_loc_cutout = -1;
+-static GLint g_loc_patch = -1;   /* xy = origin, zw = size (pixels) */
+-static GLint g_loc_mirror = -1;  /* x = mirror_x, y = mirror_y */
+-static GLint g_loc_sort_depth = -1;
+-static GLint g_loc_solid_depth = -1;
+-
+-static lut_cache_ent_t g_lut_cache[LUT_CACHE_CAP];
+-static unsigned g_lut_cache_n;
+-static unsigned g_lut_cache_clock;
+-
+-static unsigned *g_order;
+-static unsigned *g_elem; /* 3 indices per tri, remapped for DrawElements */
+-static unsigned char *g_solid_rgb; /* 9 bytes per tri (only used for solids) */
+-static unsigned g_scratch_tris;
++/* ---- Shaders ------------------------------------------------------------ */
++
++#ifdef MODEL2_GL_ES
++static const char k_vs_head[] =
++    "#version 300 es\n"
++    "precision highp float;\n"
++    "#define ATTR in\n"
++    "#define VARY out\n";
++static const char k_fs_head[] =
++    "#version 300 es\n"
++    "precision highp float;\n"
++    "precision highp sampler2D;\n"
++    "#define VARY in\n"
++    "#define TEX2D texture\n"
++    "out vec4 m2_frag;\n"
++    "#define FRAG m2_frag\n";
++#else
++/* macOS legacy GL tops out at GLSL 1.20 (no int bitops) — stay float-only. */
++static const char k_vs_head[] =
++    "#version 120\n"
++    "#define ATTR attribute\n"
++    "#define VARY varying\n";
++static const char k_fs_head[] =
++    "#version 120\n"
++    "#define VARY varying\n"
++    "#define TEX2D texture2D\n"
++    "#define FRAG gl_FragColor\n";
++#endif
++
++static const char k_geo_vs[] =
++    "ATTR vec3 aPos;\n"
++    "ATTR vec2 aUV;\n"
++    "ATTR vec4 aPatch;\n"
++    "ATTR vec4 aMat;\n"
++    "ATTR vec4 aColor;\n"
++    "ATTR vec2 aLut;\n"
++    "uniform mat4 uMVP;\n"
++    "VARY vec2 vUV;\n"
++    "VARY vec4 vPatch;\n"
++    "VARY vec4 vMat;\n"
++    "VARY vec4 vColor;\n"
++    "VARY vec2 vLut;\n"
++    "void main() {\n"
++    "  vUV = aUV;\n"
++    "  vPatch = aPatch;\n"
++    "  vMat = aMat;\n"
++    "  vColor = aColor;\n"
++    "  vLut = aLut;\n"
++    "  gl_Position = uMVP * vec4(aPos, 1.0);\n"
++    "}\n";
++/*
++ * Per-triangle values are the same at all three corners; interpolation can
++ * leave them an ulp off, so the integers are rounded back (GLSL 1.20 has no
++ * flat varyings).
++ *
++ * Texcoords are patch-local pixels (pu/8). Mirror + wrap match MAME
++ * fetch_bilinear_texel (nearest), then sample absolute sheet UV.
++ * Sheet R8 is baked with get_texel(0,0,sx,sy) including the x>=1024 fold.
++ */
++static const char k_geo_fs[] =
++    "uniform sampler2D uSheet0;\n"
++    "uniform sampler2D uSheet1;\n"
++    "uniform sampler2D uLut;\n"
++    "uniform vec2 uLutSize;\n"
++    "VARY vec2 vUV;\n"
++    "VARY vec4 vPatch;\n"
++    "VARY vec4 vMat;\n"
++    "VARY vec4 vColor;\n"
++    "VARY vec2 vLut;\n"
++    "float wrap_coord(float pix, float size, float mirror) {\n"
++    "  float s = max(size, 1.0);\n"
++    "  float cell = floor(pix / s);\n"
++    "  float local = pix - cell * s;\n"
++    "  if (mirror > 0.5 && mod(cell, 2.0) >= 1.0)\n"
++    "    local = s - 1.0 - local;\n"
++    "  local = local - floor(local / s) * s;\n"
++    "  if (local < 0.0) local += s;\n"
++    "  return floor(local);\n"
++    "}\n"
++    "void main() {\n"
++    "  vec2 lut = floor(vLut + 0.5);\n"
++    "  if (lut.y < 0.5) {\n"
++    "    FRAG = vec4(vColor.rgb, 1.0);\n"
++    "    return;\n"
++    "  }\n"
++    "  vec4 ptc = floor(vPatch + 0.5);\n"
++    "  vec4 mtl = floor(vMat + 0.5);\n"
++    "  float u0 = wrap_coord(vUV.x, ptc.z, mtl.x);\n"
++    "  float v0 = wrap_coord(vUV.y, ptc.w, mtl.y);\n"
++    "  vec2 st = vec2((ptc.x + u0 + 0.5) / 2048.0,\n"
++    "                 (ptc.y + v0 + 0.5) / 1024.0);\n"
++    "  float r = mtl.w > 0.5 ? TEX2D(uSheet1, st).r : TEX2D(uSheet0, st).r;\n"
++    "  float t = floor(r * 255.0 + 0.5);\n"
++    "  float col = mod(lut.x, 16.0) * 16.0 + t;\n"
++    "  float row = floor(lut.x / 16.0);\n"
++    "  vec4 c = TEX2D(uLut, vec2((col + 0.5) / uLutSize.x, (row + 0.5) / uLutSize.y));\n"
++    "  if (mtl.z > 0.5 && c.a < 0.5) discard;\n"
++    "  FRAG = vec4(c.rgb, 1.0);\n"
++    "}\n";
++
++/* The target is top-down: its row 0 goes to the top of the viewport. */
++static const char k_blit_vs[] =
++    "ATTR vec2 aPos;\n"
++    "VARY vec2 vUV;\n"
++    "void main() {\n"
++    "  vUV = vec2(aPos.x * 0.5 + 0.5, 0.5 - aPos.y * 0.5);\n"
++    "  gl_Position = vec4(aPos, 0.0, 1.0);\n"
++    "}\n";
++static const char k_blit_fs[] =
++    "uniform sampler2D uTex;\n"
++    "VARY vec2 vUV;\n"
++    "void main() {\n"
++    "  FRAG = TEX2D(uTex, vUV);\n"
++    "}\n";
+ 
+ static GLuint compile_shader(GLenum type, const char *src)
+ {
+     GLuint s = glCreateShader(type);
++    const GLchar *parts[2];
+     GLint ok = 0;
+-    glShaderSource(s, 1, &src, NULL);
++
++    parts[0] = (type == GL_VERTEX_SHADER) ? k_vs_head : k_fs_head;
++    parts[1] = src;
++    glShaderSource(s, 2, parts, NULL);
+     glCompileShader(s);
+     glGetShaderiv(s, GL_COMPILE_STATUS, &ok);
+     if (!ok) {
+@@ -98,93 +297,68 @@ static GLuint compile_shader(GLenum type, const char *src)
+     return s;
+ }
+ 
+-static int build_program(void)
++/* attrs: NULL-terminated names, bound to `slots` in order. */
++static GLuint build_program(const char *vs_src, const char *fs_src,
++                            const char *const *attrs, const GLuint *slots)
+ {
+-    /* macOS legacy GL defaults to GLSL 1.10 (no int bitops) — stay float-only. */
+-    static const char *vs =
+-        "void main() {\n"
+-        "  gl_TexCoord[0] = gl_MultiTexCoord0;\n"
+-        "  gl_Position = ftransform();\n"
+-        "}\n";
+-    /*
+-     * Texcoords are patch-local pixels (pu/8). Mirror + wrap match MAME
+-     * fetch_bilinear_texel (nearest), then sample absolute sheet UV.
+-     * Sheet R8 is baked with get_texel(0,0,sx,sy) including the x>=1024 fold.
+-     */
+-    static const char *fs =
+-        "uniform sampler2D uSheet;\n"
+-        "uniform sampler2D uLut;\n"
+-        "uniform float uCutout;\n"
+-        "uniform vec4 uPatch;\n"
+-        "uniform vec2 uMirror;\n"
+-        "float wrap_coord(float pix, float size, float mirror) {\n"
+-        "  float s = max(size, 1.0);\n"
+-        "  float cell = floor(pix / s);\n"
+-        "  float local = pix - cell * s;\n"
+-        "  if (mirror > 0.5 && mod(cell, 2.0) >= 1.0)\n"
+-        "    local = s - 1.0 - local;\n"
+-        "  local = local - floor(local / s) * s;\n"
+-        "  if (local < 0.0) local += s;\n"
+-        "  return floor(local);\n"
+-        "}\n"
+-        "void main() {\n"
+-        "  float u0 = wrap_coord(gl_TexCoord[0].x, uPatch.z, uMirror.x);\n"
+-        "  float v0 = wrap_coord(gl_TexCoord[0].y, uPatch.w, uMirror.y);\n"
+-        "  vec2 st = vec2((uPatch.x + u0 + 0.5) / 2048.0,\n"
+-        "                 (uPatch.y + v0 + 0.5) / 1024.0);\n"
+-        "  float t = floor(texture2D(uSheet, st).r * 255.0 + 0.5);\n"
+-        "  vec4 c = texture2D(uLut, vec2((t + 0.5) / 16.0, 0.5));\n"
+-        "  if (uCutout > 0.5 && c.a < 0.5) discard;\n"
+-        "  gl_FragColor = vec4(c.rgb, 1.0);\n"
+-        "}\n";
+-    GLuint v, f;
++    GLuint v, f, prog;
+     GLint ok = 0;
++    unsigned i;
+ 
+-    v = compile_shader(GL_VERTEX_SHADER, vs);
+-    f = compile_shader(GL_FRAGMENT_SHADER, fs);
++    v = compile_shader(GL_VERTEX_SHADER, vs_src);
++    f = compile_shader(GL_FRAGMENT_SHADER, fs_src);
+     if (!v || !f) {
+         if (v)
+             glDeleteShader(v);
+         if (f)
+             glDeleteShader(f);
+-        return -1;
++        return 0;
+     }
+-    g_prog = glCreateProgram();
+-    glAttachShader(g_prog, v);
+-    glAttachShader(g_prog, f);
+-    glLinkProgram(g_prog);
++    prog = glCreateProgram();
++    glAttachShader(prog, v);
++    glAttachShader(prog, f);
++    for (i = 0; attrs[i]; i++)
++        glBindAttribLocation(prog, slots[i], attrs[i]);
++    glLinkProgram(prog);
+     glDeleteShader(v);
+     glDeleteShader(f);
+-    glGetProgramiv(g_prog, GL_LINK_STATUS, &ok);
++    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+     if (!ok) {
+         char log[512];
+-        glGetProgramInfoLog(g_prog, (GLsizei)sizeof(log), NULL, log);
++        glGetProgramInfoLog(prog, (GLsizei)sizeof(log), NULL, log);
+         fprintf(stderr, "lift: geo shader link: %s\n", log);
+-        glDeleteProgram(g_prog);
+-        g_prog = 0;
+-        return -1;
++        glDeleteProgram(prog);
++        return 0;
+     }
+-    g_loc_sheet = glGetUniformLocation(g_prog, "uSheet");
+-    g_loc_lut = glGetUniformLocation(g_prog, "uLut");
+-    g_loc_cutout = glGetUniformLocation(g_prog, "uCutout");
+-    g_loc_patch = glGetUniformLocation(g_prog, "uPatch");
+-    g_loc_mirror = glGetUniformLocation(g_prog, "uMirror");
+-    g_loc_sort_depth = -1;
+-    g_solid_prog = 0;
+-    g_loc_solid_depth = -1;
+-    return 0;
++    return prog;
+ }
+ 
+-static void lut_cache_clear(void)
++static int build_programs(void)
+ {
+-    unsigned i;
+-
+-    for (i = 0; i < g_lut_cache_n; i++)
+-        glDeleteTextures(1, &g_lut_cache[i].tex);
+-    g_lut_cache_n = 0;
+-    g_lut_cache_clock = 0;
++    static const char *const geo_attrs[] = { "aPos", "aUV", "aPatch", "aMat",
++                                             "aColor", "aLut", NULL };
++    static const GLuint geo_slots[] = { ATTR_POS, ATTR_UV, ATTR_PATCH,
++                                        ATTR_MAT, ATTR_COLOR, ATTR_LUT };
++    static const char *const blit_attrs[] = { "aPos", NULL };
++    static const GLuint blit_slots[] = { ATTR_POS };
++
++    g_blit_prog = build_program(k_blit_vs, k_blit_fs, blit_attrs, blit_slots);
++    if (g_blit_prog)
++        g_loc_blit_tex = glGetUniformLocation(g_blit_prog, "uTex");
++
++    g_prog = build_program(k_geo_vs, k_geo_fs, geo_attrs, geo_slots);
++    if (!g_prog)
++        return -1;
++    g_loc_mvp = glGetUniformLocation(g_prog, "uMVP");
++    g_loc_sheet0 = glGetUniformLocation(g_prog, "uSheet0");
++    g_loc_sheet1 = glGetUniformLocation(g_prog, "uSheet1");
++    g_loc_lut = glGetUniformLocation(g_prog, "uLut");
++    g_loc_lut_size = glGetUniformLocation(g_prog, "uLutSize");
++    return 0;
+ }
+ 
++/* ---- Textures ----------------------------------------------------------- */
++
+ static void upload_sheets(void)
+ {
+     u8 *r8;
+@@ -207,9 +381,15 @@ static void upload_sheets(void)
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
++#ifdef MODEL2_GL_ES
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, MODEL2_GEO_SHEET_W, MODEL2_GEO_SHEET_H, 0,
++                     GL_RED, GL_UNSIGNED_BYTE, r8);
++#else
+         glTexImage2D(GL_TEXTURE_2D, 0, GL_LUMINANCE, MODEL2_GEO_SHEET_W,
+                      MODEL2_GEO_SHEET_H, 0, GL_LUMINANCE, GL_UNSIGNED_BYTE, r8);
++#endif
+     }
++    glBindTexture(GL_TEXTURE_2D, 0);
+     free(r8);
+     g_sheets_uploaded = 1;
+     g_sheets_gen_uploaded = gen;
+@@ -217,16 +397,97 @@ static void upload_sheets(void)
+             (unsigned)gen);
+ }
+ 
+-static int mat_same(const model2_geo_tri_mat_t *a, const model2_geo_tri_mat_t *b)
++static void lut_cache_clear(void)
+ {
+-    if (a->colorbase != b->colorbase || a->lumabase != b->lumabase
+-        || a->sheet != b->sheet || a->flags != b->flags || a->luma != b->luma
+-        || a->pad != b->pad)
+-        return 0;
+-    if ((a->flags & MODEL2_GEO_TEX_TEXTURED) == 0)
+-        return 1;
+-    return a->patch_x == b->patch_x && a->patch_y == b->patch_y
+-        && a->patch_w == b->patch_w && a->patch_h == b->patch_h;
++    if (g_lut_slot1)
++        memset(g_lut_slot1, 0, sizeof(u16) << LUT_HASH_BITS);
++    g_lut_count = 0;
++    g_lut_dirty_lo = g_lut_dirty_hi = 0;
++}
++
++static int lut_grow(void)
++{
++    unsigned rows = g_lut_rows ? g_lut_rows * 2u : (unsigned)LUT_ATLAS_ROWS_INIT;
++    u8 *px;
++
++    if (rows > LUT_ATLAS_ROWS_MAX)
++        return -1;
++    px = (u8 *)realloc(g_lut_pixels, (size_t)LUT_ATLAS_W * 4u * rows);
++    if (!px)
++        return -1;
++    memset(px + (size_t)LUT_ATLAS_W * 4u * g_lut_rows, 0,
++           (size_t)LUT_ATLAS_W * 4u * (rows - g_lut_rows));
++    g_lut_pixels = px;
++    g_lut_rows = rows;
++    return 0;
++}
++
++/*
++ * Atlas slot of a material's 16-entry LUT, built on first use. Keyed on what
++ * model2_palette_build_texel_lut depends on (colorbase, lumabase, luma, the
++ * cutout/translucent bit); dropped with the palette signature like the
++ * per-material LUT textures were. -1 when the atlas is full.
++ */
++static int lut_slot(const model2_geo_tri_mat_t *m)
++{
++    const u32 k1 = (u32)m->colorbase | ((u32)m->lumabase << 16);
++    const u32 k2 = (u32)m->luma | ((m->flags & MODEL2_GEO_TEX_CUTOUT) ? 0x100u : 0u);
++    const unsigned mask = (1u << LUT_HASH_BITS) - 1u;
++    unsigned h = ((k1 * 2654435761u) ^ (k2 * 40503u)) >> (32 - LUT_HASH_BITS);
++    unsigned slot, row, col;
++    u8 lut[16 * 4];
++
++    for (;;) {
++        u16 s1 = g_lut_slot1[h];
++
++        if (!s1)
++            break;
++        if (g_lut_keys[h * 2u] == k1 && g_lut_keys[h * 2u + 1u] == k2)
++            return (int)s1 - 1;
++        h = (h + 1u) & mask;
++    }
++    if (g_lut_count >= (1u << LUT_HASH_BITS) / 2u)
++        return -1; /* keep the hash at most half full */
++    if (g_lut_count >= g_lut_rows * (unsigned)LUT_PER_ROW && lut_grow() != 0)
++        return -1;
++    slot = g_lut_count++;
++    g_lut_slot1[h] = (u16)(slot + 1u);
++    g_lut_keys[h * 2u] = k1;
++    g_lut_keys[h * 2u + 1u] = k2;
++
++    model2_palette_build_texel_lut(m->colorbase, m->lumabase, m->luma,
++                                   (m->flags & MODEL2_GEO_TEX_CUTOUT) ? 1 : 0, lut);
++    row = slot / (unsigned)LUT_PER_ROW;
++    col = (slot % (unsigned)LUT_PER_ROW) * 16u;
++    memcpy(g_lut_pixels + ((size_t)row * LUT_ATLAS_W + col) * 4u, lut, sizeof(lut));
++    if (g_lut_dirty_lo == g_lut_dirty_hi) {
++        g_lut_dirty_lo = row;
++        g_lut_dirty_hi = row + 1u;
++    } else {
++        if (row < g_lut_dirty_lo)
++            g_lut_dirty_lo = row;
++        if (row + 1u > g_lut_dirty_hi)
++            g_lut_dirty_hi = row + 1u;
++    }
++    return (int)slot;
++}
++
++static void lut_upload(void)
++{
++    glBindTexture(GL_TEXTURE_2D, g_lut_tex);
++    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
++    if (g_lut_tex_rows != g_lut_rows) {
++        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, LUT_ATLAS_W, (GLsizei)g_lut_rows, 0,
++                     GL_RGBA, GL_UNSIGNED_BYTE, g_lut_pixels);
++        g_lut_tex_rows = g_lut_rows;
++    } else if (g_lut_dirty_lo < g_lut_dirty_hi) {
++        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, (GLint)g_lut_dirty_lo, LUT_ATLAS_W,
++                        (GLsizei)(g_lut_dirty_hi - g_lut_dirty_lo), GL_RGBA,
++                        GL_UNSIGNED_BYTE,
++                        g_lut_pixels + (size_t)g_lut_dirty_lo * LUT_ATLAS_W * 4u);
++    }
++    g_lut_dirty_lo = g_lut_dirty_hi = 0;
++    glBindTexture(GL_TEXTURE_2D, 0);
+ }
+ 
+ static int ensure_scratch(unsigned ntris)
+@@ -235,12 +496,18 @@ static int ensure_scratch(unsigned ntris)
+         return 0;
+     {
+         unsigned cap = g_scratch_tris ? g_scratch_tris : DRAW_SCRATCH_INIT_TRIS;
++        unsigned *order;
++        geo_vert_t *verts;
++
+         while (cap < ntris)
+             cap *= 2u;
+-        g_order = (unsigned *)realloc(g_order, cap * sizeof(unsigned));
+-        g_elem = (unsigned *)realloc(g_elem, cap * 3u * sizeof(unsigned));
+-        g_solid_rgb = (unsigned char *)realloc(g_solid_rgb, cap * 9u);
+-        if (!g_order || !g_elem || !g_solid_rgb)
++        order = (unsigned *)realloc(g_order, cap * sizeof(unsigned));
++        if (order)
++            g_order = order;
++        verts = (geo_vert_t *)realloc(g_verts, (size_t)cap * 3u * sizeof(geo_vert_t));
++        if (verts)
++            g_verts = verts;
++        if (!order || !verts)
+             return -1;
+         g_scratch_tris = cap;
+     }
+@@ -323,171 +590,423 @@ static int mat_order_cmp(const void *a, const void *b)
+     return 0;
+ }
+ 
+-static int lut_cache_find(const model2_geo_tri_mat_t *m)
+-{
+-    unsigned i;
+-    for (i = 0; i < g_lut_cache_n; i++) {
+-        if (g_lut_cache[i].colorbase == m->colorbase
+-            && g_lut_cache[i].lumabase == m->lumabase
+-            && g_lut_cache[i].sheet == m->sheet
+-            && g_lut_cache[i].flags == m->flags
+-            && g_lut_cache[i].luma == m->luma)
+-            return (int)i;
+-    }
+-    return -1;
+-}
+-
+-static GLuint lut_cache_get(const model2_geo_tri_mat_t *m)
+-{
+-    int found = lut_cache_find(m);
+-    u8 lut[16 * 4];
+-    GLuint tex;
+-    lut_cache_ent_t *ent;
+-
+-    if (found >= 0)
+-        return g_lut_cache[found].tex;
+-
+-    model2_palette_build_texel_lut(m->colorbase, m->lumabase, m->luma,
+-                                   (m->flags & MODEL2_GEO_TEX_CUTOUT) ? 1 : 0, lut);
+-    glGenTextures(1, &tex);
+-    glBindTexture(GL_TEXTURE_2D, tex);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+-    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 16, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, lut);
+-
+-    if (g_lut_cache_n < LUT_CACHE_CAP) {
+-        ent = &g_lut_cache[g_lut_cache_n++];
+-    } else {
+-        unsigned slot = g_lut_cache_clock++ % LUT_CACHE_CAP;
+-        glDeleteTextures(1, &g_lut_cache[slot].tex);
+-        ent = &g_lut_cache[slot];
+-    }
+-    ent->colorbase = m->colorbase;
+-    ent->lumabase = m->lumabase;
+-    ent->sheet = m->sheet;
+-    ent->flags = m->flags;
+-    ent->luma = m->luma;
+-    ent->tex = tex;
+-    return tex;
+-}
++/* ---- Lifecycle ---------------------------------------------------------- */
+ 
+ void model2_geo_gl_tex_init(void)
+ {
+-    if (g_ready)
++    static const float quad[8] = { -1.f, -1.f, 1.f, -1.f, -1.f, 1.f, 1.f, 1.f };
++
++    if (g_init_done)
+         return;
++    g_init_done = 1;
+     (void)model2_gl_load();
+-    if (build_program() != 0) {
++    if (build_programs() != 0) {
+         if (!g_logged_shader) {
+-            lift_log( "lift: geo textured shader unavailable — flat fallback\n");
++            lift_log( "lift: geo shader unavailable — no 3D layer\n");
+             g_logged_shader = 1;
+         }
+-        return;
++    } else {
++        g_ready = 1;
+     }
+     glGenTextures(2, g_sheet_tex);
+-    g_ready = 1;
+-    model2_palette_selftest();
++    glGenTextures(1, &g_lut_tex);
++    glBindTexture(GL_TEXTURE_2D, g_lut_tex);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glBindTexture(GL_TEXTURE_2D, 0);
++    g_lut_keys = (u32 *)calloc((size_t)2u << LUT_HASH_BITS, sizeof(u32));
++    g_lut_slot1 = (u16 *)calloc((size_t)1u << LUT_HASH_BITS, sizeof(u16));
++    if (!g_lut_keys || !g_lut_slot1 || lut_grow() != 0)
++        g_ready = 0;
++    g_lut_tex_rows = 0;
++    lut_cache_clear();
++    glGenBuffers(1, &g_vbo);
++    glGenBuffers(1, &g_vbo_quad);
++    glBindBuffer(GL_ARRAY_BUFFER, g_vbo_quad);
++    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)sizeof(quad), quad, GL_STATIC_DRAW);
++    glBindBuffer(GL_ARRAY_BUFFER, 0);
++    if (g_ready)
++        model2_palette_selftest();
++}
++
++static void target_free(void)
++{
++    if (g_fbo)
++        glDeleteFramebuffers(1, &g_fbo);
++    if (g_fbo_depth)
++        glDeleteRenderbuffers(1, &g_fbo_depth);
++    if (g_fbo_color)
++        glDeleteTextures(1, &g_fbo_color);
++    g_fbo = 0;
++    g_fbo_depth = 0;
++    g_fbo_color = 0;
++    g_fbo_w = 0;
++    g_fbo_h = 0;
+ }
+ 
+ void model2_geo_gl_tex_shutdown(void)
+ {
+     if (g_prog)
+         glDeleteProgram(g_prog);
+-    if (g_solid_prog)
+-        glDeleteProgram(g_solid_prog);
++    if (g_blit_prog)
++        glDeleteProgram(g_blit_prog);
+     if (g_sheet_tex[0])
+         glDeleteTextures(2, g_sheet_tex);
+-    lut_cache_clear();
++    if (g_lut_tex)
++        glDeleteTextures(1, &g_lut_tex);
++    if (g_vbo)
++        glDeleteBuffers(1, &g_vbo);
++    if (g_vbo_quad)
++        glDeleteBuffers(1, &g_vbo_quad);
++    target_free();
+     free(g_order);
+-    free(g_elem);
+-    free(g_solid_rgb);
++    free(g_verts);
++    free(g_lut_pixels);
++    free(g_lut_keys);
++    free(g_lut_slot1);
+     g_prog = 0;
+-    g_solid_prog = 0;
++    g_blit_prog = 0;
+     g_sheet_tex[0] = g_sheet_tex[1] = 0;
++    g_lut_tex = 0;
++    g_vbo = g_vbo_quad = 0;
+     g_order = NULL;
+-    g_elem = NULL;
+-    g_solid_rgb = NULL;
++    g_verts = NULL;
++    g_lut_pixels = NULL;
++    g_lut_keys = NULL;
++    g_lut_slot1 = NULL;
++    g_lut_rows = 0;
++    g_lut_tex_rows = 0;
++    g_lut_count = 0;
+     g_scratch_tris = 0;
+     g_ready = 0;
++    g_init_done = 0;
+     g_sheets_uploaded = 0;
+     g_sheets_gen_uploaded = 0;
+     g_lut_palette_sig = 0;
+ }
+ 
+-static void draw_tex_elements(const float *xyzuv, const unsigned *elem, unsigned nidx,
+-                              const model2_geo_tri_mat_t *m)
++void model2_geo_gl_set_mvp(const float m[16])
++{
++    if (m) {
++        memcpy(g_mvp, m, sizeof(g_mvp));
++        g_mvp_set = 1;
++    } else {
++        g_mvp_set = 0;
++    }
++}
++
++void model2_geo_gl_set_lut_per_frame(int on)
++{
++    g_lut_per_frame = on ? 1 : 0;
++}
++
++void model2_geo_gl_invalidate(void)
++{
++    lut_cache_clear();
++    g_sheets_uploaded = 0;
++}
++
++void model2_geo_gl_set_target_size(int w, int h)
++{
++    if (w > 0 && h > 0) {
++        g_target_w = w;
++        g_target_h = h;
++    }
++}
++
++unsigned model2_geo_gl_target_texture(void)
++{
++    return g_fbo_color;
++}
++
++/* (Re)build the target at g_target_w x g_target_h. Leaves it bound. */
++static int target_ensure(void)
++{
++    GLenum status;
++
++    if (g_fbo && g_fbo_w == g_target_w && g_fbo_h == g_target_h) {
++        glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
++        return 0;
++    }
++    target_free();
++    glGenTextures(1, &g_fbo_color);
++    glBindTexture(GL_TEXTURE_2D, g_fbo_color);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, g_target_w, g_target_h, 0, GL_RGBA,
++                 GL_UNSIGNED_BYTE, NULL);
++    glBindTexture(GL_TEXTURE_2D, 0);
++
++    glGenRenderbuffers(1, &g_fbo_depth);
++    glBindRenderbuffer(GL_RENDERBUFFER, g_fbo_depth);
++    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, g_target_w, g_target_h);
++    glBindRenderbuffer(GL_RENDERBUFFER, 0);
++
++    glGenFramebuffers(1, &g_fbo);
++    glBindFramebuffer(GL_FRAMEBUFFER, g_fbo);
++    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
++                           g_fbo_color, 0);
++#ifdef MODEL2_GL_ES
++    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
++                              g_fbo_depth);
++#else
++    /* Packed depth/stencil on both points: what GL 2.1 + ARB/EXT FBOs accept. */
++    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER,
++                              g_fbo_depth);
++    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_STENCIL_ATTACHMENT, GL_RENDERBUFFER,
++                              g_fbo_depth);
++#endif
++    status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
++    if (status != GL_FRAMEBUFFER_COMPLETE) {
++        fprintf(stderr, "lift: geo framebuffer %dx%d incomplete (0x%x)\n", g_target_w,
++                g_target_h, (unsigned)status);
++        target_free();
++        return -1;
++    }
++    g_fbo_w = g_target_w;
++    g_fbo_h = g_target_h;
++    lift_log("lift: geo offscreen target %dx%d (RGBA8 + depth24/stencil8)\n", g_fbo_w,
++             g_fbo_h);
++    return 0;
++}
++
++/* ---- Draw --------------------------------------------------------------- */
++
++#ifndef MODEL2_GL_ES
++static void mat4_mul(float out[16], const float a[16], const float b[16])
++{
++    int c, r, k;
++
++    for (c = 0; c < 4; c++)
++        for (r = 0; r < 4; r++) {
++            float s = 0.f;
++            for (k = 0; k < 4; k++)
++                s += a[k * 4 + r] * b[c * 4 + k];
++            out[c * 4 + r] = s;
++        }
++}
++#endif
++
++static void resolve_mvp(float out[16])
+ {
+-    GLuint lut = lut_cache_get(m);
++    if (g_mvp_set) {
++        memcpy(out, g_mvp, sizeof(g_mvp));
++        return;
++    }
++#ifndef MODEL2_GL_ES
++    {
++        /* Desktop caller (SDL viewer) loaded the fixed-function matrices. */
++        float p[16], mv[16];
+ 
++        glGetFloatv(GL_PROJECTION_MATRIX, p);
++        glGetFloatv(GL_MODELVIEW_MATRIX, mv);
++        mat4_mul(out, p, mv);
++    }
++#else
++    memset(out, 0, 16 * sizeof(float));
++    out[0] = out[5] = out[10] = out[15] = 1.f;
++#endif
++}
++
++/* Triangle `src` of xyzuv → draw slot `dst`, with its material: a LUT slot
++ * (textured) or, with lut < 0, the solid colour rgb. */
++static void put_tri(unsigned dst, const float *xyzuv, unsigned src,
++                    const model2_geo_tri_mat_t *m, int lut, const u8 rgb[3])
++{
++    geo_vert_t *v = g_verts + (size_t)dst * 3u;
++    const float *p = xyzuv + (size_t)src * 15u;
++    unsigned k;
++
++    for (k = 0; k < 3u; k++, p += 5) {
++        v[k].xyz[0] = p[0];
++        v[k].xyz[1] = p[1];
++        v[k].xyz[2] = p[2];
++        v[k].uv[0] = p[3];
++        v[k].uv[1] = p[4];
++        if (lut >= 0) {
++            v[k].patch[0] = m->patch_x;
++            v[k].patch[1] = m->patch_y;
++            v[k].patch[2] = m->patch_w ? m->patch_w : 32u;
++            v[k].patch[3] = m->patch_h ? m->patch_h : 32u;
++            v[k].mat[0] = (m->flags & MODEL2_GEO_TEX_MIRROR_X) ? 1u : 0u;
++            v[k].mat[1] = (m->flags & MODEL2_GEO_TEX_MIRROR_Y) ? 1u : 0u;
++            v[k].mat[2] = (m->flags & MODEL2_GEO_TEX_CUTOUT) ? 1u : 0u;
++            v[k].mat[3] = (u8)(m->sheet & 1u);
++            v[k].lut[0] = (u16)lut;
++            v[k].lut[1] = 1u;
++            v[k].color[0] = v[k].color[1] = v[k].color[2] = 0;
++        } else {
++            memset(v[k].patch, 0, sizeof(v[k].patch));
++            memset(v[k].mat, 0, sizeof(v[k].mat));
++            v[k].lut[0] = 0;
++            v[k].lut[1] = 0;
++            v[k].color[0] = rgb[0];
++            v[k].color[1] = rgb[1];
++            v[k].color[2] = rgb[2];
++        }
++        v[k].color[3] = 0xffu;
++    }
++}
++
++static void draw_range(unsigned tri_start, unsigned tri_end)
++{
++    if (tri_end > tri_start)
++        glDrawArrays(GL_TRIANGLES, (GLint)(tri_start * 3u),
++                     (GLsizei)((tri_end - tri_start) * 3u));
++}
++
++/* Upload the triangles in draw order and point the attributes at them. */
++static void bind_vertices(unsigned ntris)
++{
++    const GLsizei stride = (GLsizei)sizeof(geo_vert_t);
++
++    glBindBuffer(GL_ARRAY_BUFFER, g_vbo);
++    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((size_t)ntris * 3u * sizeof(geo_vert_t)),
++                 g_verts, GL_STREAM_DRAW);
++    glEnableVertexAttribArray(ATTR_POS);
++    glVertexAttribPointer(ATTR_POS, 3, GL_FLOAT, GL_FALSE, stride,
++                          (const void *)offsetof(geo_vert_t, xyz));
++    glEnableVertexAttribArray(ATTR_UV);
++    glVertexAttribPointer(ATTR_UV, 2, GL_FLOAT, GL_FALSE, stride,
++                          (const void *)offsetof(geo_vert_t, uv));
++    glEnableVertexAttribArray(ATTR_PATCH);
++    glVertexAttribPointer(ATTR_PATCH, 4, GL_UNSIGNED_SHORT, GL_FALSE, stride,
++                          (const void *)offsetof(geo_vert_t, patch));
++    glEnableVertexAttribArray(ATTR_MAT);
++    glVertexAttribPointer(ATTR_MAT, 4, GL_UNSIGNED_BYTE, GL_FALSE, stride,
++                          (const void *)offsetof(geo_vert_t, mat));
++    glEnableVertexAttribArray(ATTR_COLOR);
++    glVertexAttribPointer(ATTR_COLOR, 4, GL_UNSIGNED_BYTE, GL_TRUE, stride,
++                          (const void *)offsetof(geo_vert_t, color));
++    glEnableVertexAttribArray(ATTR_LUT);
++    glVertexAttribPointer(ATTR_LUT, 2, GL_UNSIGNED_SHORT, GL_FALSE, stride,
++                          (const void *)offsetof(geo_vert_t, lut));
++    glBindBuffer(GL_ARRAY_BUFFER, 0);
++}
++
++static void unbind_vertices(void)
++{
++    glDisableVertexAttribArray(ATTR_POS);
++    glDisableVertexAttribArray(ATTR_UV);
++    glDisableVertexAttribArray(ATTR_PATCH);
++    glDisableVertexAttribArray(ATTR_MAT);
++    glDisableVertexAttribArray(ATTR_COLOR);
++    glDisableVertexAttribArray(ATTR_LUT);
++    glBindBuffer(GL_ARRAY_BUFFER, 0);
++}
++
++static void use_program(const float mvp[16])
++{
+     glUseProgram(g_prog);
+-    glActiveTexture(GL_TEXTURE0);
+-    glEnable(GL_TEXTURE_2D);
+-    glBindTexture(GL_TEXTURE_2D, g_sheet_tex[m->sheet & 1u]);
+-    glActiveTexture(GL_TEXTURE1);
+-    glEnable(GL_TEXTURE_2D);
+-    glBindTexture(GL_TEXTURE_2D, lut);
+-    if (g_loc_sheet >= 0)
+-        glUniform1i(g_loc_sheet, 0);
++    if (g_loc_mvp >= 0)
++        glUniformMatrix4fv(g_loc_mvp, 1, GL_FALSE, mvp);
++    if (g_loc_sheet0 >= 0)
++        glUniform1i(g_loc_sheet0, 0);
+     if (g_loc_lut >= 0)
+         glUniform1i(g_loc_lut, 1);
+-    if (g_loc_cutout >= 0)
+-        glUniform1f(g_loc_cutout, (m->flags & MODEL2_GEO_TEX_CUTOUT) ? 1.f : 0.f);
+-    if (g_loc_patch >= 0)
+-        glUniform4f(g_loc_patch, (float)m->patch_x, (float)m->patch_y,
+-                    (float)(m->patch_w ? m->patch_w : 32),
+-                    (float)(m->patch_h ? m->patch_h : 32));
+-    if (g_loc_mirror >= 0)
+-        glUniform2f(g_loc_mirror, (m->flags & MODEL2_GEO_TEX_MIRROR_X) ? 1.f : 0.f,
+-                    (m->flags & MODEL2_GEO_TEX_MIRROR_Y) ? 1.f : 0.f);
+-
+-    glEnableClientState(GL_VERTEX_ARRAY);
+-    glEnableClientState(GL_TEXTURE_COORD_ARRAY);
+-    glVertexPointer(3, GL_FLOAT, 5 * (int)sizeof(float), xyzuv);
+-    glTexCoordPointer(2, GL_FLOAT, 5 * (int)sizeof(float), xyzuv + 3);
+-    glDrawElements(GL_TRIANGLES, (GLsizei)nidx, GL_UNSIGNED_INT, elem);
+-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+-    glDisableClientState(GL_VERTEX_ARRAY);
+-}
+-
+-static void draw_solid_elements(const float *xyzuv, const unsigned char *rgb_by_vert,
+-                                const unsigned *elem, unsigned nidx,
+-                                const model2_geo_tri_mat_t *m)
+-{
+-    (void)m;
+-    glUseProgram(0);
+-    /* Textured path leaves LUT on TEXTURE1 — must clear both units or fixed-
+-     * function solids sample the LUT and go black (logos still look fine). */
+-    glActiveTexture(GL_TEXTURE1);
+-    glDisable(GL_TEXTURE_2D);
+-    glBindTexture(GL_TEXTURE_2D, 0);
++    if (g_loc_sheet1 >= 0)
++        glUniform1i(g_loc_sheet1, 2);
++    if (g_loc_lut_size >= 0)
++        glUniform2f(g_loc_lut_size, (float)LUT_ATLAS_W, (float)g_lut_rows);
+     glActiveTexture(GL_TEXTURE0);
+-    glDisable(GL_TEXTURE_2D);
+-    glBindTexture(GL_TEXTURE_2D, 0);
+-    glEnableClientState(GL_VERTEX_ARRAY);
+-    glEnableClientState(GL_COLOR_ARRAY);
+-    glVertexPointer(3, GL_FLOAT, 5 * (int)sizeof(float), xyzuv);
+-    glColorPointer(3, GL_UNSIGNED_BYTE, 0, rgb_by_vert);
+-    glDrawElements(GL_TRIANGLES, (GLsizei)nidx, GL_UNSIGNED_INT, elem);
+-    glDisableClientState(GL_COLOR_ARRAY);
+-    glDisableClientState(GL_VERTEX_ARRAY);
++    glBindTexture(GL_TEXTURE_2D, g_sheet_tex[0]);
++    glActiveTexture(GL_TEXTURE1);
++    glBindTexture(GL_TEXTURE_2D, g_lut_tex);
++    glActiveTexture(GL_TEXTURE2);
++    glBindTexture(GL_TEXTURE_2D, g_sheet_tex[1]);
+ }
+ 
+-void model2_geo_gl_draw_textured(const float *xyzuv, unsigned nverts,
+-                                 const model2_geo_tri_mat_t *mats, unsigned ntris)
++/* I960_GEO_FLAT: one gray lit shade per tri, submission order, depth LESS. */
++static void draw_flat(const float *xyzuv, const model2_geo_tri_mat_t *mats,
++                      unsigned ntris, const float mvp[16])
++{
++    unsigned t;
++
++    for (t = 0; t < ntris; t++) {
++        const float *v0 = xyzuv + (size_t)t * 15u;
++        const float *v1 = v0 + 5;
++        const float *v2 = v0 + 10;
++        float ax = v1[0] - v0[0], ay = v1[1] - v0[1], az = v1[2] - v0[2];
++        float bx = v2[0] - v0[0], by = v2[1] - v0[1], bz = v2[2] - v0[2];
++        float nx = ay * bz - az * by;
++        float ny = az * bx - ax * bz;
++        float nz = ax * by - ay * bx;
++        float nl = sqrtf(nx * nx + ny * ny + nz * nz);
++        float shade;
++        u8 rgb[3];
++
++        if (nl > 1e-6f) {
++            nx /= nl;
++            ny /= nl;
++            nz /= nl;
++        }
++        shade = 0.30f + 0.70f * fabsf(nx * 0.35f + ny * 0.85f + nz * 0.35f);
++        if (shade > 1.f)
++            shade = 1.f;
++        rgb[0] = rgb[1] = rgb[2] = (u8)(shade * 255.f + 0.5f);
++        put_tri(t, xyzuv, t, &mats[t], -1, rgb);
++    }
++    bind_vertices(ntris);
++    use_program(mvp);
++    glDisable(GL_BLEND);
++    glDisable(GL_STENCIL_TEST);
++    glEnable(GL_DEPTH_TEST);
++    glDepthMask(GL_TRUE);
++    glDepthFunc(GL_LESS);
++    draw_range(0, ntris);
++}
++
++/* Fill g_verts in draw order; -1 when the LUT atlas ran out. */
++static int build_vertices(const float *xyzuv, const model2_geo_tri_mat_t *mats,
++                          unsigned ntris)
++{
++    u8 rgb[3] = { 0, 0, 0 };
++    u16 last_cb = 0xffffu, last_lb = 0xffffu;
++    u8 last_luma = 0xffu;
++    int have_rgb = 0;
++    unsigned t;
++
++    for (t = 0; t < ntris; t++) {
++        unsigned src = g_order[t];
++        const model2_geo_tri_mat_t *m = &mats[src];
++
++        if (m->flags & MODEL2_GEO_TEX_TEXTURED) {
++            int lut = lut_slot(m);
++
++            if (lut < 0)
++                return -1;
++            put_tri(t, xyzuv, src, m, lut, rgb);
++            continue;
++        }
++        /* Solid colour, looked up once per run of the same material. */
++        if (!have_rgb || m->colorbase != last_cb || m->lumabase != last_lb
++            || m->luma != last_luma) {
++            model2_palette_lookup_solid(m->colorbase, m->luma, rgb);
++            last_cb = m->colorbase;
++            last_lb = m->lumabase;
++            last_luma = m->luma;
++            have_rgb = 1;
++        }
++        put_tri(t, xyzuv, src, m, -1, rgb);
++    }
++    return 0;
++}
++
++static void draw_world(const float *xyzuv, unsigned nverts,
++                       const model2_geo_tri_mat_t *mats, unsigned ntris,
++                       const float mvp[16])
+ {
+-    unsigned t, run_start;
+-    static int logged_batches;
++    unsigned t;
++    static int logged_draw;
+     static int logged_flat;
+-    unsigned batches = 0;
+-    unsigned char *rgb_by_vert = NULL;
+ 
+-    if (!xyzuv || !mats || ntris == 0 || nverts < 3u)
+-        return;
+-    if (!g_ready)
+-        model2_geo_gl_tex_init();
+-    if (ensure_scratch(ntris) != 0)
++    if (nverts < ntris * 3u)
++        ntris = nverts / 3u;
++    if (ntris == 0u || ensure_scratch(ntris) != 0)
+         return;
+ 
+     /*
+@@ -502,46 +1021,14 @@ void model2_geo_gl_draw_textured(const float *xyzuv, unsigned nverts,
+                     ntris);
+             logged_flat = 1;
+         }
+-        glUseProgram(0);
+-        glDisable(GL_TEXTURE_2D);
+-        glDisable(GL_BLEND);
+-        glEnable(GL_DEPTH_TEST);
+-        glDepthFunc(GL_LESS);
+-        glBegin(GL_TRIANGLES);
+-        for (t = 0; t < ntris; t++) {
+-            unsigned b = t * 3u;
+-            const float *v0 = xyzuv + b * 5u;
+-            const float *v1 = xyzuv + (b + 1u) * 5u;
+-            const float *v2 = xyzuv + (b + 2u) * 5u;
+-            float ax = v1[0] - v0[0], ay = v1[1] - v0[1], az = v1[2] - v0[2];
+-            float bx = v2[0] - v0[0], by = v2[1] - v0[1], bz = v2[2] - v0[2];
+-            float nx = ay * bz - az * by;
+-            float ny = az * bx - ax * bz;
+-            float nz = ax * by - ay * bx;
+-            float nl = sqrtf(nx * nx + ny * ny + nz * nz);
+-            float shade;
+-
+-            if (nl > 1e-6f) {
+-                nx /= nl;
+-                ny /= nl;
+-                nz /= nl;
+-            }
+-            shade = 0.30f + 0.70f * fabsf(nx * 0.35f + ny * 0.85f + nz * 0.35f);
+-            if (shade > 1.f)
+-                shade = 1.f;
+-            glColor3f(shade, shade, shade);
+-            glVertex3f(v0[0], v0[1], v0[2]);
+-            glVertex3f(v1[0], v1[1], v1[2]);
+-            glVertex3f(v2[0], v2[1], v2[2]);
+-        }
+-        glEnd();
++        draw_flat(xyzuv, mats, ntris, mvp);
+         return;
+     }
+ 
+     /* Palram/colorxlat/lumaram change after CGM — drop stale LUTs. */
+     {
+         u32 psig = model2_palette_state_sig();
+-        if (psig != g_lut_palette_sig) {
++        if (psig != g_lut_palette_sig || g_lut_per_frame) {
+             lut_cache_clear();
+             g_lut_palette_sig = psig;
+         }
+@@ -552,58 +1039,25 @@ void model2_geo_gl_draw_textured(const float *xyzuv, unsigned nverts,
+     g_sort_mats = mats;
+     qsort(g_order, ntris, sizeof(unsigned), mat_order_cmp);
+ 
+-    /* Element indices into the original expanded xyzuv (3 verts/tri). */
+-    for (t = 0; t < ntris; t++) {
+-        unsigned src = g_order[t];
+-        unsigned base = src * 3u;
+-        g_elem[t * 3u + 0u] = base + 0u;
+-        g_elem[t * 3u + 1u] = base + 1u;
+-        g_elem[t * 3u + 2u] = base + 2u;
+-    }
+-
+-    /* Solid colors: one RGB per expanded vert (same for all 3 corners). */
+-    rgb_by_vert = (unsigned char *)realloc(g_solid_rgb, nverts * 3u);
+-    if (!rgb_by_vert)
+-        return;
+-    g_solid_rgb = rgb_by_vert;
+-    memset(rgb_by_vert, 0, nverts * 3u);
+-    {
+-        u8 rgb[3];
+-        u16 last_cb = 0xffffu, last_lb = 0xffffu;
+-        u8 last_luma = 0xffu;
+-        int have_rgb = 0;
+-        for (t = 0; t < ntris; t++) {
+-            unsigned src = g_order[t];
+-            unsigned base, k;
+-            if (mats[src].flags & MODEL2_GEO_TEX_TEXTURED)
+-                continue;
+-            if (!have_rgb || mats[src].colorbase != last_cb
+-                || mats[src].lumabase != last_lb || mats[src].luma != last_luma) {
+-                model2_palette_lookup_solid(mats[src].colorbase, mats[src].luma, rgb);
+-                last_cb = mats[src].colorbase;
+-                last_lb = mats[src].lumabase;
+-                last_luma = mats[src].luma;
+-                have_rgb = 1;
+-            }
+-            base = src * 3u;
+-            for (k = 0; k < 3u; k++) {
+-                rgb_by_vert[(base + k) * 3u + 0u] = rgb[0];
+-                rgb_by_vert[(base + k) * 3u + 1u] = rgb[1];
+-                rgb_by_vert[(base + k) * 3u + 2u] = rgb[2];
+-            }
++    if (build_vertices(xyzuv, mats, ntris) != 0) {
++        /* Atlas full: start it over for this frame. */
++        lut_cache_clear();
++        if (build_vertices(xyzuv, mats, ntris) != 0) {
++            fprintf(stderr, "lift: geo LUT atlas overflow (%u tris)\n", ntris);
++            return;
+         }
+     }
+-
+-    if (!g_ready) {
+-        draw_solid_elements(xyzuv, rgb_by_vert, g_elem, ntris * 3u, &mats[0]);
+-        return;
+-    }
+     upload_sheets();
++    lut_upload();
++    bind_vertices(ntris);
++    use_program(mvp);
+     glDisable(GL_BLEND);
+     /*
+      * A: solids depth. B: opaque-tex fillmap + depth write (cars + slot8
+      * renderer-2 sky). C: stencil cleared; cutout fillmap + LEQUAL (logos /
+      * shadows / sky cutouts) without stealing B's depth-seeded pixels.
++     * The sort puts the world (pad bit 0) first, solids → opaque-tex →
++     * cutouts within it, then the HUD overlays.
+      */
+     {
+         unsigned world_end = 0;
+@@ -624,20 +1078,16 @@ void model2_geo_gl_draw_textured(const float *xyzuv, unsigned nverts,
+         glClear(GL_STENCIL_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+         glStencilMask(0xffu);
+-        {
+-            static int logged_stencil;
++        if (!logged_draw) {
+             GLint bits = 0;
+ 
+-            if (!logged_stencil) {
+-                glGetIntegerv(GL_STENCIL_BITS, &bits);
+-                lift_log(
+-                        "lift: geo fillmap stencil_bits=%d solid=%u "
+-                        "opaque_tex=%u cutout=%u\n",
+-                        (int)bits, solid_end,
+-                        opaque_tex_end > solid_end ? opaque_tex_end - solid_end : 0u,
+-                        world_end > opaque_tex_end ? world_end - opaque_tex_end : 0u);
+-                logged_stencil = 1;
+-            }
++            glGetIntegerv(GL_STENCIL_BITS, &bits);
++            lift_log(
++                    "lift: geo fillmap stencil_bits=%d solid=%u "
++                    "opaque_tex=%u cutout=%u hud=%u luts=%u\n",
++                    (int)bits, solid_end, opaque_tex_end - solid_end,
++                    world_end - opaque_tex_end, ntris - world_end, g_lut_count);
++            logged_draw = 1;
+         }
+ 
+         /* --- A: solids --- */
+@@ -645,110 +1095,147 @@ void model2_geo_gl_draw_textured(const float *xyzuv, unsigned nverts,
+         glEnable(GL_DEPTH_TEST);
+         glDepthMask(GL_TRUE);
+         glDepthFunc(GL_LESS);
+-        run_start = 0;
+-        for (t = 1; t <= solid_end; t++) {
+-            int same = (t < solid_end)
+-                && mat_same(&mats[g_order[run_start]], &mats[g_order[t]]);
+-            if (same)
+-                continue;
+-            draw_solid_elements(xyzuv, rgb_by_vert, g_elem + run_start * 3u,
+-                                (t - run_start) * 3u, &mats[g_order[run_start]]);
+-            batches++;
+-            run_start = t;
+-        }
++        draw_range(0, solid_end);
+ 
+         /* --- B: opaque-tex fillmap + depth write --- */
+-        glEnable(GL_DEPTH_TEST);
+-        glDepthMask(GL_TRUE);
+         glDepthFunc(GL_LEQUAL);
+         glEnable(GL_STENCIL_TEST);
+         glStencilFunc(GL_EQUAL, 0, 0xff);
+         glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+-        run_start = solid_end;
+-        for (t = solid_end + 1u; t <= opaque_tex_end; t++) {
+-            int same = (t < opaque_tex_end)
+-                && mat_same(&mats[g_order[run_start]], &mats[g_order[t]]);
+-            if (same)
+-                continue;
+-            {
+-                const model2_geo_tri_mat_t *batch = &mats[g_order[run_start]];
+-                unsigned nidx = (t - run_start) * 3u;
+-                const unsigned *elem = g_elem + run_start * 3u;
+-
+-                if (batch->flags & MODEL2_GEO_TEX_TEXTURED)
+-                    draw_tex_elements(xyzuv, elem, nidx, batch);
+-                batches++;
+-            }
+-            run_start = t;
+-        }
++        draw_range(solid_end, opaque_tex_end);
+ 
+         /* --- C: cutouts on fresh fillmap, depth test vs A/B --- */
+         glClear(GL_STENCIL_BUFFER_BIT);
+         glDepthMask(GL_FALSE);
+-        glDepthFunc(GL_LEQUAL);
+-        glEnable(GL_STENCIL_TEST);
+-        glStencilFunc(GL_EQUAL, 0, 0xff);
+-        glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+-        run_start = opaque_tex_end;
+-        for (t = opaque_tex_end + 1u; t <= world_end; t++) {
+-            int same = (t < world_end)
+-                && mat_same(&mats[g_order[run_start]], &mats[g_order[t]]);
+-            if (same)
+-                continue;
+-            {
+-                const model2_geo_tri_mat_t *batch = &mats[g_order[run_start]];
+-                unsigned nidx = (t - run_start) * 3u;
+-                const unsigned *elem = g_elem + run_start * 3u;
+-
+-                if (batch->flags & MODEL2_GEO_TEX_TEXTURED)
+-                    draw_tex_elements(xyzuv, elem, nidx, batch);
+-                batches++;
+-            }
+-            run_start = t;
+-        }
++        draw_range(opaque_tex_end, world_end);
+ 
+-        /* pad / HUD overlays after world */
+-        run_start = world_end;
+-        for (t = world_end + 1u; t <= ntris; t++) {
+-            int same = (t < ntris)
+-                && mat_same(&mats[g_order[run_start]], &mats[g_order[t]]);
+-            if (same)
+-                continue;
+-            {
+-                const model2_geo_tri_mat_t *batch = &mats[g_order[run_start]];
+-                unsigned nidx = (t - run_start) * 3u;
+-                const unsigned *elem = g_elem + run_start * 3u;
+-
+-                glDisable(GL_STENCIL_TEST);
+-                glDisable(GL_DEPTH_TEST);
+-                glDepthMask(GL_FALSE);
+-                if (batch->flags & MODEL2_GEO_TEX_TEXTURED)
+-                    draw_tex_elements(xyzuv, elem, nidx, batch);
+-                else
+-                    draw_solid_elements(xyzuv, rgb_by_vert, elem, nidx, batch);
+-                batches++;
+-            }
+-            run_start = t;
+-        }
++        /* --- pad / HUD overlays after world: no depth, no fillmap --- */
++        glDisable(GL_STENCIL_TEST);
++        glDisable(GL_DEPTH_TEST);
++        draw_range(world_end, ntris);
+     }
++}
+ 
+-    if (!logged_batches) {
+-        lift_log( "lift: geo draw batches=%u tris=%u lut_cache=%u\n", batches,
+-                ntris, g_lut_cache_n);
+-        logged_batches = 1;
++unsigned model2_geo_gl_render_offscreen(const float *xyzuv, unsigned nverts,
++                                        const model2_geo_tri_mat_t *mats,
++                                        unsigned ntris)
++{
++    GLint prev_fbo = 0;
++    GLint prev_viewport[4] = { 0, 0, 0, 0 };
++    GLint prev_prog = 0;
++    GLint prev_active = GL_TEXTURE0;
++    GLfloat prev_clear[4] = { 0.f, 0.f, 0.f, 0.f };
++    GLboolean scissor;
++    float mvp[16];
++
++    if (!g_init_done)
++        model2_geo_gl_tex_init();
++
++    /* The fixed-function matrices are read before anything else touches GL. */
++    resolve_mvp(mvp);
++    /*
++     * The target is top-down: framebuffer row 0 is the picture's top row, like
++     * the tile bitmaps and the read-back (clip y negated; culling is off, so
++     * the flipped winding does not matter). On macOS's GL-over-Metal this also
++     * rasterizes much closer to how the window did (see video-notes.md).
++     */
++    mvp[1] = -mvp[1];
++    mvp[5] = -mvp[5];
++    mvp[9] = -mvp[9];
++    mvp[13] = -mvp[13];
++
++    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prev_fbo);
++    glGetIntegerv(GL_VIEWPORT, prev_viewport);
++    glGetIntegerv(GL_CURRENT_PROGRAM, &prev_prog);
++    glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_active);
++    glGetFloatv(GL_COLOR_CLEAR_VALUE, prev_clear);
++    scissor = glIsEnabled(GL_SCISSOR_TEST);
++
++    if (target_ensure() != 0) {
++        glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev_fbo);
++        return 0;
++    }
++    glViewport(0, 0, g_fbo_w, g_fbo_h);
++    glDisable(GL_SCISSOR_TEST);
++    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
++    glDepthMask(GL_TRUE);
++    glStencilMask(0xffu);
++    glClearColor(0.f, 0.f, 0.f, 0.f);
++    glClearStencil(0);
++    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
++    glDisable(GL_CULL_FACE);
++    glDisable(GL_BLEND);
++
++    if (g_ready && xyzuv && mats && ntris > 0u && nverts >= 3u) {
++        draw_world(xyzuv, nverts, mats, ntris, mvp);
++        unbind_vertices();
+     }
+ 
++    /* State as the fixed-function era left it for the viewer. */
+     glDisable(GL_STENCIL_TEST);
+     glEnable(GL_DEPTH_TEST);
+     glDepthMask(GL_TRUE);
+     glDepthFunc(GL_LEQUAL);
+-    glUseProgram(0);
++    glActiveTexture(GL_TEXTURE2);
++    glBindTexture(GL_TEXTURE_2D, 0);
+     glActiveTexture(GL_TEXTURE1);
+     glBindTexture(GL_TEXTURE_2D, 0);
+-    glDisable(GL_TEXTURE_2D);
+     glActiveTexture(GL_TEXTURE0);
+     glBindTexture(GL_TEXTURE_2D, 0);
+-    glDisable(GL_TEXTURE_2D);
++    glActiveTexture((GLenum)prev_active);
++    glUseProgram((GLuint)prev_prog);
++
++    glBindFramebuffer(GL_FRAMEBUFFER, (GLuint)prev_fbo);
++    glViewport(prev_viewport[0], prev_viewport[1], prev_viewport[2], prev_viewport[3]);
++    glClearColor(prev_clear[0], prev_clear[1], prev_clear[2], prev_clear[3]);
++    if (scissor)
++        glEnable(GL_SCISSOR_TEST);
++    return g_fbo_color;
++}
++
++void model2_geo_gl_composite_target(void)
++{
++    GLint prev_prog = 0;
++    GLint prev_active = GL_TEXTURE0;
++    GLboolean depth_test;
++
++    if (!g_blit_prog || !g_fbo_color)
++        return;
++    glGetIntegerv(GL_CURRENT_PROGRAM, &prev_prog);
++    glGetIntegerv(GL_ACTIVE_TEXTURE, &prev_active);
++    depth_test = glIsEnabled(GL_DEPTH_TEST);
++
++    glUseProgram(g_blit_prog);
++    if (g_loc_blit_tex >= 0)
++        glUniform1i(g_loc_blit_tex, 0);
++    glActiveTexture(GL_TEXTURE0);
++    glBindTexture(GL_TEXTURE_2D, g_fbo_color);
++    glDisable(GL_DEPTH_TEST);
++    glDisable(GL_STENCIL_TEST);
++    glDisable(GL_CULL_FACE);
++    glEnable(GL_BLEND);
++    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
++    glBindBuffer(GL_ARRAY_BUFFER, g_vbo_quad);
++    glEnableVertexAttribArray(ATTR_POS);
++    glVertexAttribPointer(ATTR_POS, 2, GL_FLOAT, GL_FALSE, 0, (const void *)0);
++    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
++    glDisableVertexAttribArray(ATTR_POS);
++    glBindBuffer(GL_ARRAY_BUFFER, 0);
++    glDisable(GL_BLEND);
++    glBindTexture(GL_TEXTURE_2D, 0);
++    glActiveTexture((GLenum)prev_active);
++    glUseProgram((GLuint)prev_prog);
++    if (depth_test)
++        glEnable(GL_DEPTH_TEST);
++}
++
++void model2_geo_gl_draw_textured(const float *xyzuv, unsigned nverts,
++                                 const model2_geo_tri_mat_t *mats, unsigned ntris)
++{
++    if (!xyzuv || !mats || ntris == 0 || nverts < 3u)
++        return;
++    if (model2_geo_gl_render_offscreen(xyzuv, nverts, mats, ntris) != 0)
++        model2_geo_gl_composite_target();
+ }
+ 
+ #endif /* I960_HOST_HAVE_GL */
+-- 
+2.52.0
+

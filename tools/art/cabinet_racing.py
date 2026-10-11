@@ -1,9 +1,10 @@
 """Sit-down racing station using the shared cabinet raycaster and layer exporter.
 
-One half of the original Daytona twin: CRT tower, low platform, bucket seat,
+One station of an original Sega twin: CRT tower, low platform, bucket seat,
 annular steering wheel, three spokes, gated shifter and two independent pedals.
 Optional full-height side prints, bucket profiles and a deluxe car shell support
-other photographed driving stations without changing the approved Daytona model.
+other photographed driving stations without changing the approved Daytona model;
+optional shell/platform colors and header textures do the same for Sega Rally.
 Dimensions are recipe world-space estimates, not factory measurements.
 """
 import math
@@ -175,23 +176,30 @@ def paint(solid, p, n, tex, *, recipe):
         return 'controls', colors['trim'], False
     if part == 'platform':
         if abs(ny) > .9 and 1 < z < 1.65:
-            return 'trim', colors['trim'], False
+            return 'trim', colors.get('platform_trim', colors['trim']), False
         if nx > .9 and 3.8 < y < 12.2 and int(y * 2) % 2 == 0:
             return 'body', colors['vent'], False
-        return 'body', colors['platform'], False
+        return 'body', colors.get('platform_edge', colors['platform']) if abs(nz) < .9 else colors['platform'], False
     if part == 'side':
         front = min(face, face + .22 * (14 - z)) if z >= 14 else face
         if abs(ny) < .9 or x > front - .4:
             return 'trim', colors['trim'], False
         if z >= 10 or recipe.get('full_side_art'):
+            if 'side' in colors:
+                return 'side art', colors['side'], False
             u = (x - rear) / (face - rear) if ny > 0 else (face - x) / (face - rear)
             bottom = 2 if recipe.get('full_side_art') else 10
             return 'side art', base.sample(tex['left' if ny > 0 else 'right'], u, (top - 3 - z) / (top - 3 - bottom)), False
-        return 'side art', colors['trim'], False
+        return 'side art', colors.get('side_lower', colors['trim']), False
     if part == 'hood' and nx > .9:
         if z > top - .4 or z < top - 3.6:
             return 'trim', colors['metal'], False
-        return 'marquee', base.sample(tex['marquee'], (hi - .5 - y) / (hi - lo - 1), (top - .4 - z) / 3.2), True
+        if 'header' in tex and z < top - 2.8:
+            return 'marquee', base.sample(tex['header'], (hi - .5 - y) / (hi - lo - 1), (top - 2.8 - z) / .8), True
+        return 'marquee', base.sample(tex['marquee'], (hi - .5 - y) / (hi - lo - 1),
+                                    (top - .4 - z) / (2.4 if 'header' in tex else 3.2)), True
+    if part == 'hood' and 'hood' in colors:
+        return 'body', colors['hood'], False
     if part == 'upper' and nx > .5:
         if lo + 1.25 < y < hi - 1.25 and 19 < z < top - 4.8:
             return 'screen', base.sample(tex['screen'], (hi - 1.25 - y) / (hi - lo - 2.5),
@@ -222,7 +230,7 @@ def paint(solid, p, n, tex, *, recipe):
     if part in ('cushion', 'seat_back', 'seat_wing'):
         if abs(ny) > .9:
             return 'trim', colors['seat_edge'], False
-        return 'body', colors['seat'], False
+        return 'body', colors.get('seat_shell', colors['seat']) if part != 'cushion' else colors['seat'], False
     if nx < -.9 and part in ('upper', 'lower'):
         if lo + 2 < y < hi - 2 and (4 < z < 10 or 21 < z < 25) and int(z * 2) % 2 == 0:
             return 'body', colors['vent'], False

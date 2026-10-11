@@ -160,10 +160,11 @@
 
       /**
        * Where a game's core is: an FBNeo core, or a core built on its own, under its name:
-       * Supermodel for the Sega Model 3 games, Daytona USA's Sega Model 2, MAME for the Namco
-       * games (Tekken 3, Time Crisis II), Flycast for the Sega NAOMI ones (Virtua Tennis).
+       * Supermodel for the Sega Model 3 games, Daytona USA's Sega Model 2, Sega Rally
+       * Championship's Sega Model 2A (model2/srally/), MAME for the Namco games (Tekken 3,
+       * Time Crisis II) and Cruis'n USA, Flycast for the Sega NAOMI ones (Virtua Tennis).
        */
-      const OWN_CORES = ["supermodel", "daytona", "mame", "flycast"];
+      const OWN_CORES = ["supermodel", "daytona", "srally", "mame", "flycast"];
       const coreUrl = (core) => (OWN_CORES.includes(core) ? `/${core}/${core}.mjs` : `/fbneo/${core}/fbneo.mjs`);
       /**
        * What a game's core needs next to its ROM set, from R2: its BIOS set, and its own `files`

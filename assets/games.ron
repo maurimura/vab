@@ -1,9 +1,10 @@
 // Games cabinets can run (a cabinet's `game` in maps/bar.ron is a `rom` from this list).
 // `rom` is the ROM set in R2 (/roms/<rom>.zip, plus the optional <rom>.state), `core` the FBNeo
 // core that runs it (emulator/build.sh), "supermodel" for a Sega Model 3 game (supermodel/),
-// "daytona" for Daytona USA (Sega Model 2, daytona/), "mame" for one MAME runs (mame/) or "flycast"
-// for a Sega NAOMI game (flycast/), `bios` a BIOS set loaded next to it, and `files` more files the
-// core needs, as paths under /roms/ in R2 that it finds at the same path, folders and all (a NAOMI
+// "daytona" for Daytona USA (Sega Model 2, daytona/), "srally" for Sega Rally Championship (Sega
+// Model 2A, model2/srally/), "mame" for one MAME runs (mame/) or "flycast" for a Sega NAOMI game
+// (flycast/), `bios` a BIOS set loaded next to it, and `files` more files the core needs, as
+// paths under /roms/ in R2 that it finds at the same path, folders and all (a NAOMI
 // GD-ROM game's disc: "vtennisg/gds-0011.chd"). `players` is how many play at once (2 if not said,
 // up to 4, or 8 in arcade mode; 1 and the next to press E watches); `turns` games take turns on
 // player 1's controls; `lockstep` games play online without rollback (a Sega core's save state is
@@ -50,4 +51,5 @@
     (rom: "vtennisg", core: "flycast", title: "Virtua Tennis", lockstep: true, files: ["vtennisg/gds-0011.chd"], options: {"vab_warmup": "300"}, cabinets: ["vtennis"]),
     (rom: "outrun", core: "outrun", title: "Out Run", players: 1, wheel: Some((lock: 0.3, back: 0.3, curve: 1.0, span: (10600, 23500))), cabinets: ["outrun"]),
     (rom: "crusnusa41", core: "mame", title: "Cruis'n USA", players: 1, wheel: Some((lock: 0.6, back: 0.1, curve: 2.0, span: (5200, 28900))), cabinets: ["crusnusa"]),
+    (rom: "srallyc", core: "srally", title: "Sega Rally Championship", lockstep: true, players: 1, cabinets: ["srallyc"]),
 ]

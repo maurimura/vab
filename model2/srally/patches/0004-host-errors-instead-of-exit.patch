@@ -1,0 +1,69 @@
+diff --git a/lib/model2/host/i960_host.c b/lib/model2/host/i960_host.c
+index bc8cff0..1487e52 100644
+--- a/lib/model2/host/i960_host.c
++++ b/lib/model2/host/i960_host.c
+@@ -69,24 +69,37 @@ static void zero_registers(void)
+     pfp = 0;
+ }
+ 
+-void i960_host_load_rom(void)
++int i960_host_load_rom_checked(void)
+ {
+     if (model2_romset_verify() != 0)
+-        exit(1);
++        return -1;
+     if (model2_rom_load_default() != 0) {
+         fprintf(stderr, "lift: ROM load failed after checksum check\n");
+-        exit(1);
++        return -1;
+     }
+     /* Geo/polygon ROM loads lazily on first FIFO decode (avoids ~8MB startup read). */
++    return 0;
++}
++
++void i960_host_load_rom(void)
++{
++    if (i960_host_load_rom_checked() != 0)
++        exit(1);
+ }
+ 
+ void i960_host_reset(void)
++{
++    if (i960_host_reset_checked() != 0)
++        exit(1);
++}
++
++int i960_host_reset_checked(void)
+ {
+     model2_hw_init_from_lift();
+     model2_snd_reset();
+     if (model2_snd_load_roms(NULL) != 0) {
+         fprintf(stderr, "lift: sound ROM load failed\n");
+-        exit(1);
++        return -1;
+     }
+     model2_io_board_reset();
+     zero_registers();
+@@ -98,6 +111,7 @@ void i960_host_reset(void)
+     sp = fp + 0x1030 - 0x100;
+     if (sp >= (uintptr_t)(host_workram + sizeof(host_workram)))
+         sp = (uintptr_t)(host_workram + 0x800);
++    return 0;
+ }
+ 
+ void boot_entry_host(u32 arg0, u32 arg1, u32 arg2)
+diff --git a/lib/model2/include/i960_host.h b/lib/model2/include/i960_host.h
+index d8e9f13..ee68c0d 100644
+--- a/lib/model2/include/i960_host.h
++++ b/lib/model2/include/i960_host.h
+@@ -41,6 +41,10 @@ void i960_host_reset(void);
+ /* Load ROM blobs (tolerates missing files). */
+ void i960_host_load_rom(void);
+ 
++/* The same, returning -1 (reason on stderr) where those exit the process. */
++int i960_host_reset_checked(void);
++int i960_host_load_rom_checked(void);
++
+ /*
+  * Cold boot @ boot_entry (ROM 0x310): stack setup, timer wait, then
+  * maincpu_reset_entry. On host, skips the timer spin.

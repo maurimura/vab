@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "skin": "srallyc",
+  "rom": "srallyc",
+  "title": "SEGA RALLY CHAMPIONSHIP / 1995 SEGA TWIN STATION",
+  "variant": "One station adapted from the original white/blue 1995 Sega Rally Championship twin sit-down, with orange/blue marquee and striped white seat shells; not Sega Rally 2 or deluxe motion hardware",
+  "renderer": "racing",
+  "size": [48, 56],
+  "footprint_scale": 0.6,
+  "players": 4,
+  "linked": true,
+  "control_stations": 1,
+  "control_kind": "wheel",
+  "buttons_per_player": 2,
+  "game_actions": ["Steering", "Accelerator", "Brake", "Four-speed gear lever", "Start", "View Change"],
+  "dimensions": {"tower_rear": -5, "tower_front": 5, "seat_back": 23, "side_min": 2, "side_max": 14, "tower_height": 29},
+  "wheel": {"center": [9.2, 9, 15.5], "radius": 2.2, "thickness": 0.45, "tilt": 0.35},
+  "shifter": {"position": [10, 4.1, 13.4]},
+  "pedals": [{"position": [7, 8, 4]}, {"position": [7, 11, 4]}],
+  "buttons": [
+    {"position": [8.3, 12, 14.6], "color": [250, 219, 45]},
+    {"position": [8.3, 10.9, 14.6], "color": [227, 38, 32]}
+  ],
+  "colors": {
+    "body": [28, 30, 32], "trim": [230, 231, 220], "side": [224, 227, 215],
+    "side_lower": [43, 46, 48], "rubber": [13, 16, 20], "metal": [189, 195, 193],
+    "platform": [31, 35, 38], "platform_edge": [34, 133, 191], "platform_trim": [34, 133, 191],
+    "hood": [198, 204, 198], "vent": [9, 11, 15],
+    "seat": [35, 38, 40], "seat_edge": [229, 231, 220], "seat_shell": [235, 235, 223]
+  },
+  "preview_note": "48 x 56 px | original white/blue twin station / Start + View / photographed Sega Rally high scores",
+  "research": [
+    {"url": "https://en.wikipedia.org/wiki/Sega_Rally_Championship", "finding": "1995 Sega AM3 game on Model 2, up to four arcade players through linked cabinets. Recipe seat count is descriptive, not a new catalog/core configuration; no Sega Rally catalog entry existed when this art was made."},
+    {"url": "https://www.arcade-museum.com/Videogame/sega-rally-championship", "finding": "HTTP 403; access restriction respected, not used as evidence."},
+    {"url": "https://www.arcadeartwork.org/qsearch.php?q=srally", "finding": "Cabinet and control photographs located. Files indexed as srallycb and flyer srallyc actually show Sega Rally 2; retained as excluded research, never mixed into the 1995 artwork. No authenticated original operator decal scan located in this bounded search."}
+  ],
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Photograph of the original white/blue twin with 1995 orange/blue marquee, Race Leader headers, striped white seat backs, black cushions/dashboard, white CRT edging, blue platform edges, separate pedals and four-speed shifter. Supplies measured title, Race Leader header, seat-back and authentic Sega Rally high-score monitor rectifications. No alternate game's screen used.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/97912",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/srallyc.png",
+      "rights": "Sega printed artwork/trademarks and game imagery; photo author, restoration status and redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "8708b2a25443c33609212f3ee4ac0e0781f4cd1656f2e9abbc7fa13d9b240749"
+    },
+    "controls": {
+      "file": "controls.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "Sega Rally dashboard photograph corroborates yellow Start, red View Change, black hollow steering rim with silver three-spoke center, right-hand four-speed gate and black fascia. Only the original instruction panel is extracted; modeled controls are separate, not a pasted photographic steering wheel. Exact region and cabinet compatibility remain unverified.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/5981",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecpanels/srallyc.png",
+      "rights": "Underlying Sega artwork; photograph author, cabinet region/restoration status and redistribution rights unknown. Archive hosting is not publisher authorization.",
+      "sha256": "26892bd81951ccbd0b69a3e5feb515a5bdce51d8fbca736fdc38654b57bb86ab"
+    },
+    "excluded_sequel_cabinet": {
+      "file": "sequel-cabinet.png",
+      "kind": "cabinet-photo-unverified",
+      "purpose": "EXCLUDED RESEARCH ONLY: archive filename srallycb is misleading. Marquee reads SEGARALLY2 and the cabinet has red tubular seat guards/yellow straps; not used for geometry, colors or textures.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/97913",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadecabs168/srallycb.png",
+      "rights": "Sega artwork/trademarks; photo author and redistribution rights unknown. Research archival copy, not publisher authorization.",
+      "sha256": "ee072a262e38ca5491d98524f3348413a0b7e8a6e695144aac398c96a47b6e3b"
+    },
+    "excluded_sequel_flyer": {
+      "file": "sequel-flyer.png",
+      "kind": "original-art-scan-unverified",
+      "purpose": "EXCLUDED RESEARCH ONLY: despite filename srallyc, this flyer says first version, Model 3 Step 2.0 and shows the Sega Rally 2 cabinet. Not evidence for the original game's hardware or cabinet and never used as an artwork texture. Duplicate mmefly2b copy was identical and was not retained twice.",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/88214",
+      "image_url": "https://www.arcadeartwork.org/galleries/arcadeflyers168/srallyc.png",
+      "rights": "Copyright Sega; third-party flyer scan provenance and redistribution permission unverified. Archive hosting is not publisher authorization.",
+      "sha256": "a615cc0190de176b236e0c038b451cc31676e822958a5b7e36f7b6f20e625cbd"
+    }
+  },
+  "textures": {
+    "marquee": {"source": "cabinet", "quad": [[113, 14], [553, 7], [553, 89], [130, 93]], "rectified_size": [440, 86], "size": [24, 6]},
+    "header": {"source": "cabinet", "quad": [[111, 104], [304, 111], [307, 139], [106, 136]], "rectified_size": [200, 32], "size": [24, 4]},
+    "seat_back": {"source": "cabinet", "quad": [[311, 362], [437, 365], [477, 624], [289, 602]], "rectified_size": [160, 250], "size": [16, 22]},
+    "dashboard": {"canvas": [160, 64], "fill": [28, 30, 32], "patches": [{"source": "controls", "quad": [[46, 97], [171, 92], [211, 163], [50, 175]], "rectified_size": [170, 80], "placement": [6, 3, 48, 22]}], "size": [22, 8]},
+    "screen": {"source": "cabinet", "quad": [[163, 175], [307, 177], [307, 298], [157, 293]], "rectified_size": [160, 120], "size": [24, 18], "fit": "contain"}
+  },
+  "uncertainties": [
+    "Adapted one station of the photographed twin; the shared marquee is reduced over one CRT tower. Not claimed as a factory single-seat cabinet. Recipe players describes the original game's four-seat link capability, control_stations is one; no catalog/core/network configuration is added by this art task.",
+    "No authenticated original decal masters were located. Title, header and seat-back graphics are photo rectifications, not clean original scans. Original decoded downloads and hashes are retained without resizing; copyrights and photo redistribution rights remain unresolved.",
+    "Tower sides remain plain off-white because their prints are not documented by the selected photograph; no invented side decals or sequel artwork. Only the photographed seat back receives graphics, not unseen seat sides. Rear service vents and bucket curvature are generic pixel-scale estimates.",
+    "The CRT displays the original game's photographed Championship Top 10 high-score table. This is not a fresh local gameplay capture. A real frame from the in-progress Sega Rally core can replace it later; no unrelated game imagery or synthesized gameplay is substituted.",
+    "Shell dimensions and controls are estimates. White seat wings/back are separated from black cushion and dashboard. Start/View are two modeled buttons; steering, shifter and both pedals are independent geometry. Control photograph's exact variant/region is unverified but its two-button layout agrees with the selected cabinet.",
+    "The long footprint is compressed to 60 percent around the existing bottom-center cell anchor, height unchanged, to fit all four 48x56 rotations. Leave room around it when placing. Map placement, ROM downloads/uploads, game integration, commits and deployment are not included."
+  ]
+}

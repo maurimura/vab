@@ -1,0 +1,38 @@
+diff --git a/lib/model2/hw/include/model2_hw_host.h b/lib/model2/hw/include/model2_hw_host.h
+index 2f35293..5c246d7 100644
+--- a/lib/model2/hw/include/model2_hw_host.h
++++ b/lib/model2/hw/include/model2_hw_host.h
+@@ -23,6 +23,11 @@ typedef struct model2_hw_host_ops {
+     int (*display_flip)(void);    /* present one frame; nonzero → quit */
+     void (*boot_vblank)(void);    /* pre-flip tile/splash sync */
+     void (*request_halt)(void);   /* display closed / halt dispatch */
++
++    /* Offline vsync (no I960_HOST_VIDEO_SYNC): called once per geo_vsync_wait,
++     * after the emulated vblank edge, i.e. once per game frame. A host that
++     * steps the game a frame at a time (libretro) presents and yields here. */
++    void (*frame_end)(void);
+ } model2_hw_host_ops_t;
+ 
+ void model2_hw_bind_host(const model2_hw_host_ops_t *ops);
+diff --git a/lib/model2/hw/model2_hw_vsync.c b/lib/model2/hw/model2_hw_vsync.c
+index f06a7ed..99f7bbe 100644
+--- a/lib/model2/hw/model2_hw_vsync.c
++++ b/lib/model2/hw/model2_hw_vsync.c
+@@ -331,12 +331,17 @@ void model2_hw_video_ctl_write(u32 value)
+ void model2_hw_vsync_wait_bit2_toggle(unsigned latched_bit2)
+ {
+     if (!model2_hw_vsync_realtime()) {
++        const model2_hw_host_ops_t *host = model2_hw_host();
++
+         pthread_mutex_lock(&g_vsync_mtx);
+         do {
+             g_framenum++;
+             videoctl_refresh_locked();
+         } while (videoctl_bit2(g_video_ctl) == latched_bit2);
+         pthread_mutex_unlock(&g_vsync_mtx);
++        /* One game frame: the host presents it (and may switch away). */
++        if (host && host->frame_end)
++            host->frame_end();
+         return;
+     }
+ 

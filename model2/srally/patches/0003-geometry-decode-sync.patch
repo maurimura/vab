@@ -1,0 +1,138 @@
+diff --git a/lib/model2/geo/include/model2_geo_render.h b/lib/model2/geo/include/model2_geo_render.h
+index 691211a..6f99532 100644
+--- a/lib/model2/geo/include/model2_geo_render.h
++++ b/lib/model2/geo/include/model2_geo_render.h
+@@ -7,7 +7,15 @@
+ 
+ void model2_geo_render_bind_fifo(const model2_geo_fifo_ops_t *fifo);
+ 
++/* Before init: 1 = no decode worker thread (decode only in model2_geo_render_decode_fifos,
++ * on the caller's thread: deterministic, for a host that steps frames). */
++void model2_geo_render_set_sync(int on);
+ int model2_geo_render_init(void);
++/* Load (once) the polygon and texture ROMs the decode needs; 0 on success. */
++int model2_geo_render_load_roms(void);
++/* The decode's scratch (rewritten before every read): not state. */
++extern u32 model2_geo_render_scratch_prg[262144];
++extern float model2_geo_render_scratch_mtx[262144 * 12];
+ void model2_geo_render_shutdown(void);
+ int model2_geo_render_decode_fifos(void);
+ void model2_geo_render_kick(void);
+diff --git a/lib/model2/geo/model2_geo_render.c b/lib/model2/geo/model2_geo_render.c
+index 99b6d20..58ce789 100644
+--- a/lib/model2/geo/model2_geo_render.c
++++ b/lib/model2/geo/model2_geo_render.c
+@@ -54,6 +54,8 @@ static pthread_t g_worker;
+ static pthread_mutex_t g_worker_mtx = PTHREAD_MUTEX_INITIALIZER;
+ static pthread_cond_t g_worker_cond = PTHREAD_COND_INITIALIZER;
+ static int g_worker_started;
++/* Sync only: no worker thread; model2_geo_render_decode_fifos decodes on the caller's thread. */
++static int g_sync_only;
+ static int g_worker_stop;
+ static int g_worker_kick;
+ static unsigned g_worker_gen;
+@@ -450,25 +452,32 @@ static void scrape_copro_points_words(const u32 *words, unsigned n)
+     }
+ }
+ 
+-static void ensure_polygon_rom(void)
++/* 0 when the polygon and texture ROMs are in; -1 (said once) when not: nothing is drawn. */
++static int ensure_polygon_rom(void)
+ {
+     unsigned n_poly = 0;
+     const u32 *poly;
++    static int s_failed;
+ 
+     if (g_polygon_loaded)
+-        return;
++        return 0;
++    if (s_failed)
++        return -1;
+     if (model2_polygon_rom_load_default() != 0) {
+         fprintf(stderr, "lift: polygon ROM required; refusing to draw without it\n");
+-        exit(1);
++        s_failed = 1;
++        return -1;
+     }
+     poly = model2_polygon_rom_words(&n_poly);
+     if (poly && n_poly)
+         model2_geo_dl_ctx_set_rom(&g_ctx, poly, n_poly);
+     if (model2_texture_rom_load_default() != 0) {
+         fprintf(stderr, "lift: texture ROM required; refusing to draw without it\n");
+-        exit(1);
++        s_failed = 1;
++        return -1;
+     }
+     g_polygon_loaded = 1;
++    return 0;
+ }
+ 
+ /*
+@@ -558,13 +567,18 @@ static int decode_prg_stream(const u32 *prg_buf, unsigned prg_n, const float *pr
+     return ok;
+ }
+ 
++/* The decode's scratch copies of the frame's FIFO words and their matrices: written before
++ * they are read on every decode, so a host that snapshots memory can leave them out. */
++u32 model2_geo_render_scratch_prg[262144];
++float model2_geo_render_scratch_mtx[262144 * 12];
++
+ static int decode_fifos_locked(void)
+ {
+     unsigned prg_n = 0;
+     unsigned prg_total = 0;
+     unsigned copro_total = 0;
+-    static u32 prg_buf[262144];
+-    static float prg_mtx[262144 * 12];
++    u32 *const prg_buf = model2_geo_render_scratch_prg;
++    float *const prg_mtx = model2_geo_render_scratch_mtx;
+     u32 copro_buf[GEO_SCRATCH_WORDS];
+     int best_verts = 0;
+     int decoded = 0;
+@@ -623,7 +637,8 @@ static int decode_fifos_locked(void)
+         float hw_focus[2];
+         u32 hw_window[6];
+ 
+-        ensure_polygon_rom();
++        if (ensure_polygon_rom() != 0)
++            return (int)g_mesh.n_verts;
+         model2_mesh_collector_init(&prg_mesh);
+         /*
+          * Bootstrap commands precede the first displayed frame. MAME GEO state
+@@ -969,7 +984,9 @@ int model2_geo_render_init(void)
+     g_worker_kick = 0;
+     g_worker_gen = 0;
+     g_done_gen = 0;
+-    if (pthread_create(&g_worker, NULL, geo_worker_main, NULL) == 0) {
++    if (g_sync_only) {
++        g_worker_started = 0;
++    } else if (pthread_create(&g_worker, NULL, geo_worker_main, NULL) == 0) {
+         g_worker_started = 1;
+         if (g_fifo_valid && g_fifo.set_notify)
+             g_fifo.set_notify(geo_fifo_notify);
+@@ -1096,7 +1113,8 @@ int model2_geo_render_decode_prg_file(const char *path, int require_end)
+         model2_geo_render_init();
+     if (!path || !*path)
+         return -1;
+-    ensure_polygon_rom();
++    if (ensure_polygon_rom() != 0)
++        return -1;
+     fp = fopen(path, "rb");
+     if (!fp)
+         return -1;
+@@ -1420,3 +1438,15 @@ void model2_geo_render_draw_gl(void)
+     (void)0;
+ #endif
+ }
++
++void model2_geo_render_set_sync(int on)
++{
++    g_sync_only = on ? 1 : 0;
++}
++
++int model2_geo_render_load_roms(void)
++{
++    if (!g_inited)
++        model2_geo_render_init();
++    return ensure_polygon_rom();
++}

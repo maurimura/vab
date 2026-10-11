@@ -1,0 +1,30 @@
+diff --git a/src/boot/maincpu_reset_entry.c b/src/boot/maincpu_reset_entry.c
+index 7c85d2e..ba2784c 100644
+--- a/src/boot/maincpu_reset_entry.c
++++ b/src/boot/maincpu_reset_entry.c
+@@ -62,7 +62,8 @@ void maincpu_reset_entry(u32 arg0, u32 arg1, u32 arg2)
+     g5 = (uintptr_t)(model2_workram + 0x0);
+     g3 = 0;
+     g4 = 0xffff;
+-    i960_st_u32(I960_WORKRAM, 0x201e54, 0, (u32)g8);
++    /* The i960 stores the CRX RAM's address (0x200000) here, not the host's. */
++    i960_st_u32(I960_WORKRAM, 0x201e54, 0, 0x00200000u);
+     do {
+         g4 = g4 - 1;
+         r4 = 0 - 1;
+diff --git a/src/game/game_dispatch_main.c b/src/game/game_dispatch_main.c
+index 97e43d6..d72f89a 100644
+--- a/src/game/game_dispatch_main.c
++++ b/src/game/game_dispatch_main.c
+@@ -55,8 +55,9 @@ void game_dispatch_main(u32 arg0, u32 arg1, u32 arg2)
+ 
+             p = model2_rom_at(0x1a121c4 + scaled);
+             g4 = p ? *(const u32 *)p : 0;
+-            p = model2_rom_at(0x1a121c0 + scaled);
+-            g5 = p ? (uintptr_t)p : 0;
++            /* g5 is the i960 address the loop below reads from (g5 + 8), not a host pointer:
++             * a host pointer cut to 32 bits read whatever its low bits happened to address. */
++            g5 = 0x1a121c0u + scaled;
+         }
+         g7 = 0;
+         g6 = (uintptr_t)(model2_crx_ram + 0xa540);

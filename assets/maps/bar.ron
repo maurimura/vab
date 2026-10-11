@@ -2977,17 +2977,7 @@
         ),
         (
             x: -16,
-            y: 4,
-            tile: "floor/wood",
-        ),
-        (
-            x: -16,
             y: 5,
-            tile: "floor/wood",
-        ),
-        (
-            x: -16,
-            y: 6,
             tile: "floor/wood",
         ),
         (
@@ -5443,6 +5433,16 @@
         (
             x: -12,
             y: 11,
+            tile: "floor/wood",
+        ),
+        (
+            x: -16,
+            y: 6,
+            tile: "floor/wood",
+        ),
+        (
+            x: -16,
+            y: 4,
             tile: "floor/wood",
         ),
     ],
@@ -5809,15 +5809,33 @@
         ),
         (
             x: -16,
-            y: 4,
-            tile: "objects/cabinet_outrun_down_right",
-            game: Some("outrun"),
+            y: 5,
+            tile: "objects/cabinet_crusnusa_down_right",
+            game: Some("crusnusa41"),
         ),
         (
             x: -16,
             y: 6,
             tile: "objects/cabinet_crusnusa_down_right",
             game: Some("crusnusa41"),
+        ),
+        (
+            x: -16,
+            y: 9,
+            tile: "objects/cabinet_outrun_down_right",
+            game: Some("outrun"),
+        ),
+        (
+            x: -16,
+            y: 10,
+            tile: "objects/cabinet_outrun_down_right",
+            game: Some("outrun"),
+        ),
+        (
+            x: -16,
+            y: 13,
+            tile: "objects/cabinet_srallyc_down_right",
+            game: Some("srallyc"),
         ),
     ],
 )
