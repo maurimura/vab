@@ -1,7 +1,8 @@
 //! The room's chat: Y opens a line to type in, Enter sends it to everyone in the bar room and
 //! Esc closes it. The latest messages show in the bottom-left corner for a while (all of them
 //! while typing). `/name <name>` sets the name shown above your head and next to what you say;
-//! the page keeps it in a cookie (web/index.html). `/help` shows the controls, `/settings` what
+//! the page keeps it in a cookie (web/index.html). `/look` opens the page's first screen again,
+//! to change what you wear (web/onboarding.js). `/help` shows the controls, `/settings` what
 //! can be tuned (settings.rs), and `/netstats` how an air hockey match's connection is doing. On a touch screen the line is typed in the
 //! page instead, with the phone's keyboard, and comes in through `chat_typed`. `/mute <name>`
 //! and `/unmute <name>` stop or start hearing someone's voice (voice.rs), remembered by name.
@@ -56,6 +57,9 @@ extern "C" {
     /// Sets the player's name in the room and remembers it for next time.
     #[wasm_bindgen(js_name = roomName)]
     fn room_name(name: &str);
+    /// Shows the page's screen for picking how the player looks.
+    #[wasm_bindgen(js_name = lookOpen)]
+    fn look_open();
     /// Mutes or unmutes someone's voice by name and remembers it; returns their name as the
     /// room has it.
     #[wasm_bindgen(js_name = voiceMute)]
@@ -155,6 +159,7 @@ impl Chat {
                     self.add(format!("* You're {name} now."), now);
                 }
             }
+            Some("/look") => look_open(),
             Some(command @ ("/mute" | "/unmute")) => {
                 let name = line[command.len()..]
                     .split_whitespace()
@@ -172,9 +177,9 @@ impl Chat {
                 self.add(said, now);
             }
             Some(_) => self.add(
-                "* Commands: /name Mauri sets your name, /help shows the controls, /controls \
-                 changes a game's keys, /settings tunes the games, /mute and /unmute someone's \
-                 voice, /wheel a driving game's steering"
+                "* Commands: /name Mauri sets your name, /look what you wear, /help shows the \
+                 controls, /controls changes a game's keys, /settings tunes the games, /mute and \
+                 /unmute someone's voice, /wheel a driving game's steering"
                     .into(),
                 now,
             ),

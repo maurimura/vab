@@ -1,0 +1,156 @@
+{
+  "about": "What a player can wear (web/avatar.js). Layers draw in this order, each item a 16x32 PNG at <layer>/<item>.png drawn over the body, feet at the bottom middle. Pixels in a slot's greys (keys: light, mid, dark; any alpha) take three shades of the colour picked for that slot; other pixels stay as drawn. An item's slots name the palette offered for each, its colours are the first pick. A required layer always has an item, its default if nothing else; the others can be left off, and a newcomer starts with their default if they have one. A layer's view is the rows its pictures in the picker show, without the layers that would hide it. tools/art/build_avatar.py drew these.",
+  "size": [16, 32],
+  "keys": [
+    ["#e0e0e0", "#a8a8a8", "#707070"],
+    ["#c8c8c8", "#909090", "#585858"]
+  ],
+  "palettes": {
+    "skin": ["#ffe0c8", "#f6cfa8", "#f1c27d", "#e0ac69", "#c68642", "#a0663b", "#8d5524", "#5c3a1e", "#3d2616"],
+    "hair": ["#17130f", "#3b2a1d", "#6b4428", "#9c5330", "#cf6a2c", "#d9b25f", "#efe0a8", "#9b9b9b", "#ededed", "#e85d9c", "#4a7bd8", "#41b06a", "#8e5bd6"],
+    "cloth": ["#f4f4f0", "#a7afb8", "#4a4e5a", "#1e1f26", "#d33a3a", "#ef8a2f", "#f2c94c", "#3fa34d", "#1f9e9e", "#5aa9e6", "#4f6d8c", "#2f4a8a", "#7a4fc4", "#e86fa8", "#7a4b2a", "#c9a66b"]
+  },
+  "tabs": ["hair", "face", "top", "jacket", "legs", "shoes", "hat", "glasses", "beard", "body"],
+  "layers": [
+    {
+      "id": "body",
+      "view": [0, 32],
+      "required": true,
+      "label": "Skin",
+      "default": "body",
+      "items": [{ "id": "body", "label": "Skin", "slots": ["skin"], "colours": ["#f1c27d"] }]
+    },
+    {
+      "id": "face",
+      "view": [2, 13],
+      "without": ["glasses", "hat"],
+      "required": true,
+      "label": "Face",
+      "default": "smile",
+      "items": [
+        { "id": "smile", "label": "Smile" },
+        { "id": "calm", "label": "Calm" },
+        { "id": "grin", "label": "Grin" },
+        { "id": "wink", "label": "Wink" },
+        { "id": "surprised", "label": "Surprised" },
+        { "id": "sleepy", "label": "Sleepy" },
+        { "id": "determined", "label": "Determined" },
+        { "id": "blush", "label": "Blush" },
+        { "id": "freckles", "label": "Freckles" }
+      ]
+    },
+    {
+      "id": "beard",
+      "view": [5, 16],
+      "without": ["glasses"],
+      "label": "Beard",
+      "items": [
+        { "id": "stubble", "label": "Stubble", "slots": ["hair"], "colours": ["#3b2a1d"] },
+        { "id": "mustache", "label": "Mustache", "slots": ["hair"], "colours": ["#3b2a1d"] },
+        { "id": "goatee", "label": "Goatee", "slots": ["hair"], "colours": ["#3b2a1d"] },
+        { "id": "beard", "label": "Full beard", "slots": ["hair"], "colours": ["#3b2a1d"] }
+      ]
+    },
+    {
+      "id": "legs",
+      "view": [19, 32],
+      "required": true,
+      "label": "Pants",
+      "default": "jeans",
+      "items": [
+        { "id": "jeans", "label": "Jeans", "slots": ["cloth"], "colours": ["#4f6d8c"] },
+        { "id": "trousers", "label": "Trousers", "slots": ["cloth"], "colours": ["#4a4e5a"] },
+        { "id": "shorts", "label": "Shorts", "slots": ["cloth"], "colours": ["#c9a66b"] },
+        { "id": "skirt", "label": "Skirt", "slots": ["cloth"], "colours": ["#2f4a8a"] },
+        { "id": "cargo", "label": "Cargo", "slots": ["cloth", "cloth"], "colours": ["#5b6b45", "#4a5a38"] }
+      ]
+    },
+    {
+      "id": "shoes",
+      "view": [23, 32],
+      "label": "Shoes",
+      "default": "sneakers",
+      "items": [
+        { "id": "sneakers", "label": "Sneakers", "slots": ["cloth"], "colours": ["#1e1f26"] },
+        { "id": "hightops", "label": "High-tops", "slots": ["cloth", "cloth"], "colours": ["#d33a3a", "#f4f4f0"] },
+        { "id": "boots", "label": "Boots", "slots": ["cloth"], "colours": ["#7a4b2a"] },
+        { "id": "cowboy", "label": "Cowboy boots", "slots": ["cloth"], "colours": ["#9a5a2a"] }
+      ]
+    },
+    {
+      "id": "top",
+      "view": [11, 24],
+      "without": ["jacket"],
+      "required": true,
+      "label": "Top",
+      "default": "tee",
+      "items": [
+        { "id": "tee", "label": "T-shirt", "slots": ["cloth"], "colours": ["#d33a3a"] },
+        { "id": "tank", "label": "Tank top", "slots": ["cloth"], "colours": ["#f4f4f0"] },
+        { "id": "longsleeve", "label": "Long sleeve", "slots": ["cloth"], "colours": ["#3fa34d"] },
+        { "id": "striped", "label": "Striped", "slots": ["cloth", "cloth"], "colours": ["#f4f4f0", "#2f4a8a"] },
+        { "id": "polo", "label": "Polo", "slots": ["cloth"], "colours": ["#1f9e9e"] },
+        { "id": "shirt", "label": "Shirt", "slots": ["cloth"], "colours": ["#5aa9e6"] },
+        { "id": "hoodie", "label": "Hoodie", "slots": ["cloth", "cloth"], "colours": ["#a7afb8", "#4a4e5a"] },
+        { "id": "sweater", "label": "Sweater", "slots": ["cloth", "cloth"], "colours": ["#d33a3a", "#f4f4f0"] }
+      ]
+    },
+    {
+      "id": "jacket",
+      "view": [11, 24],
+      "label": "Jacket",
+      "items": [
+        { "id": "jacket", "label": "Jacket", "slots": ["cloth"], "colours": ["#4f6d8c"] },
+        { "id": "leather", "label": "Leather", "slots": ["cloth"], "colours": ["#1e1f26"] },
+        { "id": "varsity", "label": "Varsity", "slots": ["cloth", "cloth"], "colours": ["#2f4a8a", "#f4f4f0"] },
+        { "id": "vest", "label": "Vest", "slots": ["cloth"], "colours": ["#7a4b2a"] },
+        { "id": "blazer", "label": "Blazer", "slots": ["cloth", "cloth"], "colours": ["#1e1f26", "#4a4e5a"] }
+      ]
+    },
+    {
+      "id": "hair",
+      "view": [0, 18],
+      "without": ["hat"],
+      "label": "Hair",
+      "default": "short",
+      "items": [
+        { "id": "short", "label": "Short", "slots": ["hair"], "colours": ["#3b2a1d"] },
+        { "id": "buzz", "label": "Buzz", "slots": ["hair"], "colours": ["#17130f"] },
+        { "id": "parted", "label": "Parted", "slots": ["hair"], "colours": ["#6b4428"] },
+        { "id": "spiky", "label": "Spiky", "slots": ["hair"], "colours": ["#d9b25f"] },
+        { "id": "mohawk", "label": "Mohawk", "slots": ["hair"], "colours": ["#e85d9c"] },
+        { "id": "curly", "label": "Curly", "slots": ["hair"], "colours": ["#17130f"] },
+        { "id": "afro", "label": "Afro", "slots": ["hair"], "colours": ["#17130f"] },
+        { "id": "bob", "label": "Bob", "slots": ["hair"], "colours": ["#cf6a2c"] },
+        { "id": "long", "label": "Long", "slots": ["hair"], "colours": ["#9c5330"] },
+        { "id": "bun", "label": "Bun", "slots": ["hair"], "colours": ["#3b2a1d"] },
+        { "id": "pigtails", "label": "Pigtails", "slots": ["hair"], "colours": ["#efe0a8"] }
+      ]
+    },
+    {
+      "id": "glasses",
+      "view": [3, 12],
+      "label": "Glasses",
+      "items": [
+        { "id": "round", "label": "Round", "slots": ["cloth"], "colours": ["#1e1f26"] },
+        { "id": "square", "label": "Square", "slots": ["cloth"], "colours": ["#7a4b2a"] },
+        { "id": "sunglasses", "label": "Sunglasses", "slots": ["cloth"], "colours": ["#1e1f26"] },
+        { "id": "visor", "label": "Visor", "slots": ["cloth"], "colours": ["#1f9e9e"] }
+      ]
+    },
+    {
+      "id": "hat",
+      "view": [0, 12],
+      "label": "Hat",
+      "items": [
+        { "id": "cap", "label": "Cap", "slots": ["cloth", "cloth"], "colours": ["#d33a3a", "#f4f4f0"] },
+        { "id": "beanie", "label": "Beanie", "slots": ["cloth", "cloth"], "colours": ["#f2c94c", "#d33a3a"] },
+        { "id": "cowboy", "label": "Cowboy hat", "slots": ["cloth", "cloth"], "colours": ["#9a6a3a", "#1e1f26"] },
+        { "id": "bucket", "label": "Bucket hat", "slots": ["cloth", "cloth"], "colours": ["#c9a66b", "#7a4b2a"] },
+        { "id": "headband", "label": "Headband", "slots": ["cloth"], "colours": ["#f4f4f0"] },
+        { "id": "headphones", "label": "Headphones", "slots": ["cloth", "cloth"], "colours": ["#1e1f26", "#d33a3a"] },
+        { "id": "crown", "label": "Crown" }
+      ]
+    }
+  ]
+}

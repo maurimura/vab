@@ -27,7 +27,8 @@ export async function closeAll() {
   await Promise.all(browsers.map((browser) => browser.close().catch(() => {})));
 }
 
-/** A player in `room`, the bar loaded and the welcome closed. */
+/** A player in `room`, in from the first screen with how it looked, the bar loaded and the
+ * welcome closed. */
 export async function player(name, room) {
   const browser = await puppeteer.launch({
     executablePath: CHROME,
@@ -57,11 +58,23 @@ export async function player(name, room) {
   });
   const it = { name, browser, page, errors };
   await it.page.goto(`${BASE_URL}/?room=${encodeURIComponent(room)}`, { waitUntil: "load" });
-  await waitFor(it, (state) => state.mode === "Walking", { what: "the bar to load", timeout: 60000 });
-  // A click gives the page the keyboard; a key closes the welcome.
-  await page.mouse.click(640, 360);
-  await page.keyboard.press("ShiftLeft");
+  await enter(it);
   return it;
+}
+
+/** Into the bar from the first screen (web/onboarding.js), as it looked, once the bar has loaded;
+ * after a reload too. */
+export async function enter(it) {
+  await it.page.waitForSelector("#look-items button");
+  await it.page.click("#look-enter");
+  await it.page.waitForSelector("#onboarding", { hidden: true, timeout: 60000 });
+  await waitFor(it, (state) => state.mode === "Walking", { what: "the bar to load", timeout: 60000 });
+  // Two of Bevy's frames, for the welcome to be up before the key that closes it: the bar may
+  // have loaded long before going in.
+  await it.page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  // A click gives the page the keyboard; a key closes the welcome.
+  await it.page.mouse.click(640, 360);
+  await it.page.keyboard.press("ShiftLeft");
 }
 
 /** The client's state (client/src/testing.rs), or null until the hooks are up. */
