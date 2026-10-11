@@ -208,6 +208,11 @@ add(22.3, (g) => {
 }, { name: "bull-pen" });
 wallItem(G.sepL, 0.22, 1.0);
 wallItem(G.sepR, 0.22, 1.0);
+// Over each outlane, a guide off the side wall: a ball falling down the side (out of the orbit,
+// off the bull) is turned into the inlane, to the flipper. The outlane stays open to one coming
+// across the table.
+wallItem([[0.3, 27.0], [1.3, 29.0]], 0.24, 1.1);
+wallItem([[18.7, 27.0], [17.7, 29.0]], 0.24, 1.1);
 wallItem([[5.96, 37.225], [6.6, 40.1]], 0.22, 0.9);
 wallItem([[13.04, 37.225], [12.4, 40.1]], 0.22, 0.9);
 // arch: steel band

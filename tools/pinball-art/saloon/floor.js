@@ -182,7 +182,7 @@ export function drawFloor(fs, defs, { C, G, mix, shade, archPts, W, L, only, all
   for (let i = 0; i < 3; i++) insert((G.guides[i] + G.guides[i + 1]) / 2, 6.45, { shape: "shoe", r: 0.4, color: C.sun, on: i !== 1, name: `lane-${i}` });
   // shot arrows
   insert(1.16, 27.3, { name: "orbit-arrow", shape: "arrow", r: 0.4, color: C.red, on: true });
-  insert(1.16, 28.7, { name: "orbit-light", shape: "circle", r: 0.24, color: C.sun, on: false });
+  insert(1.75, 27.95, { name: "orbit-light", shape: "circle", r: 0.24, color: C.sun, on: false });
   G.posters.forEach(([x, y], i) => insert(x + 0.5 * 1.15, y + 0.866 * 1.15, { r: 0.2, color: C.sun, on: i === 0, name: `poster-light-${i}` }));
   insert(6.35, 22.75, { name: "ramp-arrow", shape: "arrow", r: 0.44, color: C.orange, on: true });
   insert(6.35, 24.2, { name: "lock", shape: "rect", r: 0.3, color: C.sun, on: true, label: "LOCK", lsize: 0.2 });
