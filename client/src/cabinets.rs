@@ -22,7 +22,7 @@ use crate::touch::{Touch, TouchButton};
 /// The games cabinets can run, built into the client like the map.
 pub const GAMES: &str = include_str!("../../assets/games.ron");
 /// Where the hint sits: a little above a cabinet's top, in world pixels from its cell.
-const HINT_HEIGHT: f32 = 44.0;
+pub const HINT_HEIGHT: f32 = 44.0;
 
 thread_local! {
     /// How many sit at each cabinet ("x,y"), from the room.
@@ -44,7 +44,7 @@ pub fn cabinet_watchers(cabinet: String, count: u32) {
 }
 
 /// How many sit at the cabinet in `cell`, and how many watch its game.
-fn people_at(cell: IVec2) -> (u32, u32) {
+pub fn people_at(cell: IVec2) -> (u32, u32) {
     let cabinet = emulator::cabinet_id(cell);
     let count = |counts: &HashMap<String, u32>| counts.get(&cabinet).copied().unwrap_or(0);
     (SEATED.with_borrow(count), WATCHING.with_borrow(count))
@@ -91,6 +91,11 @@ impl Cabinets {
 
     pub fn cells(&self) -> impl Iterator<Item = IVec2> + '_ {
         self.0.iter().map(|(cell, _)| *cell)
+    }
+
+    /// Every cabinet with a game, and the game.
+    pub fn all(&self) -> &[(IVec2, Game)] {
+        &self.0
     }
 
     /// The cabinet nearest the player, if it's nearer than anything else (nearby.rs).

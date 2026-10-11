@@ -18,6 +18,30 @@ game, at a cabinet (Tab there too) for that game alone, over every game's; both 
 games' wheel (see
 [Steering with the arrows](#steering-with-the-arrows)).
 
+A bartender works behind the counter and a cleaner mops the floor (`client/src/staff.rs`): three
+of each take turns, a shift every 30 minutes, the cleaner's changing halfway through the
+bartender's. The room sends nothing about them: each page works out the shift stop by stop from
+the map and the room's clock (its welcome says the time), so everyone in a room sees the same
+person in the same place doing the same thing. The bartender keeps to the floor next to a counter
+that players can't walk to, wiping the counter between stops (a map without any has no
+bartender); the cleaner goes a few cells at a time over the floor players walk. Their sprites are
+dressed in the players' layers (`assets/avatar/`) by `tools/art/build_staff.py`, five 24×32
+frames side by side (standing, two walking, two working), which a drawn sheet laid out the same
+replaces.
+
+E at the counter, or next to the cleaner, talks to them (`client/src/talk/`; Talk on a touch
+screen): what they say shows in a box at the bottom right, and the player answers with 1 to 9, a
+click or a tap, while Esc, E again or walking away ends it. The bartender comes across the
+counter to the player and shows them around: what there is to play, by kind of game
+(`genre` in `assets/games.ron`), who's playing right now, how to play with friends, and the
+controls. Picking a game puts an arrow by the player's feet pointing the way, and a marker over
+its nearest cabinet, until they get there. The cleaner has tips, and points the way to the
+bartender, as the page does on a first visit once the welcome panel closes. They talk in English,
+Spanish, Portuguese, French or German (`client/src/talk/lines.rs`, Latin-1 only, as the font
+is): the browser's language, or the one picked in a conversation, which a cookie keeps. Game
+titles and names stay as they are. Who's talking to whom is the player's own: everyone else sees
+the bartender carry on with the shift.
+
 E next to the pool table plays 8-ball: the table seen from above, the cue following the mouse
 (or a finger) around the cue ball. Holding the button pulls the cue back, further the longer
 it's held, and letting go shoots. Alone at the table, you take both sides in turn; when someone

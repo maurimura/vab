@@ -25,6 +25,12 @@ node tools/e2e/shuffleboard.mjs   # or just one
   both boards, a reload mid-turn, someone leaving.
 - `pinball.mjs`: the Saloon pinball machine: the plunger, the flippers, the next ball.
 - `nearest.mjs`: next to both a cabinet and a table, E uses the one the player stands nearer.
+- `talk.mjs`: talking to the staff: the way to the bartender on a first visit, the bartender
+  coming across the counter, a game picked and the way there shown, Spanish picked (the titles
+  staying as they are) and kept over a reload, the cleaner stopping to talk, and walking away.
+- `staff.mjs`: two players see the same bartender and cleaner at the same stop of their shift;
+  the bartender keeps behind the counter and the cleaner out of it; a shift later the next of
+  each takes over for both.
 - `shuffleboard.mjs`: two players at the shuffleboard table: seats, throws alike on both
   tables, the held puck, a reload mid-game, a whole round, someone leaving.
 - `voice.mjs`: two players hear each other (Chrome's fake microphone beeps) at a cabinet, then at
@@ -49,6 +55,8 @@ which the site never has:
 - `vab.throw(vx, vy)`: throws the waiting shuffleboard puck at exactly that speed.
 - `vab.throwDart(x, y)`: throws a dart that lands exactly there (millimetres from the board's
   middle, y up).
+- `vab.clockAhead(seconds)`: the staff go by a clock that far ahead of the room's, for a later
+  shift (`vab.state().staff` says who's on and where; `vab.state().talk`, what they're saying).
 
 `lib.mjs` has the helpers: `player(name, room)`, `use(player, object, mode)`,
 `waitFor(player, test)`, `check(ok, message)`.

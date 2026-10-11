@@ -485,6 +485,7 @@
         help_welcome,
         own_look,
         own_name,
+        talk_language,
         player_left,
         player_look,
         player_moved,
@@ -552,6 +553,8 @@
       let firstMove;
       window.roomMove = (x, y, flip) => (inside ? room.move(x, y, flip) : (firstMove = [x, y, flip]));
       window.roomSay = (text) => room?.say(text) ?? false;
+      // The time on the room's clock, which the staff go by (client/src/staff.rs).
+      window.roomClock = () => Date.now() + (room?.clockOffset ?? 0);
 
       // The player's controls, game by game (client/src/controls.rs): what they put on other
       // keys and how a driving game's wheel turns. Kept in the browser, not a cookie, as no
@@ -603,6 +606,8 @@
 
       // The name set with /name in the chat (client/src/chat.rs) is remembered for next time, as
       // the one picked on the first screen is.
+      // The language the staff talk in (client/src/talk), once picked in a conversation.
+      window.rememberLanguage = (code) => remember("lang", code);
       window.roomName = (name) => {
         remember("name", name);
         room?.setName(name);
@@ -1835,6 +1840,7 @@
           standAt: (x, y, towardX, towardY) => client.vab_stand_at(x, y, towardX, towardY),
           throw: (vx, vy) => client.vab_throw(vx, vy),
           throwDart: (x, y) => client.vab_throw_dart(x, y),
+          clockAhead: (seconds) => client.vab_clock_ahead(seconds),
           id: () => room?.id,
         };
       }
@@ -1895,6 +1901,8 @@
       if (picked && picked !== myName) window.roomName(picked);
       inside = true;
       if (firstMove) room.move(...firstMove);
+      // The staff talk in the language picked before, or the browser's.
+      talk_language(cookie("lang") ?? navigator.language ?? "en");
       // First visit: the controls.
       if (!cookie("welcomed")) {
         help_welcome();
