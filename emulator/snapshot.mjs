@@ -10,7 +10,9 @@
 // The files after the coins go with the ROM set as the page puts them (romPath in libretro.js):
 // a BIOS set next to it, or at their path after a `roms/` folder (a NAOMI game's disc,
 // roms/vtennisg/gds-0011.chd, in the folder named after its set). BOOT is the seconds of game
-// time the boot takes (10; a NAOMI's BIOS and GD-ROM take about 175). The state is written
+// time the boot takes (10; a NAOMI's BIOS and GD-ROM take about 175). SETUP is a module that
+// changes the game's settings after the boot, before the coins (supermodel/vs298-settings.mjs:
+// the operator's test menu); its default export gets { core, run }. The state is written
 // deflated, marked as the worker marks states ("vabz"), which it unpacks: a NAOMI's is 73 MB raw.
 // States only load into the same core build: rerun this after rebuilding the cores.
 import { readFileSync, writeFileSync } from "node:fs";
@@ -35,6 +37,7 @@ const run = (seconds, mask = 0) => {
 };
 
 run(BOOT); // boot; action descriptors are now available
+if (process.env.SETUP) (await import(resolve(process.env.SETUP))).default({ core, run });
 const confirm = actionButtons(core.buttons)[0]?.[0] ?? 0;
 run(0.2, 1 << confirm); // "any button to continue"
 run(5);

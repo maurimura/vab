@@ -96,6 +96,9 @@ class RetroLogger : public CLogger
 
 // Which Supermodel input stands for which RetroPad button. Cabinet buttons left to right (short
 // pass, long pass, shoot; punch, kick, guard, escape) go on the pad's bottom row Y B A then X.
+// The operator's Test and Service buttons sit on L3 and R3, which the bar's keys never press:
+// only tools reach the test menu (emulator/snapshot.mjs, to bake a game's settings into its
+// start-up state). They have no label, so the page doesn't list them.
 struct Mapping
 {
   const char *input;    // Supermodel's input id (Inputs/Inputs.cpp), without the "Input" prefix
@@ -109,6 +112,8 @@ static const Mapping kMappings[] = {
   { "Coin1", 0, RETRO_DEVICE_ID_JOYPAD_SELECT, Game::INPUT_COMMON, "Coin" },
   { "Start2", 1, RETRO_DEVICE_ID_JOYPAD_START, Game::INPUT_COMMON, "Start" },
   { "Coin2", 1, RETRO_DEVICE_ID_JOYPAD_SELECT, Game::INPUT_COMMON, "Coin" },
+  { "TestA", 0, RETRO_DEVICE_ID_JOYPAD_L3, Game::INPUT_COMMON, nullptr },
+  { "ServiceA", 0, RETRO_DEVICE_ID_JOYPAD_R3, Game::INPUT_COMMON, nullptr },
   { "JoyUp", 0, RETRO_DEVICE_ID_JOYPAD_UP, Game::INPUT_JOYSTICK1, "Up" },
   { "JoyDown", 0, RETRO_DEVICE_ID_JOYPAD_DOWN, Game::INPUT_JOYSTICK1, "Down" },
   { "JoyLeft", 0, RETRO_DEVICE_ID_JOYPAD_LEFT, Game::INPUT_JOYSTICK1, "Left" },
@@ -467,7 +472,7 @@ RETRO_API bool retro_load_game(const struct retro_game_info *info)
   {
     std::vector<retro_input_descriptor> descriptors;
     for (const Mapping &m : kMappings)
-      if (s_game.inputs & m.game_flags) descriptors.push_back({ m.port, RETRO_DEVICE_JOYPAD, 0, m.id, m.label });
+      if ((s_game.inputs & m.game_flags) && m.label) descriptors.push_back({ m.port, RETRO_DEVICE_JOYPAD, 0, m.id, m.label });
     descriptors.push_back({ 0, 0, 0, 0, nullptr });
     environ_cb(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, descriptors.data());
   }
