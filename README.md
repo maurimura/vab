@@ -15,7 +15,7 @@ The gear in the top right corner (or `/controls` in the chat) opens the controls
 changes your name (as `/name` does) and puts the buttons on other keys: in the bar for every
 game, at a cabinet (Tab there too) for that game alone, over every game's; both tune the driving
 games' wheel (see
-[Steering with the arrows](#steering-with-the-arrows-out-run-cruisn-usa)).
+[Steering with the arrows](#steering-with-the-arrows)).
 
 E next to the pool table plays 8-ball: the table seen from above, the cue following the mouse
 (or a finger) around the cue ball. Holding the button pulls the cue back, further the longer
@@ -63,7 +63,7 @@ Cruis'n USA (Midway V-Unit, 1994; MAME's `crusnusa41`, v4.1) is one player's: th
 E watches. The arrows drive, as at Daytona USA: Left and Right turn a steering wheel as at Out
 Run (a tap barely turns it, a hold takes it to full lock in 0.6 s, and let go it's back in the
 middle in 0.1 s; Tab there tunes that: see
-[Steering with the arrows](#steering-with-the-arrows-out-run-cruisn-usa)), Up is the gas and
+[Steering with the arrows](#steering-with-the-arrows)), Up is the gas and
 Down the brake (MAME's own handling of a pedal on keys, 0.9 s to the floor). Z and X shift down
 and up, which matters with the manual transmission the game offers before each race (the
 automatic is the default); A, S and D are its three views and C the radio. Its menus are "turn
@@ -292,9 +292,9 @@ link is set at power-on, for now.
 A player's input for a frame, what GGRS sends and confirms and the watchers get, is 32 bits: the
 RetroPad's buttons in the low 16 (bit `1 << id`, ids from libretro.h), and at a lightgun game
 where the gun points in the high 16, 8 bits across the screen (0 its left edge, 255 its right)
-and 8 down (0 the top); at a driving game (Out Run, Cruis'n USA) bits 16-23 are where its wheel
+and 8 down (0 the top); at a driving game (Out Run, Cruis'n USA, Daytona USA, Sega Rally) bits 16-23 are where its wheel
 is turned, a signed byte, which the worker works out from the player's arrows (see
-[Steering with the arrows](#steering-with-the-arrows-out-run-cruisn-usa)).
+[Steering with the arrows](#steering-with-the-arrows)).
 Other games leave those 0. The emulator worker answers the core's RetroPad from the low half
 and, at a lightgun game only, its lightgun from both, at a driving game its wheel from bits 16-23
 (`web/emulator/libretro.js`).
@@ -399,7 +399,7 @@ its stream to a watcher. FBNeo toggles the gear when the shifter input differs f
 before's, which its states left out (`emulator/patches/burn-shift-state.patch`). Its cabinet skin
 is still to come: it stands in a plain cabinet next to Daytona USA's in `assets/maps/bar.ron`.
 
-### Steering with the arrows (Out Run, Cruis'n USA)
+### Steering with the arrows
 
 A driving cabinet has a wheel, a keyboard two arrows, and the cores' own answers to arrows are
 far too quick for a tap: FBNeo's "fake digital" Left and Right put Out Run's wheel at full lock
@@ -431,6 +431,15 @@ same way, so `span` is `assets/games.ron`'s alone.
 | --- | --- | --- | --- | --- |
 | Out Run | 0.3 s | 0.3 s | 1 | (10600, 23500) |
 | Cruis'n USA | 0.6 s | 0.1 s | 2 | (5200, 28900) |
+| Daytona USA, Sega Rally | 0.4 s | 0.14 s | 2 | the whole stick |
+
+Daytona USA's and Sega Rally's cores turned their wheel themselves from Left and Right (a ramp
+in their shims, slow for a quarter second and then fast); with `"steer": "wheel"` among their
+`options` they read the bar's wheel from the stick instead, so the controls panel's numbers and
+its drawing are theirs too. Their numbers keep the old feel: a short hold still lands in
+Daytona USA's ADVANCED band at the circuit select (the wheel at +16 to +64 of 96), a longer one
+EXPERT, and an arcade cabinet's watchers get the wheel with its buttons (the worker's
+`watch-frames` carry 24 bits of controls a frame).
 
 Out Run's wheel turns as it did, 7 of 127 a frame. Cruis'n USA's, measured in Node from a race
 at 121 mph, Right held, against the gas alone (the car's place across the road, in the game's

@@ -106,6 +106,7 @@ static uint64_t NowUs(void)
 static int s_steerStep = 12;      /* ADC units a frame once the slow stage is over, and back to centre */
 static int s_steerSlow = 3;       /* ADC units a frame for the first s_steerSlowFrames of a press away from centre */
 static int s_steerSlowFrames = 16;
+static int s_steerWheel = 0;      /* steer=wheel: the frontend's wheel, as the left stick's X (ReadWheel) */
 static char s_region[32] = "international"; /* the SDL viewer's default (model2_nvram.c g_region) */
 static char s_nvramDir[256] = "/nvram";
 
@@ -123,6 +124,7 @@ void srally_set(const char *key, const char *value)
   if (!strcmp(k, "steer_step")) s_steerStep = clampi(n, 1, 2 * LOCK);
   else if (!strcmp(k, "steer_slow")) s_steerSlow = clampi(n, 1, 2 * LOCK);
   else if (!strcmp(k, "steer_slow_frames")) s_steerSlowFrames = clampi(n, 0, 600);
+  else if (!strcmp(k, "steer")) s_steerWheel = !strcmp(v, "wheel");
   else if (!strcmp(k, "region"))
   {
     if (strcmp(v, "international") && strcmp(v, "japan") && strcmp(v, "us"))
@@ -505,8 +507,12 @@ static void DecodeFrame(void)
  * back, daytona/'s: s_steerSlow a frame for the first s_steerSlowFrames of a press that turns
  * the wheel away from centre, s_steerStep after that, when counter-steering and back to
  * centre), UP accelerator, DOWN brake, B/A shift down/up through the H-shifter's gears 1-4,
- * Y the VIEW CHANGE button, START, SELECT coin. Pedals full or off, as the viewer's keys. */
-static void ApplyPad(uint32_t pad)
+ * Y the VIEW CHANGE button, START, SELECT coin. Pedals full or off, as the viewer's keys.
+ * With steer=wheel the frontend turns the wheel instead (the bar's, web/emulator/wheel.js, as
+ * the player has it in its controls panel), and `wheel` is where: the left stick's X, -32767
+ * full left to 32767 full right, on the ADC's -LOCK..LOCK. It's in the frame's input, so every
+ * machine running the frame turns the wheel alike. */
+static void ApplyPad(uint32_t pad, int wheel)
 {
   srally_seat_t *seat = &srally_machine.seat;
 #define HELD(id) (((pad >> (id)) & 1u) != 0)
@@ -514,14 +520,23 @@ static void ApplyPad(uint32_t pad)
   const uint32_t pressed = pad & ~seat->held;
   int target, away, step, delta;
 
-  if (dir == 0) seat->turning = 0;
-  else if (seat->turning != 0 && (seat->turning > 0) == (dir > 0)) seat->turning += dir;
-  else seat->turning = dir;
-  target = dir * LOCK;
-  away = dir != 0 && (seat->steer == 0 || (seat->steer > 0) == (dir > 0));
-  step = away && abs(seat->turning) <= s_steerSlowFrames ? s_steerSlow : s_steerStep;
-  delta = clampi(target - seat->steer, -step, step);
-  seat->steer += delta;
+  if (s_steerWheel)
+  {
+    const int w = clampi(wheel, -32767, 32767);
+    seat->steer = (w * LOCK + (w < 0 ? -16383 : 16383)) / 32767;
+    seat->turning = 0;
+  }
+  else
+  {
+    if (dir == 0) seat->turning = 0;
+    else if (seat->turning != 0 && (seat->turning > 0) == (dir > 0)) seat->turning += dir;
+    else seat->turning = dir;
+    target = dir * LOCK;
+    away = dir != 0 && (seat->steer == 0 || (seat->steer > 0) == (dir > 0));
+    step = away && abs(seat->turning) <= s_steerSlowFrames ? s_steerSlow : s_steerStep;
+    delta = clampi(target - seat->steer, -step, step);
+    seat->steer += delta;
+  }
   model2_io_analog_set(MODEL2_IO_AN_STEER, (uint8_t)(0x80 + seat->steer));
   model2_io_analog_set(MODEL2_IO_AN_ACCEL, HELD(RETRO_DEVICE_ID_JOYPAD_UP) ? PEDAL_DOWN : PEDAL_UP);
   model2_io_analog_set(MODEL2_IO_AN_BRAKE, HELD(RETRO_DEVICE_ID_JOYPAD_DOWN) ? PEDAL_DOWN : PEDAL_UP);
@@ -542,6 +557,13 @@ static uint32_t ReadPad(void)
   for (unsigned id = 0; id <= RETRO_DEVICE_ID_JOYPAD_R; id++)
     if (input_state_cb(0, RETRO_DEVICE_JOYPAD, 0, id)) pad |= 1u << id;
   return pad;
+}
+
+/* The frontend's wheel (steer=wheel): the left stick's X. */
+static int ReadWheel(void)
+{
+  if (!input_state_cb || !s_steerWheel) return 0;
+  return input_state_cb(0, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
 }
 
 /******************************************************************************
@@ -977,7 +999,7 @@ RETRO_API void retro_run(void)
   video = enabled & 1;
   audio = (enabled & 2) != 0;
 
-  ApplyPad(ReadPad());
+  ApplyPad(ReadPad(), ReadWheel());
   coro_resume(); /* the game's frame, up to its next vblank */
   srally_machine.frames++;
   gameEnd = NowUs();

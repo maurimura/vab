@@ -619,6 +619,7 @@ unsigned s_view = 0;
 int s_steerStep = 12;     // ADC units a frame once the slow stage is over, and back to centre: the app's 0.12 of full lock
 int s_steerSlow = 3;      // ADC units a frame for the first s_steerSlowFrames of a press away from centre
 int s_steerSlowFrames = 16;
+bool s_steerWheel = false; // steer=wheel: the frontend's wheel, as the left stick's X (ReadWheel)
 bool s_drawHidden = false;
 bool s_blankImages = false; // toolchain test: zeros for ROM images (test_blank_images)
 std::string s_testProgram;  // with them: an i960 program image of our own (test_program)
@@ -795,18 +796,31 @@ unsigned View() { return s_view < s_count ? s_view : 0; }
 // wheel's position (+16..+64 ADC units from centre is ADVANCED, +72 and over EXPERT, measured):
 // a short hold of RIGHT with the accelerator pressed picks ADVANCED, a longer one EXPERT; in a
 // race a tap is a small correction and a hold reaches full lock in about a third of a second.
-rt::Inputs FromPad(Seat &seat, uint32_t pad)
+// With steer=wheel the frontend turns the wheel instead (the bar's, web/emulator/wheel.js, as
+// the player has it in its controls panel), and `wheel` is where: the left stick's X, -32767
+// full left to 32767 full right, on the ADC's -kLock..kLock. It's in the frame's input, so every
+// machine running the frame turns the wheel alike.
+rt::Inputs FromPad(Seat &seat, uint32_t pad, int wheel)
 {
   auto held = [pad](unsigned id) { return ((pad >> id) & 1) != 0; };
   rt::Inputs in;
-  const int dir = (held(RETRO_DEVICE_ID_JOYPAD_RIGHT) ? 1 : 0) - (held(RETRO_DEVICE_ID_JOYPAD_LEFT) ? 1 : 0);
-  if (dir == 0) seat.turning = 0;
-  else if (seat.turning != 0 && (seat.turning > 0) == (dir > 0)) seat.turning += dir;
-  else seat.turning = dir;
-  const int target = dir * kLock;
-  const bool away = dir != 0 && (seat.steer == 0 || (seat.steer > 0) == (dir > 0)); // not counter-steering
-  const int step = away && std::abs(seat.turning) <= s_steerSlowFrames ? s_steerSlow : s_steerStep;
-  seat.steer += std::clamp(target - seat.steer, -step, step);
+  if (s_steerWheel)
+  {
+    const int w = std::clamp(wheel, -32767, 32767);
+    seat.steer = (w * kLock + (w < 0 ? -16383 : 16383)) / 32767;
+    seat.turning = 0;
+  }
+  else
+  {
+    const int dir = (held(RETRO_DEVICE_ID_JOYPAD_RIGHT) ? 1 : 0) - (held(RETRO_DEVICE_ID_JOYPAD_LEFT) ? 1 : 0);
+    if (dir == 0) seat.turning = 0;
+    else if (seat.turning != 0 && (seat.turning > 0) == (dir > 0)) seat.turning += dir;
+    else seat.turning = dir;
+    const int target = dir * kLock;
+    const bool away = dir != 0 && (seat.steer == 0 || (seat.steer > 0) == (dir > 0)); // not counter-steering
+    const int step = away && std::abs(seat.turning) <= s_steerSlowFrames ? s_steerSlow : s_steerStep;
+    seat.steer += std::clamp(target - seat.steer, -step, step);
+  }
   in.steer = uint8_t(0x80 + seat.steer);
   in.accel = held(RETRO_DEVICE_ID_JOYPAD_UP) ? 0xe0 : 0x20;
   in.brake = held(RETRO_DEVICE_ID_JOYPAD_DOWN) ? 0xe0 : 0x20;
@@ -833,6 +847,13 @@ uint32_t ReadPad(unsigned port)
   for (unsigned id = 0; id <= RETRO_DEVICE_ID_JOYPAD_R; id++)
     if (input_state_cb(port, RETRO_DEVICE_JOYPAD, 0, id)) pad |= 1u << id;
   return pad;
+}
+
+// The frontend's wheel (steer=wheel): the left stick's X.
+int ReadWheel(unsigned port)
+{
+  if (!input_state_cb || !s_steerWheel) return 0;
+  return input_state_cb(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_LEFT, RETRO_DEVICE_ID_ANALOG_X);
 }
 
 // This frame's sound of one cabinet at 48 kHz, into `out` (when given) as int16 stereo.
@@ -1018,6 +1039,8 @@ size_t StateSize()
 //                lock). steer_slow (default 3) and steer_slow_frames (default 16): the slow stage
 //                of a press away from centre (FromPad). Machine behaviour: the same on every
 //                player's machine.
+//   steer        "wheel": the frontend turns the wheel (the left stick's X is where it is) and
+//                LEFT/RIGHT do nothing; "ramp" (default): LEFT/RIGHT turn it as above.
 //   nvram_dir    where cabinet k's ioboard_eeprom.bin and backup_ram.bin are looked for, as
 //                <nvram_dir>/<k>/ (default /nvram), at power-on.
 //   presets      "0": not the built-in settings presets (make-nvram.mjs starts from the factory's).
@@ -1072,6 +1095,7 @@ extern "C" void daytona_set(const char *key, const char *value)
   else if (k == "steer_step") s_steerStep = std::clamp(n, 1, 2 * kLock);
   else if (k == "steer_slow") s_steerSlow = std::clamp(n, 1, 2 * kLock);
   else if (k == "steer_slow_frames") s_steerSlowFrames = std::clamp(n, 0, 600);
+  else if (k == "steer") s_steerWheel = v == "wheel";
   else if (k == "nvram_dir") s_nvramDir = v;
   else if (k == "presets") s_presets = !(v == "0" || v == "false");
   else if (k == "draw_hidden") s_drawHidden = v == "1" || v == "true";
@@ -1659,7 +1683,7 @@ RETRO_API void retro_run(void)
         if (const rt::CommBoard *board = game.board().comm_board()) const_cast<rt::CommBoard *>(board)->vblank();
         continue;
       }
-      const rt::Inputs inputs = s_scripts[k].on ? s_scripts[k].script.at(game.board().frame()) : FromPad(c.seat, ReadPad(k));
+      const rt::Inputs inputs = s_scripts[k].on ? s_scripts[k].script.at(game.board().frame()) : FromPad(c.seat, ReadPad(k), ReadWheel(k));
       game.board().set_draw(video && (k == view || s_drawHidden));
       game.run_frame(inputs);
       // A display list past the polygon list's limit: that frame's 3D was dropped (patches/0004;

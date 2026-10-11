@@ -126,12 +126,12 @@
 //      hash, link } the machine at a probe's frame: a hash of its RAM, and the link's status.
 //      An arcade game's watch-state is [frame: u32 LE][the link: per seat (8) a byte, 1 when a
 //      block follows, | 2 when the seat is off the link, and the block][state], and its frames
-//      come as { type: "watch-frames", stream, frame, bytes }: per frame [controls: u16 LE]
+//      come as { type: "watch-frames", stream, frame, bytes }: per frame [controls: u24 LE]
 //      [count: u8] and that many [seat: u8, | 0x80 when it went off the link][the block, as
 //      changes from that seat's last: runs of [unchanged: u8][changed: u8][changed bytes]].
-//      The controls are the input's low 16 bits, all there is to an arcade game's (it has no
-//      gun): the cabinet runs on them alone, and the watcher's machine widens them back to an
-//      input. { type: "arcade", fps, frame, blocksIn, blocksOut, link } An arcade game, once a
+//      The controls are the input's low 24 bits, all there is to an arcade game's (it has no
+//      gun): the buttons, and a driving game's wheel (Daytona USA's) in bits 16-23. The cabinet
+//      runs on them alone, and the watcher's machine widens them back to an input. { type: "arcade", fps, frame, blocksIn, blocksOut, link } An arcade game, once a
 //      second: frames shown, frames run, blocks taken in and sent out in that second, and the
 //      core's link status (Core.linkStatus). { type: "arcade-cancelled" } its cabinet went back
 //      to the attract mode, its race left waiting by someone who stood up before it began.
@@ -271,6 +271,8 @@ let localInput = 0;
 let pressed = 0;
 /** The RetroPad mask in an input; the aim is above it. */
 const BUTTONS = 0xffff;
+/** A driving game's wheel in an input (wheel.js). */
+const WHEEL_BITS = 0xff0000;
 let cabinet;
 const waiting = [];
 
@@ -1251,9 +1253,9 @@ class Cabinet {
     }
     try {
       for (let at = 0; at < bytes.length; frame++) {
-        const controls = bytes[at] | (bytes[at + 1] << 8);
-        const count = bytes[at + 2];
-        at += 3;
+        const controls = bytes[at] | (bytes[at + 1] << 8) | (bytes[at + 2] << 16);
+        const count = bytes[at + 3];
+        at += 4;
         // Frames the machine has already are read past, not into the blocks.
         const keep = frame >= watch.end;
         const blocks = [];
@@ -1280,7 +1282,7 @@ class Cabinet {
 
   /**
    * Watching an arcade cabinet: a frame of it, with the blocks the player's took in before it,
-   * and its controls (16 bits: see #runLinked) as an input.
+   * and its controls (24 bits: see #runLinked) as an input.
    */
   #watchLinked({ controls, blocks }) {
     for (const [seat, block] of blocks) {
@@ -1299,10 +1301,11 @@ class Cabinet {
    */
   #runLinked(input) {
     const link = this.#arcade;
-    // An arcade game has no gun: its controls are the input's buttons, the low 16 bits, which
-    // is all its watchers get (see the top), so all the cabinet runs on.
-    const controls = input & BUTTONS;
-    const record = this.#stream ? [controls & 0xff, controls >> 8] : undefined;
+    // An arcade game has no gun: its controls are the input's buttons, the low 16 bits, and a
+    // driving game's wheel above them (bits 16-23), which is all its watchers get (see the
+    // top), so all the cabinet runs on.
+    const controls = input & (this.steers ? BUTTONS | WHEEL_BITS : BUTTONS);
+    const record = this.#stream ? [controls & 0xff, (controls >> 8) & 0xff, controls >>> 16] : undefined;
     link.feed(record);
     // The machine is one cabinet, on the first controller.
     const ports = new Uint32Array(PORTS);

@@ -444,7 +444,10 @@ mod tests {
         assert_eq!(srally.core, "srally");
         assert_eq!(srally.players, 1);
         assert!(srally.lockstep && !srally.arcade && !srally.turns);
-        assert!(srally.options.is_empty() && srally.bios.is_none());
+        assert!(srally.bios.is_none());
+        // Its only setting: the bar's wheel turns its wheel (controls.rs, wheel.js).
+        assert_eq!(srally.options.len(), 1);
+        assert_eq!(srally.options["steer"], "wheel");
         assert_eq!(srally.cabinets, ["srallyc"]);
         // Only arcade games take more than 4.
         for game in &games {
@@ -512,7 +515,15 @@ mod tests {
             .filter(|game| game.wheel.is_some())
             .map(|game| game.rom.as_str())
             .collect();
-        assert_eq!(steered, ["outrun", "crusnusa41"]);
+        assert_eq!(steered, ["daytona", "outrun", "crusnusa41", "srallyc"]);
+        // The Sega cores turn the wheel themselves unless told it's the frontend's.
+        for game in games
+            .iter()
+            .filter(|game| ["daytona", "srally"].contains(&game.core.as_str()))
+        {
+            assert!(game.wheel.is_some(), "{}", game.rom);
+            assert_eq!(game.options.get("steer").map(String::as_str), Some("wheel"));
+        }
         for wheel in games.iter().filter_map(|game| game.wheel) {
             assert!(wheel.lock > 0.0 && wheel.back > 0.0 && wheel.curve > 0.0);
             assert!(wheel.span.0 < wheel.span.1 && wheel.span.1 <= 32767);
