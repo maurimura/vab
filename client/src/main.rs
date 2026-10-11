@@ -1,5 +1,6 @@
 mod cabinets;
 mod chat;
+mod controls;
 mod darts;
 mod emulator;
 mod help;
@@ -24,6 +25,7 @@ use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
 use cabinets::{Cabinets, CabinetsPlugin};
 use chat::ChatPlugin;
+use controls::ControlsPlugin;
 use darts::{Dartboards, DartsPlugin};
 use emulator::EmulatorPlugin;
 use help::HelpPlugin;
@@ -83,6 +85,7 @@ fn main() {
         ),
         RoomPlugin,
         SettingsPlugin,
+        ControlsPlugin,
         TouchPlugin,
         VoicePlugin,
     ))

@@ -358,6 +358,61 @@
           width: 100%;
         }
       }
+      /* The name box, from the controls panel (client/src/controls.rs): top middle, over it. */
+      #name {
+        position: fixed;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(320px, calc(100vw - 16px));
+        margin: 0;
+        padding: 10px 12px;
+        box-sizing: border-box;
+        border: 1px solid rgba(255, 210, 77, 0.8);
+        border-radius: 8px;
+        background: rgb(8, 8, 13);
+        color: #fff;
+        font-family: monospace;
+        z-index: 1;
+      }
+      #name label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+      }
+      #name input {
+        width: 100%;
+        height: 36px;
+        box-sizing: border-box;
+        padding: 0 10px;
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        border-radius: 6px;
+        background: #000;
+        color: #fff;
+        font-family: monospace;
+        font-size: 16px;
+        outline: none;
+      }
+      #name div {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      #name button {
+        height: 30px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.15);
+        color: #fff;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      #name button[type="submit"] {
+        background: rgb(255, 210, 77);
+        color: #000;
+      }
     </style>
   </head>
   <body>
@@ -391,6 +446,15 @@
     <form id="say" hidden>
       <input maxlength="200" enterkeyhint="send" autocomplete="off" placeholder="Say something, or /name Mauri" />
     </form>
+    <!-- Your name, from the controls panel: a canvas can't take typing as a box does. -->
+    <form id="name" hidden>
+      <label for="name-input">Your name</label>
+      <input id="name-input" maxlength="20" enterkeyhint="done" autocomplete="nickname" />
+      <div>
+        <button type="submit">Save</button>
+        <button type="button" id="name-cancel">Cancel</button>
+      </div>
+    </form>
     <script type="module">
       // wasm-bindgen output of the `client` crate (make client): the bar, the players and the
       // cabinets. Bevy reports where the player walks and starts and stops games through the
@@ -415,6 +479,7 @@
         table_watchers,
         push_frame,
         voice_people,
+        wheel_turned,
       } from "./pkg/client.js";
       // All of it, for the hooks browser tests use, in local builds only (client/src/testing.rs).
       import * as client from "./pkg/client.js";
@@ -471,6 +536,54 @@
       let firstMove;
       window.roomMove = (x, y, flip) => (inside ? room.move(x, y, flip) : (firstMove = [x, y, flip]));
       window.roomSay = (text) => room?.say(text) ?? false;
+
+      // The player's controls, game by game (client/src/controls.rs): what they put on other
+      // keys and how a driving game's wheel turns. Kept in the browser, not a cookie, as no
+      // server needs them. A browser that won't keep them (a private window) just forgets.
+      window.controlsKept = () => {
+        try {
+          return localStorage.getItem("controls") ?? undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      window.keepControls = (json) => {
+        try {
+          localStorage.setItem("controls", json);
+        } catch {}
+      };
+      // The name box (client/src/controls.rs): the player's name to change, as `/name` does;
+      // Enter or Save keeps it. On a computer it takes the keys at once; a phone brings up its
+      // keyboard only for a box focused by a tap on it, so there the box waits for that tap.
+      const nameBox = document.getElementById("name");
+      const nameInput = nameBox.querySelector("input");
+      const closeNameBox = () => {
+        nameBox.hidden = true;
+        document.getElementById("bevy").focus();
+      };
+      window.askName = () => {
+        nameInput.value = myName;
+        nameBox.hidden = false;
+        nameInput.focus();
+        nameInput.select();
+      };
+      nameBox.onsubmit = (event) => {
+        event.preventDefault();
+        // As the chat's /name has it (client/src/chat.rs): spaces run together, 20 at most.
+        const name = nameInput.value.trim().split(/\s+/).join(" ").slice(0, 20);
+        if (name && name !== myName) window.roomName(name);
+        closeNameBox();
+      };
+      // Esc or Cancel leaves the name as it was.
+      nameInput.onkeydown = (event) => {
+        if (event.key === "Escape") closeNameBox();
+      };
+      document.getElementById("name-cancel").onclick = closeNameBox;
+
+      // Tab opens the controls panel at a cabinet: it doesn't also move the focus off the game.
+      addEventListener("keydown", (event) => {
+        if (event.key === "Tab" && event.target.tagName !== "INPUT") event.preventDefault();
+      });
 
       // The name set with /name in the chat (client/src/chat.rs) is remembered for next time, as
       // the one picked on the first screen is.
@@ -854,6 +967,8 @@
           this.seat = seat;
           const worker = (this.#worker = emulatorWorker((data) => {
             if (data.type === "frame") push_frame(data.rgba, data.width, data.height);
+            // A driving game's wheel, as the player turns it, for the controls panel to draw.
+            if (data.type === "frame" && data.wheel !== undefined) wheel_turned(data.wheel);
             if (data.type === "buttons") game_buttons(data.buttons.map(([id, name]) => `${id}\t${name}`).join("\n"));
             if (data.type === "captured") this.#captured(data);
             if (data.type === "netplay") this.#netplay(data);
@@ -1292,6 +1407,8 @@
           this.seat = seat;
           const worker = (this.#worker = emulatorWorker((data) => {
             if (data.type === "frame") push_frame(data.rgba, data.width, data.height);
+            // A driving game's wheel, as the player turns it, for the controls panel to draw.
+            if (data.type === "frame" && data.wheel !== undefined) wheel_turned(data.wheel);
             if (data.type === "buttons") game_buttons(data.buttons.map(([id, name]) => `${id}\t${name}`).join("\n"));
             if (data.type === "ready") this.#ready = data;
             if (data.type === "arcade") this.#stats = data;

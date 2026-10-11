@@ -233,5 +233,35 @@ for (const at of [600, 1900]) {
   if (!same(fresh)) console.log(`  straight ${straight.slice(0, 2)} fresh ${fresh.slice(0, 2)}`);
 }
 
+// ---- the bar's wheel (steer=wheel) ----
+// With steer=wheel the frontend turns the wheel (the left stick's X: libretro.js answers it from
+// the input's bits 16-23, as the bar's worker sends it) and the shim's ramp is out of it. Held at
+// full right from the start it drives the game as RIGHT held does, both at full lock long before
+// the race (the course select reads the wheel's position: full right is course 3); and with the
+// wheel in the middle, LEFT changes nothing.
+{
+  const LEFT = 1 << 6, RIGHT = 1 << 7;
+  const race = async (options, { wheel, mask = 0 } = {}) => {
+    const { core, audio } = await makeCore({ options });
+    // As a game with a `wheel` in assets/games.ron: Sega Rally's turns over the whole stick.
+    if (wheel !== undefined) core.wheel = { lock: 0.4, back: 0.14, curve: 2, span: [0, 32767] };
+    core.loadGame("srallyc.zip", romBytes);
+    const hashes = [];
+    for (let f = 0; f < RACE_SCRIPT.until; f++) {
+      core.inputs[0] = (raceMask(f) | mask | (((wheel ?? 0) & 0xff) << 16)) >>> 0;
+      core.run();
+      if ((f + 1) % EVERY === 0 && f + 1 >= 600) hashes.push(`${f + 1}:${hash(core.systemRam())}:${(audio.hash >>> 0).toString(16)}`);
+    }
+    return hashes;
+  };
+  const same = (a, b) => a.length === b.length && a.every((h, i) => h === b[i]);
+  const held = await race({}, { mask: RIGHT });
+  const wheel = await race({ steer: "wheel" }, { wheel: 127 });
+  check(same(held, wheel), `steer=wheel: the wheel at full right drives the race as RIGHT held does (${wheel.at(-1)})`);
+  const straight = await race({});
+  const left = await race({ steer: "wheel" }, { mask: LEFT });
+  check(same(straight, left) && !same(straight, held), "steer=wheel: LEFT turns nothing, the wheel in the middle");
+}
+
 console.log(failures ? `${failures} FAILED` : "all passed");
 process.exit(failures ? 1 : 0);

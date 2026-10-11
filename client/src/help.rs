@@ -1,7 +1,8 @@
 //! Telling players the controls. A welcome panel with them shows on a first visit (the page
 //! remembers it in a cookie) and again with /help in the chat; any key closes it. When a game
 //! starts, a card lists its controls for a while, named the way the game names its buttons (the
-//! core says, e.g. "Z  Low Punch"); /help while playing shows it again. On a touch screen the
+//! core says, e.g. "Z  Low Punch"), on the keys the player put them on (controls.rs); /help
+//! while playing shows it again. On a touch screen the
 //! panel tells of the controls on the screen instead, a tap closes it, and there is no card:
 //! the buttons carry the game's names (touch.rs).
 
@@ -14,6 +15,7 @@ use wasm_bindgen::prelude::*;
 
 use crate::Mode;
 use crate::chat::type_in_chat;
+use crate::controls::{Controls, key_name};
 use crate::emulator::{KEYS, PEDAL, PlayingGame, TRIGGER};
 use crate::touch::{Touch, read_touches};
 
@@ -24,7 +26,7 @@ const DIM: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
 
 /// What to press, and what it does. Short enough not to wrap: keys are padded into a column
 /// (the font is monospaced).
-const IN_THE_BAR: [(&str, &str); 10] = [
+const IN_THE_BAR: [(&str, &str); 11] = [
     ("Arrows / W A S D", "Walk"),
     ("Shift", "Run"),
     ("E", "Play the cabinet or table you're next to"),
@@ -35,23 +37,26 @@ const IN_THE_BAR: [(&str, &str); 10] = [
     ("/name Mauri", "Set your name, in the chat"),
     ("/look", "Change what you wear, in the chat"),
     ("/help", "These controls, in the chat"),
+    ("Gear, top right", "Change the keys, for every game"),
 ];
-const AT_A_CABINET: [(&str, &str); 5] = [
+const AT_A_CABINET: [(&str, &str); 6] = [
     ("5", "Insert a coin"),
     ("1", "Start"),
     ("Arrows", "Move"),
     ("Z X C  A S D", "Buttons, listed when a game starts"),
+    ("Tab or the gear", "This game's keys (and wheel)"),
     ("Esc", "Stand up"),
 ];
 const KEY_COLUMN: usize = 18;
 /// The same on a touch screen, short enough for a phone held upright.
-const IN_THE_BAR_TOUCH: [(&str, &str); 6] = [
+const IN_THE_BAR_TOUCH: [(&str, &str); 7] = [
     ("Drag", "Walk"),
     ("Play", "The cabinet or table by you"),
     ("Watch", "Watch the game there"),
     ("Chat", "Talk to the bar"),
     ("/name Mauri", "Set your name, in chat"),
     ("/look", "Change what you wear, in chat"),
+    ("Gear", "How driving games steer"),
 ];
 const AT_A_CABINET_TOUCH: [(&str, &str); 5] = [
     ("Coin", "Insert a coin"),
@@ -133,9 +138,16 @@ impl Plugin for HelpPlugin {
                     .after(read_touches),
             )
             .add_systems(Update, (show_help, list_buttons, show_card).chain())
-            .add_systems(OnExit(Mode::Playing), |mut help: ResMut<Help>| {
-                help.card_until = 0.0
-            });
+            .add_systems(
+                OnExit(Mode::Playing),
+                |mut help: ResMut<Help>, mut buttons: ResMut<GameButtons>| {
+                    help.card_until = 0.0;
+                    // The next game names its own; until then the controls panel lists every
+                    // button. Not a change for the touch pad, which lays out the next game's
+                    // when they come.
+                    buttons.bypass_change_detection().0.clear();
+                },
+            );
     }
 }
 
@@ -219,7 +231,8 @@ fn spawn_help(mut commands: Commands, touch: Res<Touch>) {
         Card,
         Node {
             position_type: PositionType::Absolute,
-            top: Val::Px(8.0),
+            // Under the controls panel's gear (controls.rs).
+            top: Val::Px(52.0),
             right: Val::Px(8.0),
             flex_direction: FlexDirection::Column,
             row_gap: Val::Px(3.0),
@@ -321,17 +334,25 @@ fn show_help(
 }
 
 /// Fills the card with the game's controls once the page says what its buttons are, and
-/// shows it for a while. A touch screen lays out its pad from them instead (touch.rs).
+/// shows it for a while; and again, without showing it, when the player puts them on other
+/// keys. A touch screen lays out its pad from them instead (touch.rs).
+#[allow(clippy::too_many_arguments)]
 fn list_buttons(
     mut commands: Commands,
     mut help: ResMut<Help>,
     mut game_buttons: ResMut<GameButtons>,
     touch: Res<Touch>,
     game: Option<Res<PlayingGame>>,
+    controls: Res<Controls>,
     time: Res<Time>,
     card: Single<Entity, With<Card>>,
 ) {
-    let Some(buttons) = BUTTONS.take() else {
+    let arrived = BUTTONS.take();
+    let rekeyed = controls.is_changed() && !game_buttons.0.is_empty();
+    let Some(buttons) = arrived
+        .clone()
+        .or_else(|| rekeyed.then(|| game_buttons.0.clone()))
+    else {
         return;
     };
     let named = |id: u16| {
@@ -345,25 +366,21 @@ fn list_buttons(
         .map(|game| game.title.clone())
         .unwrap_or_default();
     let gun = game.as_ref().is_some_and(|game| game.aims());
-    let steers = game.as_ref().is_some_and(|game| game.steers());
     // Wide enough for "Right click".
     let key_width = if gun { 96.0 } else { 70.0 };
-    let arrow = |key: KeyCode| {
-        matches!(
-            key,
-            KeyCode::ArrowUp | KeyCode::ArrowDown | KeyCode::ArrowLeft | KeyCode::ArrowRight
-        )
-    };
-    let coin_or_start = |key: KeyCode| matches!(key, KeyCode::Digit5 | KeyCode::Digit1);
+    // By what the keys press, wherever the player put them.
+    let keys = game.as_ref().map_or(KEYS, |game| controls.keys(&game.rom));
+    let arrow = |id: u16| (4..=7).contains(&id);
+    let coin_or_start = |id: u16| id == 2 || id == START;
     commands
         .entity(*card)
         .despawn_children()
         .with_children(|card| {
             card.spawn(text(&title, 14.0, KEY_COLOR));
             // Coin and Start first, then the stick, then the buttons.
-            for (key, id) in KEYS.into_iter().filter(|(key, _)| coin_or_start(*key)) {
+            for (key, id) in keys.into_iter().filter(|(_, id)| coin_or_start(*id)) {
                 if let Some(name) = named(id) {
-                    row(card, key_name(key), name, key_width, 13.0);
+                    row(card, key_name(key).unwrap_or("?"), name, key_width, 13.0);
                 }
             }
             // A lightgun game: the mouse is the gun (emulator.rs).
@@ -375,48 +392,52 @@ fn list_buttons(
                 row(card, "Right click", &pedal, key_width, 13.0);
             }
             // Sunset Riders has no Start: a coin, then a button, joins.
-            let first_button = KEYS
+            let first_button = keys
                 .into_iter()
-                .find(|(key, id)| !arrow(*key) && !coin_or_start(*key) && named(*id).is_some());
+                .find(|(_, id)| !arrow(*id) && !coin_or_start(*id) && named(*id).is_some());
             if let (None, Some((key, _))) = (named(START), first_button) {
-                let join = format!("No Start: coin, then {}", key_name(key));
+                let join = format!("No Start: coin, then {}", key_name(key).unwrap_or("?"));
                 row(card, "", &join, key_width, 13.0);
             }
             // The arrows move, unless the game names all four for something else (Daytona
             // USA: steer, accelerate, brake): then each gets a row.
-            let arrows: Vec<_> = KEYS
+            let arrows: Vec<_> = keys
                 .into_iter()
-                .filter(|(key, _)| arrow(*key))
+                .filter(|(_, id)| arrow(*id))
                 .filter_map(|(key, id)| Some((key, named(id)?)))
                 .collect();
             let directions = arrows
                 .iter()
-                .all(|(key, name)| name.eq_ignore_ascii_case(key_name(*key)));
-            if arrows.len() == 4 && !directions {
+                .all(|(key, name)| name.eq_ignore_ascii_case(key_name(*key).unwrap_or("?")));
+            let usual = keys
+                .iter()
+                .filter(|(_, id)| arrow(*id))
+                .all(|pair| KEYS.contains(pair));
+            if arrows.len() == 4 && !(directions && usual) {
                 for (key, name) in arrows {
-                    row(card, key_name(key), name, key_width, 13.0);
+                    row(card, key_name(key).unwrap_or("?"), name, key_width, 13.0);
                 }
             } else if !arrows.is_empty() {
                 row(card, "Arrows", "Move", key_width, 13.0);
             }
-            for (key, id) in KEYS
+            for (key, id) in keys
                 .into_iter()
-                .filter(|(key, _)| !arrow(*key) && !coin_or_start(*key))
+                .filter(|(_, id)| !arrow(*id) && !coin_or_start(*id))
             {
                 if let Some(name) = named(id) {
-                    row(card, key_name(key), name, key_width, 13.0);
+                    row(card, key_name(key).unwrap_or("?"), name, key_width, 13.0);
                 }
             }
             row(card, "Esc", "Stand up", key_width, 13.0);
             row(card, "Y", "Chat", key_width, 13.0);
-            // A driving game's wheel: how the arrows turn it can be tuned (emulator.rs).
-            if steers {
-                row(card, "/wheel", "Tune the steering", key_width, 13.0);
-            }
+            // The controls panel: other keys, and a driving game's wheel (controls.rs).
+            row(card, "Tab", "Controls (or the gear)", key_width, 13.0);
         });
-    game_buttons.0 = buttons;
-    if !touch.is_on() {
-        help.card_until = time.elapsed_secs() + CARD_FOR;
+    if let Some(buttons) = arrived {
+        game_buttons.0 = buttons;
+        if !touch.is_on() {
+            help.card_until = time.elapsed_secs() + CARD_FOR;
+        }
     }
 }
 
@@ -432,23 +453,4 @@ fn show_card(
     } else {
         Visibility::Hidden
     };
-}
-
-/// The label on a key the game uses.
-fn key_name(key: KeyCode) -> &'static str {
-    match key {
-        KeyCode::ArrowUp => "Up",
-        KeyCode::ArrowDown => "Down",
-        KeyCode::ArrowLeft => "Left",
-        KeyCode::ArrowRight => "Right",
-        KeyCode::Digit1 => "1",
-        KeyCode::Digit5 => "5",
-        KeyCode::KeyA => "A",
-        KeyCode::KeyS => "S",
-        KeyCode::KeyD => "D",
-        KeyCode::KeyZ => "Z",
-        KeyCode::KeyX => "X",
-        KeyCode::KeyC => "C",
-        _ => "?",
-    }
 }

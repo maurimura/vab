@@ -72,7 +72,9 @@ core.loadGame("srallyc.zip", bytes); // 496x384, 4:3, 57.524 Hz, 44100 Hz stereo
 - **Inputs** (RetroPad port 0, ids as libretro.js answers them; the bar's keys in brackets):
   LEFT/RIGHT steer [arrows] (a deterministic ramp toward 0x20/0xe0 from 0x80, daytona/'s:
   `steer_slow` ADC units a frame for the first `steer_slow_frames` of a press away from centre,
-  then `steer_step`, also back to centre; defaults 3, 16, 12), UP accelerator, DOWN brake (full
+  then `steer_step`, also back to centre; defaults 3, 16, 12; with `steer` = `wheel`, the bar's,
+  the frontend turns it instead, the left stick's X onto 0x20..0xe0, and LEFT/RIGHT do nothing),
+  UP accelerator, DOWN brake (full
   or released: 0xe0 / 0x00, as the recomp's viewer), B shift down [Z], A shift up [X] (the
   H-shifter's gears 1-4 in sequence, starting in 1; an automatic car ignores it), Y VIEW CHANGE
   [A], START [1], SELECT coin [5]. The factory settings want **two coins a credit**. The menus
@@ -81,7 +83,8 @@ core.loadGame("srallyc.zip", bytes); // 496x384, 4:3, 57.524 Hz, 44100 Hz stereo
   as courses 0 / 1 / 3), and a *press* of the accelerator confirms (held from before the screen
   it does not; each screen times out after ~21 s). Descriptors: "Steer left", "Steer right",
   "Accelerate", "Brake", "Shift down", "Shift up", "View change", "Start", "Coin".
-- **Options** (`srally_set`, strings): `steer_step`, `steer_slow`, `steer_slow_frames` (any
+- **Options** (`srally_set`, strings): `steer` (`ramp`, the default, or `wheel`: the
+  frontend's wheel, as the left stick's X), `steer_step`, `steer_slow`, `steer_slow_frames` (any
   time); `region` = `international` (default, the SDL viewer's) | `japan` | `us`, read at load
   (Japan shows the copyright notice at boot); `nvram_dir` (default `/nvram`), read at load: the
   game's settings and backup RAM from `<nvram_dir>/srally.yaml` (the recomp's YAML) when there is

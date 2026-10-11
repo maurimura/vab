@@ -141,10 +141,14 @@ core.setOption("view", "1");                             // any time
   chooses the highlighted one), so a short hold of RIGHT with UP pressed picks ADVANCED and a
   hold of half a second or more EXPERT. (With the old single-stage ramp the ADVANCED band lasted
   4 frames.) The wheel position, the frames the key has been held, gear and last pad (for shift
-  edges) are machine state, in the save state (format version 2). Input descriptors for every port: "Steer left", "Steer right", "Accelerate", "Brake",
+  edges) are machine state, in the save state (format version 2). With `steer` = `wheel` (the
+  bar's, `assets/games.ron`) the frontend turns the wheel instead: the left stick's X is where
+  it is (-32767..32767 onto -0x60..+0x60), LEFT/RIGHT do nothing, and the ramp above is
+  skipped; the wheel goes in the frame's input, so every machine turns it alike, and the save
+  state is the same. Input descriptors for every port: "Steer left", "Steer right", "Accelerate", "Brake",
   "Shift down", "Shift up", "View 1".."View 4", "Start", "Coin".
-- **Options** (`daytona_set`, strings): `cabinets`, `view`, `steer_step`, `steer_slow`,
-  `steer_slow_frames`, `nvram_dir` (default
+- **Options** (`daytona_set`, strings): `cabinets`, `view`, `steer` (`ramp`, the default, or
+  `wheel`), `steer_step`, `steer_slow`, `steer_slow_frames`, `nvram_dir` (default
   `/nvram`), `presets` (`0`: skip the built-in settings presets), `draw_hidden`, `script0` ..
   `script7` (an input script file in the module's FS driving that cabinet instead of its pad, the
   recomp's `scripts/inputs` format, as `m2run --inputs`), `test_blank_images` (toolchain test: a

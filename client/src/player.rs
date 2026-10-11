@@ -10,6 +10,7 @@ use world::{Map, TILE_HEIGHT, cell_to_world, world_to_cell};
 
 use crate::Mode;
 use crate::chat::chat_closed;
+use crate::controls::controls_closed;
 use crate::help::help_closed;
 use crate::room;
 use crate::settings::settings_closed;
@@ -35,7 +36,10 @@ impl Plugin for PlayerPlugin {
                     in_state(Mode::Walking)
                         .and_then(chat_closed)
                         .and_then(help_closed)
-                        .and_then(settings_closed),
+                        .and_then(settings_closed)
+                        // The arrows are the controls panel's while it's up (in the bar,
+                        // every game's).
+                        .and_then(controls_closed),
                 ),
                 follow,
             )

@@ -6,7 +6,8 @@
 //! can be tuned (settings.rs), and `/netstats` how an air hockey match's connection is doing. On a touch screen the line is typed in the
 //! page instead, with the phone's keyboard, and comes in through `chat_typed`. `/mute <name>`
 //! and `/unmute <name>` stop or start hearing someone's voice (voice.rs), remembered by name.
-//! `/wheel` shows or tunes how the arrows turn a driving game's wheel (emulator.rs).
+//! `/controls` opens the controls panel at a cabinet, as Tab does (controls.rs), and `/wheel`
+//! shows or tunes how the steering keys turn a driving game's wheel (emulator.rs).
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -17,6 +18,7 @@ use bevy::input::{ButtonState, InputSystems};
 use bevy::prelude::*;
 use wasm_bindgen::prelude::*;
 
+use crate::controls::{Controls, ShowControls};
 use crate::help::{Help, ShowHelp};
 use crate::settings::ShowSettings;
 use crate::touch::Touch;
@@ -133,6 +135,9 @@ impl Chat {
             Some("/settings") => {
                 panels.settings.write(ShowSettings);
             }
+            Some("/controls") => {
+                panels.controls.write(ShowControls);
+            }
             Some("/netstats") => {
                 panels.netstats.write(ShowNetStats);
             }
@@ -173,8 +178,8 @@ impl Chat {
             }
             Some(_) => self.add(
                 "* Commands: /name Mauri sets your name, /look what you wear, /help shows the \
-                 controls, /settings tunes the games, /mute and /unmute someone's voice, /wheel a \
-                 driving game's steering"
+                 controls, /controls changes a game's keys, /settings tunes the games, /mute and \
+                 /unmute someone's voice, /wheel a driving game's steering"
                     .into(),
                 now,
             ),
@@ -187,6 +192,7 @@ impl Chat {
 pub struct Panels<'w> {
     help: MessageWriter<'w, ShowHelp>,
     settings: MessageWriter<'w, ShowSettings>,
+    controls: MessageWriter<'w, ShowControls>,
     netstats: MessageWriter<'w, ShowNetStats>,
     wheel: MessageWriter<'w, TuneWheel>,
 }
@@ -206,10 +212,12 @@ pub fn type_in_chat(
     mut chat: ResMut<Chat>,
     mut panels: Panels,
     help_panel: Res<Help>,
+    controls: Res<Controls>,
     time: Res<Time>,
 ) {
-    // Keys close the controls panel first (help.rs).
-    if help_panel.is_open() {
+    // Keys close the help panel first (help.rs), and one the controls panel waits for goes on
+    // a button (controls.rs).
+    if help_panel.is_open() || controls.is_binding() {
         keyboard.clear();
         return;
     }

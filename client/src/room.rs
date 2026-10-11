@@ -103,37 +103,43 @@ extern "C" {
 
 pub struct RoomPlugin;
 
+/// The player's own name, as the room has it (empty until it says): the controls panel shows
+/// it, and changes it (controls.rs).
+#[derive(Resource, Default)]
+pub struct OwnName(pub String);
+
 impl Plugin for RoomPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                apply_updates,
-                walk_others,
-                name_player,
-                dress_player,
-                place_names,
+        app.init_resource::<OwnName>()
+            .add_systems(
+                Update,
+                (
+                    apply_updates,
+                    walk_others,
+                    name_player,
+                    dress_player,
+                    place_names,
+                )
+                    .chain(),
             )
-                .chain(),
-        )
-        // The pinball machine fills the screen without covering the interface, as the other
-        // games' screens do: the names above the players' heads hide while it's up.
-        .add_systems(
-            OnEnter(Mode::Pinball),
-            |mut names: Query<&mut Visibility, With<NameText>>| {
-                for mut visibility in &mut names {
-                    *visibility = Visibility::Hidden;
-                }
-            },
-        )
-        .add_systems(
-            OnExit(Mode::Pinball),
-            |mut names: Query<&mut Visibility, With<NameText>>| {
-                for mut visibility in &mut names {
-                    *visibility = Visibility::Inherited;
-                }
-            },
-        );
+            // The pinball machine fills the screen without covering the interface, as the other
+            // games' screens do: the names above the players' heads hide while it's up.
+            .add_systems(
+                OnEnter(Mode::Pinball),
+                |mut names: Query<&mut Visibility, With<NameText>>| {
+                    for mut visibility in &mut names {
+                        *visibility = Visibility::Hidden;
+                    }
+                },
+            )
+            .add_systems(
+                OnExit(Mode::Pinball),
+                |mut names: Query<&mut Visibility, With<NameText>>| {
+                    for mut visibility in &mut names {
+                        *visibility = Visibility::Inherited;
+                    }
+                },
+            );
     }
 }
 
@@ -289,10 +295,12 @@ fn name_player(
     mut commands: Commands,
     player: Single<(Entity, Option<&NameTag>), With<Player>>,
     mut names: Query<&mut Text, With<NameText>>,
+    mut own: ResMut<OwnName>,
 ) {
     let Some(name) = OWN_NAME.take() else {
         return;
     };
+    own.0.clone_from(&name);
     let (entity, tag) = *player;
     match tag.and_then(|tag| names.get_mut(tag.0).ok()) {
         Some(mut text) => text.0 = name,
