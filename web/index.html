@@ -86,6 +86,7 @@
         table_watchers,
         push_frame,
         voice_people,
+        wheel_turned,
       } from "./pkg/client.js";
       // All of it, for the hooks browser tests use, in local builds only (client/src/testing.rs).
       import * as client from "./pkg/client.js";
@@ -145,6 +146,26 @@
       const remember = (key, value) => {
         document.cookie = `${key}=${encodeURIComponent(value)}; max-age=${365 * 24 * 3600}; path=/; samesite=lax`;
       };
+      // The player's controls, game by game (client/src/controls.rs): what they put on other
+      // keys and how a driving game's wheel turns. Kept in the browser, not a cookie, as no
+      // server needs them. A browser that won't keep them (a private window) just forgets.
+      window.controlsKept = () => {
+        try {
+          return localStorage.getItem("controls") ?? undefined;
+        } catch {
+          return undefined;
+        }
+      };
+      window.keepControls = (json) => {
+        try {
+          localStorage.setItem("controls", json);
+        } catch {}
+      };
+      // Tab opens the controls panel at a cabinet: it doesn't also move the focus off the game.
+      addEventListener("keydown", (event) => {
+        if (event.key === "Tab" && event.target.tagName !== "INPUT") event.preventDefault();
+      });
+
       window.roomName = (name) => {
         remember("name", name);
         room?.setName(name);
@@ -503,6 +524,8 @@
           this.seat = seat;
           const worker = (this.#worker = emulatorWorker((data) => {
             if (data.type === "frame") push_frame(data.rgba, data.width, data.height);
+            // A driving game's wheel, as the player turns it, for the controls panel to draw.
+            if (data.type === "frame" && data.wheel !== undefined) wheel_turned(data.wheel);
             if (data.type === "buttons") game_buttons(data.buttons.map(([id, name]) => `${id}\t${name}`).join("\n"));
             if (data.type === "captured") this.#captured(data);
             if (data.type === "netplay") this.#netplay(data);
@@ -941,6 +964,8 @@
           this.seat = seat;
           const worker = (this.#worker = emulatorWorker((data) => {
             if (data.type === "frame") push_frame(data.rgba, data.width, data.height);
+            // A driving game's wheel, as the player turns it, for the controls panel to draw.
+            if (data.type === "frame" && data.wheel !== undefined) wheel_turned(data.wheel);
             if (data.type === "buttons") game_buttons(data.buttons.map(([id, name]) => `${id}\t${name}`).join("\n"));
             if (data.type === "ready") this.#ready = data;
             if (data.type === "arcade") this.#stats = data;

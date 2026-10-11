@@ -210,6 +210,36 @@ impl Wheel {
         Ok(wheel)
     }
 
+    /// How far a key held from the middle has turned the wheel after `seconds`: 0 to 1 of full
+    /// lock, as wheel.js turns it a frame at a time.
+    pub fn held(&self, seconds: f64) -> f64 {
+        if self.lock <= 0.0 {
+            return 1.0;
+        }
+        (seconds / self.lock).clamp(0.0, 1.0).powf(self.curve)
+    }
+
+    /// Where a wheel at `at` (-1 full left to 1 full right) is a frame later, at `fps` frames a
+    /// second, with a key held `toward` a side (-1 left, 1 right, 0 neither): as wheel.js turns
+    /// a game's (its `turn`, over -127..127), for a wheel turned without a game.
+    pub fn turn(&self, at: f64, toward: f64, fps: f64) -> f64 {
+        if toward != 0.0 {
+            // How far it is toward that side (none, on the other), and how long a hold takes
+            // to get there.
+            let turned = (toward * at).max(0.0);
+            let held = self.lock * turned.powf(1.0 / self.curve);
+            let along = ((held + 1.0 / fps) / self.lock).min(1.0);
+            toward * along.powf(self.curve)
+        } else {
+            let step = 1.0 / (self.back * fps);
+            if at > 0.0 {
+                (at - step).max(0.0)
+            } else {
+                (at + step).min(0.0)
+            }
+        }
+    }
+
     /// The ramp's numbers, as `/wheel` takes them.
     pub fn ramp(&self) -> String {
         format!("lock={} back={} curve={}", self.lock, self.back, self.curve)
@@ -528,6 +558,59 @@ mod tests {
             assert!(wheel.tuned(wrong).is_err(), "{wrong}");
         }
         assert!(wheel.tuned("lock=0.5 curve=0").is_err());
+    }
+
+    #[test]
+    fn a_held_key_turns_the_wheel_along_its_curve() {
+        let even = Wheel {
+            lock: 0.4,
+            back: 0.2,
+            curve: 1.0,
+            span: (0, 32767),
+        };
+        assert_eq!(even.held(0.0), 0.0);
+        assert_eq!(even.held(0.1), 0.25);
+        assert_eq!(even.held(0.4), 1.0);
+        assert_eq!(even.held(3.0), 1.0);
+        // Curve 2: a tap a quarter of the way to the lock turns it a sixteenth.
+        let soft = Wheel { curve: 2.0, ..even };
+        assert_eq!(soft.held(0.1), 0.0625);
+        assert_eq!(Wheel { lock: 0.0, ..even }.held(0.0), 1.0);
+    }
+
+    #[test]
+    fn a_wheel_turns_frame_by_frame_as_held() {
+        let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+        // Out Run's: 18 frames to full lock at 60 a second, and as many back.
+        let out_run = Wheel {
+            lock: 0.3,
+            back: 0.3,
+            curve: 1.0,
+            span: (10600, 23500),
+        };
+        let mut at = 0.0;
+        for frame in 1..=18 {
+            at = out_run.turn(at, 1.0, 60.0);
+            assert!(near(at, frame as f64 / 18.0), "{frame}: {at}");
+        }
+        assert_eq!(out_run.turn(at, 1.0, 60.0), 1.0);
+        for _ in 0..9 {
+            at = out_run.turn(at, 0.0, 60.0);
+        }
+        assert!(near(at, 0.5));
+        // The other way brings it straight to the middle and on from there.
+        assert!(near(out_run.turn(0.5, -1.0, 60.0), -1.0 / 18.0));
+        // Along its curve as `held` has it, whatever the frame rate.
+        let soft = Wheel {
+            curve: 2.0,
+            ..out_run
+        };
+        let mut at = 0.0;
+        for _ in 0..6 {
+            at = soft.turn(at, -1.0, 60.0);
+        }
+        assert!(near(at, -soft.held(0.1)));
+        assert_eq!(Wheel { back: 0.0, ..soft }.turn(at, 0.0, 60.0), 0.0);
     }
 
     #[test]

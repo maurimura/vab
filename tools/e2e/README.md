@@ -10,6 +10,13 @@ node tools/e2e/shuffleboard.mjs   # or just one
 ```
 
 - `tables.mjs`: one player visits the pool, air hockey and shuffleboard tables.
+- `controls.mjs`: the controls panel for every game and for one. The gear in the bar opens it
+  (and closes it): the arrows turn its wheel (and don't walk), + slows every game's, Steer left
+  goes on K, and both Mortal Kombat II and Out Run (`GAME=crusnusa41` for Cruis'n USA) have K.
+  The gear at Out Run: the arrows still turn the game's wheel, + slows its own more, Steer left
+  goes on J (not on Y, the chat's) for Out Run alone, Esc closes the panel only; kept over a
+  reload (Tab opens it then); R at the game puts back every game's, R in the bar (`/controls`)
+  the usual.
 - `darts.mjs`: one player at the dartboard: scoring, turns, a bust and a win.
 - `darts-online.mjs`: two players at the dartboard: seats, the thrower's hand, darts alike on
   both boards, a reload mid-turn, someone leaving.

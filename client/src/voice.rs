@@ -26,7 +26,7 @@ const MUTED: Color = Color::srgb(0.95, 0.4, 0.4);
 const DIM: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
 const HOVERED: Color = Color::srgba(1.0, 1.0, 1.0, 0.12);
 /// Shift with one of these mutes player 1-8 (8 at an arcade game's linked cabinets).
-const SEAT_KEYS: [KeyCode; 8] = [
+pub const SEAT_KEYS: [KeyCode; 8] = [
     KeyCode::Digit1,
     KeyCode::Digit2,
     KeyCode::Digit3,

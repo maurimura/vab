@@ -1,8 +1,8 @@
 //! Touch controls, for phones and tablets: the page says when the screen is one
 //! (web/index.html). In the bar a thumb dragged anywhere off the buttons is the stick, and
 //! walks. Buttons are UI nodes with a [`TouchButton`], spawned by whoever knows what they do,
-//! who then asks [`Touch`] about them: Play and Watch by a cabinet or a table (nearby.rs) and
-//! Leave at one (emulator.rs). The game's own controls are here: the pad, with its buttons under the
+//! who then asks [`Touch`] about them: Play and Watch by a cabinet or a table (nearby.rs), Leave
+//! at one (emulator.rs), and the controls panel's gear (controls.rs). The game's own controls are here: the pad, with its buttons under the
 //! right thumb, laid out like the keys and named as the game names them, and a d-pad under the
 //! left. The d-pad stays put, unlike the stick in the bar, so that each way is always in the
 //! same place to tap twice or roll through, as a fighting game's moves ask. A lightgun game has
@@ -61,6 +61,8 @@ pub enum TouchButton {
     /// Watches the game being played there.
     Watch,
     Leave,
+    /// The gear that opens the controls panel (controls.rs).
+    Controls,
     /// One of the game's, by RetroPad id.
     Pad(u16),
     /// Someone in the voice panel (voice.rs), which handles the tap itself.

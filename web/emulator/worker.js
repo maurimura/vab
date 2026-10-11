@@ -111,7 +111,8 @@
 //      { type: "input", input } the local player's controls (a u32, above) |
 //      { type: "audio", port, sampleRate } the speaker's port and rate
 // Out: { type: "ready", state } the game is loaded (`state`: from the start's state) |
-//      { type: "frame", rgba, width, height } |
+//      { type: "frame", rgba, width, height, wheel } (`wheel`: where the local player's wheel
+//        is, -127..127, at a driving game they steer) |
 //      { type: "netplay", event, seat, ... } | { type: "captured", epoch, state } |
 //      { type: "buttons", buttons } what the game calls player 1's buttons, [RetroPad id, name]
 //      pairs, once known | { type: "watch-state", stream, bytes, to } the machine for watchers
@@ -744,6 +745,8 @@ class Cabinet {
     }
     if (this.#stream) this.#flush();
     if (this.frame) {
+      // A driving game's: where the local player's wheel is, for the page to draw.
+      if (this.steers) this.frame.wheel = wheel.position;
       postMessage(this.frame, [this.frame.rgba.buffer]);
       this.frame = undefined;
     }

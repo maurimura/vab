@@ -11,6 +11,10 @@ at a cabinet, a table or the dartboard, as does E once every seat is taken (see
 opens the chat for everyone in the room; `/name <name>` there sets the name shown above your head,
 and a cookie keeps it. The controls show on a first visit and with `/help`; when a game starts, a
 card lists its buttons as the game names them (the core reports them, e.g. "Z  Low Punch").
+The gear in the top right corner (or `/controls` in the chat) puts them on other keys: in the
+bar for every game, at a cabinet (Tab there too) for that game alone, over every game's; both
+tune the driving games' wheel (see
+[Steering with the arrows](#steering-with-the-arrows-out-run-cruisn-usa)).
 
 E next to the pool table plays 8-ball: the table seen from above, the cue following the mouse
 (or a finger) around the cue ball. Holding the button pulls the cue back, further the longer
@@ -57,7 +61,7 @@ watches.
 Cruis'n USA (Midway V-Unit, 1994; MAME's `crusnusa41`, v4.1) is one player's: the next to press
 E watches. The arrows drive, as at Daytona USA: Left and Right turn a steering wheel as at Out
 Run (a tap barely turns it, a hold takes it to full lock in 0.6 s, and let go it's back in the
-middle in 0.1 s; `/wheel` in the chat tunes that: see
+middle in 0.1 s; Tab there tunes that: see
 [Steering with the arrows](#steering-with-the-arrows-out-run-cruisn-usa)), Up is the gas and
 Down the brake (MAME's own handling of a pedal on keys, 0.9 s to the floor). Z and X shift down
 and up, which matters with the manual transmission the game offers before each race (the
@@ -446,14 +450,30 @@ over a few frames (0.22 s from the middle to full lock when the wheel jumps ther
 `span`, (5200, 28900), which puts the curve where the game turns; over the whole stick a hold
 turned nothing for its first 0.18 s, and a 6-frame tap not at all.
 
+These are the game's numbers; each player can have their own, in the controls panel
+(`client/src/controls.rs`). The gear in the top right corner (or `/controls` in the chat)
+opens it: in the bar for every game, at a cabinet (Tab there too) for that game alone, over
+every game's:
+what a game doesn't set is as every game has it, and what every game doesn't as the game comes.
+Any button goes on another key there (Enter, then the key; a button that had it gets the old
+one), and the wheel's three numbers change with - and +, next to the wheel itself, drawn turned
+as far as it is, with a trace of its last two seconds and a line saying what a 0.1 s tap and a
+hold come to. At a game it's the game's wheel as the worker has it, which the steering keys
+still turn while the panel is up; in the bar, where no game runs, the panel turns one of its own
+the same way (`world::Wheel::turn`, wheel.js's twin), so a tap or a hold can be tried and seen
+either way. Every game's wheel starts as the first driving game's (Out Run's) and, once
+changed, is every driving game's. While driving, a small wheel in the corner shows the wheel too
+(the panel turns it off). What a player sets is kept in their browser (localStorage), and R in
+the panel puts back what it sets: a game's as every game's, every game's as they come. It all
+stays at this player's machine: the others get the wheel already turned, in the input, so
+nothing online can drift apart.
+
 `/wheel` in the chat, while driving, shows the wheel's numbers, and with any of them
-(`/wheel lock=0.5 back=0.15 curve=1.5`) turns it so from the next frame: at this player's
-machine only (the others get the wheel already turned, in the input, so nothing online can drift
-apart), and at that game until the page reloads. Its answer ends with the game's line for
-`assets/games.ron`. To find a game's numbers: sit at it, drive a few bends, change one number at
-a time (a tap should nudge the car over, a hold take a bend, letting go straighten it as fast as
-the game wants), then paste the last answer's `wheel: Some(...)` over the game's in
-`assets/games.ron`.
+(`/wheel lock=0.5 back=0.15 curve=1.5`) changes them as the panel does. Its answer ends with
+the game's line for `assets/games.ron`. To find a game's numbers for everyone: sit at it, drive
+a few bends, change one number at a time (a tap should nudge the car over, a hold take a bend,
+letting go straighten it as fast as the game wants), then `/wheel` and paste its
+`wheel: Some(...)` over the game's in `assets/games.ron`.
 ## Virtua Tennis
 
 Virtua Tennis (Sega NAOMI, 1999; Power Smash in Japan) runs on its own core, `flycast/`
