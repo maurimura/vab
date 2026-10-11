@@ -16,7 +16,7 @@ WASM_OPT := emulator/.cache/emsdk/upstream/bin/wasm-opt
 
 .PHONY: client netplay emulator emulator-remote upload-emulator supermodel supermodel-remote upload-supermodel \
 	mame mame-remote upload-mame daytona daytona-remote upload-daytona upload-daytona-states \
-	flycast flycast-remote upload-flycast upload-rom dev deploy preview \
+	flycast flycast-remote upload-flycast srally srally-remote upload-srally upload-rom dev deploy preview \
 	editor editor-web editor-dev editor-deploy editor-preview pull-map e2e
 
 $(WASM_BINDGEN):
@@ -98,6 +98,16 @@ flycast:
 flycast-remote:
 	$(MAKE) upload-flycast R2_TARGET=--remote
 
+# The Sega Rally Championship (Sega Model 2A) core -> model2/srally/dist/, then into local R2
+# (served at /srally/*), the same way. srally-remote uploads to production. Its ROM set is
+# MAME's `srallyc`: make upload-rom ROM=$HOME/Downloads/srallyc.zip.
+srally:
+	./model2/srally/build.sh web
+	$(MAKE) upload-srally R2_TARGET=--local
+
+srally-remote:
+	$(MAKE) upload-srally R2_TARGET=--remote
+
 # A ROM set (or its start-up .state) into R2, served at /roms/<file>:
 # make upload-rom ROM=$HOME/Downloads/mk2.zip (local R2, for `make dev BUCKET=local`; add
 # R2_TARGET=--remote for production, and R2_BUCKET=vab-preview for the preview Worker's bucket).
@@ -135,6 +145,12 @@ upload-flycast:
 		--file ../flycast/dist/flycast.mjs --content-type text/javascript && \
 	npx wrangler r2 object put $(R2_BUCKET)/flycast/flycast.wasm $(R2_TARGET) \
 		--file ../flycast/dist/flycast.wasm --content-type application/wasm
+
+upload-srally:
+	cd server && npx wrangler r2 object put $(R2_BUCKET)/srally/srally.mjs $(R2_TARGET) \
+		--file ../model2/srally/dist/srally.mjs --content-type text/javascript && \
+	npx wrangler r2 object put $(R2_BUCKET)/srally/srally.wasm $(R2_TARGET) \
+		--file ../model2/srally/dist/srally.wasm --content-type application/wasm
 
 # Daytona USA's arcade-mode seat states (node daytona/make-states.mjs; ROM-derived, like the ROM
 # set) into R2 next to it, served at /roms/daytona.seat<k>.state: one per seat 0-7.

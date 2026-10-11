@@ -1,0 +1,176 @@
+diff --git a/lib/model2/snd/include/model2_snd.h b/lib/model2/snd/include/model2_snd.h
+index 6e2947f..0750447 100644
+--- a/lib/model2/snd/include/model2_snd.h
++++ b/lib/model2/snd/include/model2_snd.h
+@@ -35,6 +35,14 @@ int model2_snd_load_roms(const char *rom_dir);
+ /* Mix stereo s16le @ 44100. Pulls a ring filled by the 68k+SCSP thread. */
+ void model2_snd_render(signed short *stereo, unsigned frames);
+ 
++/* Inline board (no thread, deterministic): set before model2_snd_load_roms;
++ * then model2_snd_run runs the 68k + SCSP for exactly `frames` 44.1 kHz
++ * stereo samples into `stereo`, the MIDI bytes queued since the last call
++ * handed to the board first. */
++void model2_snd_set_inline(int on);
++int model2_snd_inline(void);
++void model2_snd_run(signed short *stereo, unsigned frames);
++
+ /* Input log ring (bytes written to UART data). */
+ unsigned model2_snd_count(void);
+ unsigned model2_snd_total(void);
+diff --git a/lib/model2/snd/model2_snd.c b/lib/model2/snd/model2_snd.c
+index a7b48fa..699fa36 100644
+--- a/lib/model2/snd/model2_snd.c
++++ b/lib/model2/snd/model2_snd.c
+@@ -49,6 +49,9 @@ static unsigned g_cyc_frac;
+ static int g_logged_song;
+ static int g_logged_mix;
+ static int g_logged_tima_per;
++/* Inline: no board thread; the host runs the board a frame at a time (model2_snd_run). */
++static int g_inline;
++static int g_inline_booted;
+ 
+ static int env_flag_on(const char *name)
+ {
+@@ -170,19 +173,23 @@ static void boot_68k(void)
+                 model2_snd_scsp_tima_period_samples());
+ }
+ 
+-static void board_chunk(void)
++/* Run the 68k + SCSP for `frames` 44.1 kHz stereo samples into `mix`
++ * (256 68k cycles a sample), the UART's queued MIDI bytes handed over first. */
++static void board_render(i16 *mix, unsigned frames)
+ {
+     u8 bytes[64];
+     unsigned n;
+     unsigned k;
+-    i16 mix[PCM_CHUNK * 2u];
+     int peak = 0;
+ 
+-    n = uart_drain(bytes, 64);
+     pthread_mutex_lock(&g_cpu_mu);
+-    for (k = 0; k < n; k++) {
+-        log_midi_byte(bytes[k]);
+-        model2_snd_scsp_midi_in(bytes[k]);
++    while ((n = uart_drain(bytes, 64)) != 0) {
++        for (k = 0; k < n; k++) {
++            log_midi_byte(bytes[k]);
++            model2_snd_scsp_midi_in(bytes[k]);
++        }
++        if (!g_inline)
++            break; /* the thread takes 64 bytes a chunk, as before */
+     }
+     {
+         unsigned per = 0;
+@@ -198,7 +205,7 @@ static void board_chunk(void)
+         for (;;) {
+             unsigned cyc;
+ 
+-            while (g_cyc_frac >= 256u && i < PCM_CHUNK) {
++            while (g_cyc_frac >= 256u && i < frames) {
+                 g_cyc_frac -= 256u;
+                 model2_snd_scsp_render(mix + i * 2u, 1);
+                 if (per != 0u) {
+@@ -210,7 +217,7 @@ static void board_chunk(void)
+                 }
+                 i++;
+             }
+-            if (i >= PCM_CHUNK)
++            if (i >= frames)
+                 break;
+             if (!model2_snd_m68k_alive()) {
+                 g_cyc_frac += 256u;
+@@ -222,9 +229,9 @@ static void board_chunk(void)
+     }
+     /* SOUND INITIALIZE splash is 68k boot — no i960 MIDI yet. */
+     if (g_midi_total == 0u)
+-        memset(mix, 0, sizeof(mix));
++        memset(mix, 0, (size_t)frames * 2u * sizeof(i16));
+     if (!g_logged_mix) {
+-        for (k = 0; k < PCM_CHUNK * 2u; k++) {
++        for (k = 0; k < frames * 2u; k++) {
+             int s = mix[k];
+ 
+             if (s < 0)
+@@ -240,6 +247,13 @@ static void board_chunk(void)
+         }
+     }
+     pthread_mutex_unlock(&g_cpu_mu);
++}
++
++static void board_chunk(void)
++{
++    i16 mix[PCM_CHUNK * 2u];
++
++    board_render(mix, PCM_CHUNK);
+     pcm_push(mix, PCM_CHUNK);
+ }
+ 
+@@ -334,6 +348,10 @@ static int thread_start(void)
+     g_pkt_n = 0;
+     g_uart_r = g_uart_w = g_uart_n = 0;
+     g_pcm_r = g_pcm_n = 0;
++    if (g_inline) {
++        g_inline_booted = 0; /* the 68k boots on the first model2_snd_run */
++        return 0;
++    }
+     if (pthread_create(&g_thr, NULL, board_thread, NULL) != 0) {
+         fprintf(stderr, "lift: sound thread create failed\n");
+         return -1;
+@@ -362,6 +380,7 @@ void model2_snd_reset(void)
+     g_logged_song = 0;
+     g_logged_mix = 0;
+     g_logged_tima_per = 0;
++    g_inline_booted = 0;
+     model2_snd_midi_reset();
+     model2_snd_scsp_reset();
+     if (model2_snd_rom_loaded())
+@@ -534,9 +553,12 @@ int model2_snd_load_roms(const char *rom_dir)
+     if (!dir || !*dir)
+         dir = model2_resolve_rom_dir();
+     thread_stop();
+-    if (model2_snd_rom_load(dir) != 0)
+-        return -1;
+-    lift_status("lift: sound ROMs loaded from %s\n", dir);
++    /* Once: a host may have loaded them already (into memory it keeps apart). */
++    if (!model2_snd_rom_loaded()) {
++        if (model2_snd_rom_load(dir) != 0)
++            return -1;
++        lift_status("lift: sound ROMs loaded from %s\n", dir);
++    }
+     model2_snd_scsp_reset();
+     model2_snd_m68k_reset();
+     /* 68k boot + TIMA/mix run on the board thread — UART only queues. */
+@@ -549,3 +571,33 @@ void model2_snd_render(signed short *stereo, unsigned frames)
+         return;
+     pcm_pull((i16 *)stereo, frames);
+ }
++
++void model2_snd_set_inline(int on)
++{
++    if (on)
++        thread_stop();
++    g_inline = on ? 1 : 0;
++    g_inline_booted = 0;
++}
++
++int model2_snd_inline(void)
++{
++    return g_inline;
++}
++
++void model2_snd_run(signed short *stereo, unsigned frames)
++{
++    if (!stereo || !frames)
++        return;
++    if (!g_inline || !model2_snd_rom_loaded()) {
++        memset(stereo, 0, (size_t)frames * 2u * sizeof(i16));
++        return;
++    }
++    if (!g_inline_booted) {
++        pthread_mutex_lock(&g_cpu_mu);
++        boot_68k();
++        pthread_mutex_unlock(&g_cpu_mu);
++        g_inline_booted = 1;
++    }
++    board_render((i16 *)stereo, frames);
++}

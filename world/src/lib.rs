@@ -95,8 +95,8 @@ pub struct Game {
     pub rom: String,
     /// The core that runs it: an FBNeo core, served at /fbneo/<core>/fbneo.mjs, or a core built
     /// on its own and served at /<core>/<core>.mjs: "supermodel" (Sega Model 3, supermodel/),
-    /// "daytona" (Daytona USA's Sega Model 2, daytona/), "mame" (MAME, mame/) or "flycast" (Sega
-    /// NAOMI, flycast/).
+    /// "daytona" (Daytona USA's Sega Model 2, daytona/), "srally" (Sega Rally Championship's
+    /// Sega Model 2A, model2/srally/), "mame" (MAME, mame/) or "flycast" (Sega NAOMI, flycast/).
     pub core: String,
     pub title: String,
     /// A BIOS set loaded next to the ROM, e.g. "neogeo".
@@ -112,7 +112,8 @@ pub struct Game {
     /// cabinet, so online player 2 plays through them too.
     #[serde(default)]
     pub turns: bool,
-    /// How many can play at once, each in their own seat (up to 4, or 8 for an `arcade` game).
+    /// How many can play at once, each in their own seat (1 to 4, or up to 8 for an `arcade`
+    /// game).
     #[serde(default = "two")]
     pub players: u32,
     /// Online, the players' machines run in lockstep with a few frames of input delay instead
@@ -408,6 +409,13 @@ mod tests {
         assert_eq!(daytona.options["link_pace"], "1");
         // One cabinet a browser: no screen per seat, and the seat is the worker's to set.
         assert!(!daytona.options.contains_key("view") && !daytona.options.contains_key("seat"));
+        // One seat (the cabinets' link isn't carried yet), in lockstep like Virtua Striker 2.
+        let srally = games.iter().find(|g| g.rom == "srallyc").unwrap();
+        assert_eq!(srally.core, "srally");
+        assert_eq!(srally.players, 1);
+        assert!(srally.lockstep && !srally.arcade && !srally.turns);
+        assert!(srally.options.is_empty() && srally.bios.is_none());
+        assert_eq!(srally.cabinets, ["srallyc"]);
         // Only arcade games take more than 4.
         for game in &games {
             assert!(game.players >= 1 && game.players <= if game.arcade { 8 } else { 4 });
@@ -451,8 +459,8 @@ mod tests {
         assert!(
             !outrun.turns && !outrun.lockstep && !outrun.gun && !outrun.linked && !outrun.arcade
         );
-        // The one-player games: Out Run and Cruis'n USA.
-        assert_eq!(games.iter().filter(|g| g.players == 1).count(), 2);
+        // The one-player games: Out Run, Cruis'n USA and Sega Rally Championship.
+        assert_eq!(games.iter().filter(|g| g.players == 1).count(), 3);
         // Steered with a wheel the arrows turn evenly, full lock in 0.3 s and back as fast,
         // over the part of the stick FBNeo's dead zones leave.
         assert_eq!(

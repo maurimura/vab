@@ -1,0 +1,24 @@
+diff --git a/src/libc/libc_printf.c b/src/libc/libc_printf.c
+index 68f48e2..e7e35bc 100644
+--- a/src/libc/libc_printf.c
++++ b/src/libc/libc_printf.c
+@@ -15,7 +15,9 @@
+ 
+ /* pointers: fp=u32 *, g0=const char *, g13=u64 *, r4=u64 * */
+ 
+-extern void libc_printf_dispatch(void);
++/* The definition's prototype (lift_syms.h): an empty one is a different function type in
++ * WebAssembly, where the call would trap. g0/g1/g2 hold fmt, arg1, arg2 here. */
++extern void *libc_printf_dispatch(void *arg0, u32 arg1, u32 arg2);
+ 
+ void libc_printf(const char * fmt, u32 arg1, u32 arg2)
+ {
+@@ -46,7 +48,7 @@ void libc_printf(const char * fmt, u32 arg1, u32 arg2)
+     r5 = 4;
+     *(u64 *)(va_base + 0x20) = (u64)g8;
+     r4 = va_base;
+-    libc_printf_dispatch();
++    libc_printf_dispatch((void *)(uintptr_t)g0, (u32)g1, (u32)g2);
+     g8 = r6;
+     g10 = r8;
+     fp = fp_save;

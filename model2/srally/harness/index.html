@@ -1,0 +1,119 @@
+<!doctype html>
+<!-- Runs the Sega Rally core in the page the way the worker will (web build, libretro.js, a
+     WebGL2 context on an OffscreenCanvas handed to the module), shows its frames on a canvas and
+     times them. Query: ?rom=srallycb (served at /roms/<rom>.zip), &frames=600, &warmup=1200,
+     &race (two coins, START and the accelerator held into a race: script.mjs; warmup then counts
+     from power-on and must reach the race), &region=international|japan|us, &shots=f1,f2,...
+     (the picture at those frames, from power-on, as PNG data URLs in the result), &novideo (no
+     picture asked for: the core alone, as in a rollback re-run). Results in
+     #out and in window.bench (a promise), for harness/run.mjs. -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>Sega Rally harness</title>
+<style>body{background:#111;color:#ddd;font:14px monospace;margin:16px} canvas{display:block;image-rendering:pixelated;width:992px;height:768px;background:#000}</style>
+</head>
+<body>
+<canvas id="screen" width="496" height="384"></canvas>
+<pre id="out">loading…</pre>
+<script type="module">
+import { Core } from "/web/emulator/libretro.js";
+import createSrally from "/model2/srally/dist/srally.mjs";
+import { raceMask, modes, hash } from "/model2/srally/script.mjs";
+
+const params = new URLSearchParams(location.search);
+const rom = params.get("rom") ?? "srallycb";
+const FRAMES = Number(params.get("frames") ?? 600);
+const WARMUP = Number(params.get("warmup") ?? 1200);
+const RACE = params.has("race");
+const SHOTS = new Set((params.get("shots") ?? "").split(",").filter(Boolean).map(Number));
+const out = document.getElementById("out");
+const canvas = document.getElementById("screen");
+const screen = canvas.getContext("2d");
+const lines = [];
+const log = (text) => { lines.push(text); out.textContent = lines.join("\n"); };
+
+window.bench = (async () => {
+  // As the worker does: the module draws with WebGL2 on an OffscreenCanvas of its own.
+  const module = await createSrally({ canvas: new OffscreenCanvas(496, 384) });
+  const set = (key, value) => {
+    const alloc = (text) => { const n = module.lengthBytesUTF8(text) + 1; const p = module._malloc(n); module.stringToUTF8(text, p, n); return p; };
+    module._srally_set(alloc(key), alloc(value));
+  };
+  if (params.has("region")) set("region", params.get("region"));
+  let last;
+  let lit = 0; // pixels of the last frame that are not black
+  let errors = 0;
+  const core = new Core(module, {
+    onFrame(rgba, width, height) {
+      last = new ImageData(rgba, width, height);
+      lit = 0;
+      for (let i = 0; i < rgba.length; i += 4) if (rgba[i] | rgba[i + 1] | rgba[i + 2]) lit++;
+    },
+    onAudio() {},
+    onLog(level, text) { if (level >= 3) errors++; log(text); },
+  });
+  if (params.has("novideo")) core.present = false;
+  const response = await fetch(`/roms/${rom}.zip`);
+  if (!response.ok) throw new Error(`/roms/${rom}.zip: ${response.status} (serve.mjs looks for it in ~/Downloads, or ROMS=<dir>)`);
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const t0 = performance.now();
+  const av = core.loadGame(`${rom}.zip`, bytes);
+  log(`loaded in ${(performance.now() - t0).toFixed(0)} ms: ${av.width}x${av.height} @ ${av.fps.toFixed(3)} Hz, ${av.sampleRate} Hz`);
+
+  // Frames run back to back in chunks so the page stays alive and the picture updates.
+  const times = [];
+  const shots = {};
+  let frame = 0, lastModes = "";
+  const run = (n, keep) => new Promise((resolve) => {
+    let left = n;
+    const step = () => {
+      const end = performance.now() + 12;
+      while (left > 0 && performance.now() < end) {
+        core.inputs[0] = RACE ? raceMask(frame) : 0;
+        const start = performance.now();
+        core.run();
+        if (keep) times.push(performance.now() - start);
+        frame++;
+        left--;
+        const m = modes(core.systemRam()), now = JSON.stringify(m);
+        if (now !== lastModes) { log(`frame ${frame}: mode ${m.mode} inner ${m.inner} scene ${m.scene} race ${m.race}`); lastModes = now; }
+        if (SHOTS.has(frame) && last) {
+          screen.putImageData(last, 0, 0);
+          shots[frame] = canvas.toDataURL("image/png");
+        }
+      }
+      if (last) screen.putImageData(last, 0, 0);
+      left > 0 ? requestAnimationFrame(step) : resolve();
+    };
+    step();
+  });
+  await run(WARMUP, false);
+  module.UTF8ToString(module._srally_timings());
+  await run(FRAMES, true);
+  const sorted = [...times].sort((a, b) => a - b);
+  const avg = times.reduce((a, b) => a + b, 0) / Math.max(1, times.length);
+  const at = (q) => sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))].toFixed(2) : "-";
+  const t = JSON.parse(module.UTF8ToString(module._srally_timings()));
+  const ms = (us) => t.frames ? (us / t.frames / 1000).toFixed(2) : "-";
+  const result = { frames: FRAMES, avg, median: Number(at(0.5)), p95: Number(at(0.95)), worst: sorted.at(-1), timings: t, errors, shots };
+  log(`browser: ${FRAMES} frames${RACE ? " (race script)" : ""}, ${avg.toFixed(2)} ms/frame average, ${at(0.5)} median, ${at(0.95)} p95, ${sorted.at(-1)?.toFixed(2)} worst (budget ${(1000 / av.fps).toFixed(2)})`);
+  log(`  game code ${ms(t.logic)} ms, geometry decode ${ms(t.geometry)} ms, renderer ${ms(t.raster)} ms, sound board ${ms(t.sound)} ms, audio ${ms(t.audio)} ms; all of retro_run ${ms(t.total)} ms`);
+  if (module._srally_video_timings) log(`  renderer: ${module.UTF8ToString(module._srally_video_timings())}`);
+  try {
+    let start = performance.now();
+    const state = core.serialize();
+    const saveMs = performance.now() - start;
+    start = performance.now();
+    core.unserialize(state);
+    log(`state: ${state.length} bytes, save ${saveMs.toFixed(1)} ms, load ${(performance.now() - start).toFixed(1)} ms`);
+  } catch (e) {
+    log(`state: ${e.message}`);
+  }
+  log(`i960 RAM hash ${hash(core.systemRam())}; last frame: ${lit} of ${496 * 384} pixels lit; wasm memory ${(module.HEAPU8.length / 1048576).toFixed(0)} MB`);
+  result.lines = lines;
+  return result;
+})().catch((e) => ({ error: String(e && e.stack || e), lines }));
+</script>
+</body>
+</html>

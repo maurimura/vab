@@ -412,6 +412,45 @@ node daytona/harness/run.mjs '?rom=daytona&cabinets=1&warmup=600&play&frames=600
 Update the source hash after recapturing. No ROM was fetched or stored in tracked
 art/assets; online integration and deployment are separate from this cabinet.
 
+### Sega Rally Championship — original 1995 twin station
+
+```sh
+python3 tools/art/cabinet_pipeline.py validate srallyc
+python3 tools/art/cabinet_pipeline.py build srallyc
+python3 -m unittest discover -s tools/art -p 'test_*.py'
+```
+
+Review `art/previews/srallyc.png`: four **48×56** sprites in
+`assets/tiles/objects/cabinet_srallyc_<facing>.png` and seven editable layers per
+facing in `art/objects/cabinet_srallyc_<facing>/`. The shared `racing` renderer
+supports optional shell/platform colors and a Race Leader header; existing
+Daytona output remains unchanged. One station is adapted from the original
+**white/blue 1995 twin**, with orange/blue shared marquee, striped white seat back,
+black cushion/dashboard, blue platform edges, wheel, four-speed shifter, two
+pedals and **two** raised buttons: yellow Start and red View Change. The long
+footprint uses the same 60% compression and bottom-center anchor as Daytona.
+
+References: [original twin photo](https://www.arcadeartwork.org/galleries/arcadecabs168/srallyc.png)
+and [control photo](https://www.arcadeartwork.org/galleries/arcadecpanels/srallyc.png),
+located through [archive search](https://www.arcadeartwork.org/qsearch.php?q=srally).
+The archive's `srallycb` cabinet and `srallyc` flyer actually depict **Sega Rally 2**;
+these are explicitly excluded research references, not used for textures or
+hardware claims. Decoded files, URLs, SHA-256s, measured corners and remaining
+uncertainties are in `art/references/srallyc/` and
+`tools/art/recipes/srallyc.json`. No authenticated original operator decal scan
+was located. Photo authors/restoration status and Sega redistribution rights are
+unknown; archive hosting is not publisher authorization. Tower sides and unseen
+seat sides stay plain rather than receiving invented decals.
+
+The display is the original game's **photographed Championship Top 10 table**,
+not a fresh gameplay capture or another game's screen. Replace its texture with
+a real local capture when the in-progress Sega Rally core is ready. This art task
+does not run or modify that integration. `players: 4` records the original game's
+linked capability; `control_stations: 1` describes the art only. No Sega Rally
+catalog entry existed when these assets were made: the eventual game entry should
+select `cabinets: ["srallyc"]`, independently of its ROM/core/network setup. No
+catalog/map edits, ROM downloads/uploads, commit or deployment are included.
+
 ### Virtua Striker 2 '98 — Sega sports upright
 
 ```sh
