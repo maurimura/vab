@@ -18,6 +18,8 @@ node tools/e2e/shuffleboard.mjs   # or just one
   goes on J (not on Y, the chat's) for Out Run alone, Esc closes the panel only; kept over a
   reload (Tab opens it then); R at the game puts back every game's, R in the bar (`/controls`)
   the usual.
+- `onboarding.mjs`: the first screen is for the first visit: back again (a reload), a player
+  goes straight in with the same name and look, without the picker; `/look` still opens it.
 - `darts.mjs`: one player at the dartboard: scoring, turns, a bust and a win.
 - `darts-online.mjs`: two players at the dartboard: seats, the thrower's hand, darts alike on
   both boards, a reload mid-turn, someone leaving.

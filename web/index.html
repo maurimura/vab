@@ -312,6 +312,22 @@
         font-size: 12px;
         color: var(--dim);
       }
+      /* Someone in before (onboarding.js): only the name of the place and how the loading goes,
+         then straight in. */
+      #onboarding.returning #look {
+        width: auto;
+        height: auto;
+        display: grid;
+        grid-template-columns: auto;
+        justify-items: center;
+      }
+      #onboarding.returning #look > :not(h1, .go),
+      #onboarding.returning #look-enter {
+        display: none;
+      }
+      #onboarding.returning #look-status {
+        font-size: 14px;
+      }
       /* A phone: everything in one column, the character smaller. */
       @media (max-width: 640px) {
         #onboarding {
