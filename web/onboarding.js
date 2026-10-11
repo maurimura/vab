@@ -2,7 +2,9 @@
 // how they look, an item and its colours for each layer of the catalog (web/avatar.js). It is
 // plain HTML, up before the client has downloaded; Enter goes into the bar once it has. The
 // chat's /look opens it again from the bar (client/src/chat.rs). Both are remembered in cookies
-// for next time, and a first visit starts from a look picked at random.
+// for next time, and a first visit starts from a look picked at random. Someone who has been in
+// before (their look is remembered) doesn't pick again: the screen only says how the bar's
+// loading goes, and they're in as they were as soon as it has; /look still opens the picker.
 
 import { compose, decode, encode, loadCatalog, randomLook } from "./avatar.js";
 import { cookie, remember } from "./cookies.js";
@@ -32,6 +34,10 @@ let tab;
 let barLoaded = false;
 let waiting = false;
 
+/** Been in before: straight in, without picking. */
+const returning = cookie("look") !== undefined;
+if (returning) screen.classList.add("returning");
+
 let resolveEntered;
 /** The player's first pick, { name, look } (as text), once they went in. */
 export const entered = new Promise((resolve) => (resolveEntered = resolve));
@@ -47,6 +53,11 @@ loadCatalog().then((loaded) => {
   look = cookie("look") ? decode(catalog, cookie("look")) : randomLook(catalog);
   tab = catalog.tabs[0];
   render();
+  // In before: in as they were, once the bar is up (as an Enter pressed now would).
+  if (returning) {
+    waiting = true;
+    if (barLoaded) go();
+  }
 });
 
 /** How much of the client has downloaded, in bytes (`total` is 0 when not known). */
@@ -68,6 +79,7 @@ export function loaded() {
 /** Opens the screen again in the bar, with the player's name now; resolves with their new pick,
  * or nothing if they close it. */
 export function open(name) {
+  screen.classList.remove("returning");
   nameInput.value = name;
   // Not what was tried on and closed without.
   look = structuredClone(worn);
