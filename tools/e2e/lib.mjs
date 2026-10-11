@@ -75,7 +75,8 @@ export async function waitFor(it, test, { what = "the game", timeout = 20000 } =
   let last = null;
   while (Date.now() < until) {
     last = await state(it).catch(() => null);
-    if (last && test(last)) return last;
+    // (The test may be async: it may press keys while it waits.)
+    if (last && (await test(last))) return last;
     await sleep(100);
   }
   throw new Error(`${it.name}: gave up waiting for ${what}; last state: ${JSON.stringify(last)}`);

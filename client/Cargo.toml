@@ -24,6 +24,8 @@ tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_w
 billiards = { path = "../billiards", features = ["serde"] }
 # Air hockey physics for the air hockey table's game (src/hockey).
 hockey = { path = "../hockey", features = ["serde"] }
+# Pinball physics for the pinball machine (src/pinball), and its table's layout.
+pinball = { path = "../pinball" }
 # Darts scoring and the hand's sway for the dartboard (src/darts).
 darts = { path = "../darts", features = ["serde"] }
 # Table shuffleboard physics and scoring for the shuffleboard table (src/shuffleboard).

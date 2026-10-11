@@ -350,7 +350,7 @@ fn show_stick(
                 && !touch.gun
                 && !matches!(
                     mode.get(),
-                    Mode::Pool | Mode::Hockey | Mode::Shuffleboard | Mode::Darts
+                    Mode::Pool | Mode::Hockey | Mode::Shuffleboard | Mode::Darts | Mode::Pinball
                 )
         }) else {
             visibility.set_if_neq(Visibility::Hidden);

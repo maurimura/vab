@@ -21,6 +21,7 @@ pub enum Kind {
     Hockey,
     Shuffleboard,
     Darts,
+    Pinball,
 }
 
 /// Everything in the bar the player can use: what it is, the cell it's placed on, and every
