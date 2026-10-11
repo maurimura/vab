@@ -11,9 +11,10 @@ at a cabinet, a table or the dartboard, as does E once every seat is taken (see
 opens the chat for everyone in the room; `/name <name>` there sets the name shown above your head,
 and a cookie keeps it. The controls show on a first visit and with `/help`; when a game starts, a
 card lists its buttons as the game names them (the core reports them, e.g. "Z  Low Punch").
-The gear in the top right corner (or `/controls` in the chat) puts them on other keys: in the
-bar for every game, at a cabinet (Tab there too) for that game alone, over every game's; both
-tune the driving games' wheel (see
+The gear in the top right corner (or `/controls` in the chat) opens the controls panel, which
+changes your name (as `/name` does) and puts the buttons on other keys: in the bar for every
+game, at a cabinet (Tab there too) for that game alone, over every game's; both tune the driving
+games' wheel (see
 [Steering with the arrows](#steering-with-the-arrows-out-run-cruisn-usa)).
 
 E next to the pool table plays 8-ball: the table seen from above, the cue following the mouse

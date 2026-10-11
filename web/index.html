@@ -55,6 +55,61 @@
         /* Smaller than this and iOS zooms the page in on the box. */
         font-size: 16px;
       }
+      /* The name box, from the controls panel (client/src/controls.rs): top middle, over it. */
+      #name {
+        position: fixed;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: min(320px, calc(100vw - 16px));
+        margin: 0;
+        padding: 10px 12px;
+        box-sizing: border-box;
+        border: 1px solid rgba(255, 210, 77, 0.8);
+        border-radius: 8px;
+        background: rgb(8, 8, 13);
+        color: #fff;
+        font-family: monospace;
+        z-index: 1;
+      }
+      #name label {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+      }
+      #name input {
+        width: 100%;
+        height: 36px;
+        box-sizing: border-box;
+        padding: 0 10px;
+        border: 1px solid rgba(255, 255, 255, 0.5);
+        border-radius: 6px;
+        background: #000;
+        color: #fff;
+        font-family: monospace;
+        font-size: 16px;
+        outline: none;
+      }
+      #name div {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      #name button {
+        height: 30px;
+        padding: 0 14px;
+        border: 0;
+        border-radius: 4px;
+        background: rgba(255, 255, 255, 0.15);
+        color: #fff;
+        font-family: monospace;
+        font-size: 13px;
+      }
+      #name button[type="submit"] {
+        background: rgb(255, 210, 77);
+        color: #000;
+      }
     </style>
   </head>
   <body>
@@ -63,6 +118,15 @@
     <button id="chat" hidden>Chat</button>
     <form id="say" hidden>
       <input maxlength="200" enterkeyhint="send" autocomplete="off" placeholder="Say something, or /name Mauri" />
+    </form>
+    <!-- Your name, from the controls panel: a canvas can't take typing as a box does. -->
+    <form id="name" hidden>
+      <label for="name-input">Your name</label>
+      <input id="name-input" maxlength="20" enterkeyhint="done" autocomplete="nickname" />
+      <div>
+        <button type="submit">Save</button>
+        <button type="button" id="name-cancel">Cancel</button>
+      </div>
     </form>
     <script type="module">
       // wasm-bindgen output of the `client` crate (make client): the bar, the players and the
@@ -161,6 +225,34 @@
           localStorage.setItem("controls", json);
         } catch {}
       };
+      // The name box (client/src/controls.rs): the player's name to change, as `/name` does;
+      // Enter or Save keeps it. On a computer it takes the keys at once; a phone brings up its
+      // keyboard only for a box focused by a tap on it, so there the box waits for that tap.
+      const nameBox = document.getElementById("name");
+      const nameInput = nameBox.querySelector("input");
+      const closeNameBox = () => {
+        nameBox.hidden = true;
+        document.getElementById("bevy").focus();
+      };
+      window.askName = () => {
+        nameInput.value = myName;
+        nameBox.hidden = false;
+        nameInput.focus();
+        nameInput.select();
+      };
+      nameBox.onsubmit = (event) => {
+        event.preventDefault();
+        // As the chat's /name has it (client/src/chat.rs): spaces run together, 20 at most.
+        const name = nameInput.value.trim().split(/\s+/).join(" ").slice(0, 20);
+        if (name && name !== myName) window.roomName(name);
+        closeNameBox();
+      };
+      // Esc or Cancel leaves the name as it was.
+      nameInput.onkeydown = (event) => {
+        if (event.key === "Escape") closeNameBox();
+      };
+      document.getElementById("name-cancel").onclick = closeNameBox;
+
       // Tab opens the controls panel at a cabinet: it doesn't also move the focus off the game.
       addEventListener("keydown", (event) => {
         if (event.key === "Tab" && event.target.tagName !== "INPUT") event.preventDefault();

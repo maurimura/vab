@@ -18,6 +18,10 @@
 //! worker would (world::Wheel::turn). While driving, a small wheel in the corner shows it too,
 //! unless turned off here.
 //!
+//! On top, the player's name, as `/name` in the chat sets it: a click (or Enter) on it opens
+//! the page's name box (web/index.html), where Enter saves it and Esc doesn't; a canvas can't
+//! take typing as a text box does, nor bring up a phone's keyboard.
+//!
 //! What a player sets is theirs, kept in the browser for next time (localStorage,
 //! web/index.html); R puts what the panel is for back as it was. `/wheel` in the chat changes
 //! the game's wheel with numbers (emulator.rs).
@@ -38,6 +42,7 @@ use crate::cabinets::GAMES;
 use crate::chat::{Chat, type_in_chat};
 use crate::emulator::{self, KEYS, PlayingGame, TOP_BAR};
 use crate::help::{GameButtons, close_panel};
+use crate::room::OwnName;
 use crate::settings::Settings;
 use crate::touch::{Touch, TouchButton};
 
@@ -179,6 +184,9 @@ extern "C" {
     fn controls_kept() -> Option<String>;
     #[wasm_bindgen(js_name = keepControls)]
     fn keep_controls(json: &str);
+    /// Opens the page's name box, with the player's name in it to change.
+    #[wasm_bindgen(js_name = askName)]
+    fn ask_name();
 }
 
 /// The name of a key a button can go on (KEY_NAMES).
@@ -442,9 +450,11 @@ pub fn controls_closed(controls: Res<Controls>) -> bool {
 #[derive(Message)]
 pub struct ShowControls;
 
-/// A line of the panel: a button's key, a number of the wheel's, or the corner wheel.
+/// A line of the panel: the player's name, a button's key, a number of the wheel's, or the
+/// corner wheel.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Row {
+    Name,
     Key(u16),
     Lock,
     Back,
@@ -452,16 +462,15 @@ enum Row {
     Corner,
 }
 
-/// The panel's lines for a game whose buttons are `buttons` (all, until the game says, and in
-/// the bar), and that has a wheel the player `steers`. A touch screen has no keys to put
-/// buttons on.
+/// The panel's lines: the player's name, then the buttons of a game whose buttons are
+/// `buttons` (all, until the game says, and in the bar), and the wheel if the player `steers`
+/// one. A touch screen has no keys to put buttons on.
 fn rows(buttons: &[(u16, String)], steers: bool, touch: bool) -> Vec<Row> {
     let named = |id: &u16| buttons.is_empty() || buttons.iter().any(|(on, _)| on == id);
-    let mut rows: Vec<Row> = if touch {
-        Vec::new()
-    } else {
-        ORDER.into_iter().filter(named).map(Row::Key).collect()
-    };
+    let mut rows = vec![Row::Name];
+    if !touch {
+        rows.extend(ORDER.into_iter().filter(named).map(Row::Key));
+    }
     if steers {
         rows.extend([Row::Lock, Row::Back, Row::Curve, Row::Corner]);
     }
@@ -645,7 +654,7 @@ impl Plugin for ControlsPlugin {
 
 /// For browser tests (testing.rs, tools/e2e/controls.mjs): the panel and what it sets ("every"
 /// or the game's ROM set), and at a game (in the bar, for every game) its keys by RetroPad id,
-/// its wheel and where it is, and how many buttons the game named.
+/// its wheel and where it is, how many buttons the game named, and the player's name.
 #[cfg(feature = "test-hooks")]
 fn report(
     controls: Res<Controls>,
@@ -653,6 +662,7 @@ fn report(
     touch: Res<Touch>,
     buttons: Res<GameButtons>,
     mode: Res<State<Mode>>,
+    own: Res<OwnName>,
     game: Option<Res<PlayingGame>>,
 ) {
     use serde_json::json;
@@ -694,6 +704,7 @@ fn report(
             "wheel": wheel,
             "turned": turned.now,
             "corner": controls.corner_wheel(),
+            "name": own.0,
         }),
     );
 }
@@ -1092,9 +1103,11 @@ fn use_keys(
     }
 }
 
-/// Enter or a click on `row`: a button's waits for its key, the corner wheel goes on or off.
+/// Enter or a click on `row`: the name opens the page's name box, a button's waits for its
+/// key, the corner wheel goes on or off.
 fn choose(controls: &mut Controls, row: Row) {
     match row {
+        Row::Name => ask_name(),
         Row::Key(_) => {
             controls.binding = true;
             controls.note.clear();
@@ -1470,6 +1483,7 @@ fn show_panel(
     controls: Res<Controls>,
     game: Option<Res<PlayingGame>>,
     buttons: Res<GameButtons>,
+    own: Res<OwnName>,
     touch: Res<Touch>,
     panel: Single<(Entity, &mut Visibility), With<Panel>>,
 ) {
@@ -1484,7 +1498,12 @@ fn show_panel(
     };
     let shown = visibility.set_if_neq(Visibility::Inherited);
     let game_changed = game.as_ref().is_some_and(|game| game.is_changed());
-    if !shown && !controls.is_changed() && !game_changed && !buttons.is_changed() {
+    if !shown
+        && !controls.is_changed()
+        && !game_changed
+        && !buttons.is_changed()
+        && !own.is_changed()
+    {
         return;
     }
     let every = controls.scope == Scope::Every;
@@ -1527,6 +1546,24 @@ fn show_panel(
                             view.title
                         )
                     };
+                    // The player's name, everywhere the same.
+                    if let Some(index) = view.rows.iter().position(|row| *row == Row::Name) {
+                        let selected = index == controls.selected;
+                        let name = if own.0.is_empty() {
+                            "..."
+                        } else {
+                            own.0.as_str()
+                        };
+                        let change = if touch.is_on() {
+                            "tap to change"
+                        } else {
+                            "click to change"
+                        };
+                        row(panel, index, selected, "Your name", |line| {
+                            line.spawn(key_box(name, false));
+                            line.spawn(text(change, 12.0, DIM));
+                        });
+                    }
                     panel.spawn(text(&whose, 12.0, DIM));
                     panel
                         .spawn(Node {
@@ -1949,11 +1986,14 @@ mod tests {
     #[test]
     fn rows_list_what_the_game_names() {
         let named = vec![(3, "Start".to_string()), (6, "Steer left".to_string())];
-        assert_eq!(rows(&named, false, false), [Row::Key(3), Row::Key(LEFT)]);
-        assert_eq!(rows(&[], false, false).len(), 12);
+        assert_eq!(
+            rows(&named, false, false),
+            [Row::Name, Row::Key(3), Row::Key(LEFT)]
+        );
+        assert_eq!(rows(&[], false, false).len(), 13);
         assert_eq!(
             rows(&named, true, true),
-            [Row::Lock, Row::Back, Row::Curve, Row::Corner]
+            [Row::Name, Row::Lock, Row::Back, Row::Curve, Row::Corner]
         );
     }
 

@@ -4,7 +4,9 @@
 // have K. At the driving game, the gear opens the game's own, over those (Tab too): the arrows still turn the
 // game's wheel, + slows it more, Steer left goes on J (not on Y, the chat's), Esc closes the
 // panel only, and Mortal Kombat II keeps every game's K. It's all kept over a reload; R at the
-// game puts back every game's, and R in the bar (/controls this time) the usual ones.
+// game puts back every game's, and R in the bar (/controls this time) the usual ones. On top of
+// the panel, the player's name: Enter opens the page's name box with it, Esc there leaves it,
+// and a new one typed and Enter is the player's, kept in the cookie.
 // GAME picks the driving game (Out Run unless said; crusnusa41 for Cruis'n USA).
 import { check, player, run, sleep, state, use, waitFor } from "./lib.mjs";
 
@@ -85,10 +87,35 @@ await run("The controls panel, for every game and for one", async () => {
 
   // In the bar: every game's.
   s = await gear(one);
-  check(s.controls.scope === "every" && s.controls.rows.length === 16, "the gear in the bar: every game's buttons and wheel");
+  check(s.controls.scope === "every" && s.controls.rows.length === 17, "the gear in the bar: your name, every game's buttons and wheel");
   s = await gear(one, false);
   check(s.mode === "Walking", "the gear again closes it");
   s = await gear(one);
+
+  // The name, first in the panel.
+  const nameBox = () => one.page.evaluate(() => !document.getElementById("name").hidden);
+  const was = s.controls.name;
+  await pick(one, "Name");
+  await one.page.keyboard.press("Enter");
+  await waitForBox(true);
+  check(await one.page.evaluate((was) => document.activeElement.value === was, was), `Enter on Your name opens the name box with "${was}"`);
+  await one.page.keyboard.type("Nobody");
+  await one.page.keyboard.press("Escape");
+  await waitForBox(false);
+  await sleep(300);
+  s = await state(one);
+  check(s.controls.name === was && s.controls.open, "Esc in the box leaves the name, and the panel up");
+  await one.page.keyboard.press("Enter");
+  await waitForBox(true);
+  await one.page.keyboard.type("Racer X");
+  await one.page.keyboard.press("Enter");
+  s = await waitFor(one, (s) => s.controls.name === "Racer X", { what: "the new name" });
+  const cookie = await one.page.evaluate(() => document.cookie);
+  check(!(await nameBox()) && cookie.includes("name=Racer%20X"), "a name typed and Enter is the player's, kept for next time");
+  async function waitForBox(open) {
+    for (let i = 0; i < 50 && (await nameBox()) !== open; i++) await sleep(100);
+    if ((await nameBox()) !== open) throw new Error(`the name box never ${open ? "opened" : "closed"}`);
+  }
   const cell = JSON.stringify(s.player.cell);
   s = await steer(one, "ArrowRight", 0.95);
   check(JSON.stringify(s.player.cell) === cell, "Right turns the panel's wheel to full lock and back, and doesn't walk");
