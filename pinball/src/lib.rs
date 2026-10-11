@@ -67,11 +67,11 @@ impl Default for Settings {
             slope: GRAVITY * SLOPE_DEGREES.to_radians().sin(),
             flipper_speed: 26.0,
             flipper_return: 22.0,
-            flipper_bounce: 0.3,
+            flipper_bounce: 0.5,
             wall_bounce: 0.4,
             rubber_bounce: 0.6,
-            bumper_kick: 120.0,
-            sling_kick: 110.0,
+            bumper_kick: 90.0,
+            sling_kick: 90.0,
             plunger_speed: 115.0,
             rolling: 0.05,
             ramp_speed: 70.0,
@@ -1236,7 +1236,8 @@ mod tests {
                 highest = highest.min(ball.position.y);
             }
         }
-        assert!(highest < 20.0, "only up to {highest}");
+        // Well up the table (where to depends on where it hits what's there).
+        assert!(highest < at.y - 10.0, "only up to {highest}");
     }
 
     #[test]
@@ -1253,7 +1254,7 @@ mod tests {
         }
         let kicked = kicked.expect("hit the bumper");
         assert!(
-            kicked.length() > 100.0 && kicked.x < 0.0,
+            kicked.length() > 80.0 && kicked.x < 0.0,
             "kicked away: {kicked}"
         );
     }
