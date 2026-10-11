@@ -1258,6 +1258,24 @@
   },
   {
    "file": "items/139-wall.png",
+   "x": 261,
+   "y": 558,
+   "w": 19.5,
+   "h": 37.5,
+   "name": "wall",
+   "depth": 27.35
+  },
+  {
+   "file": "items/140-wall.png",
+   "x": 727.5,
+   "y": 558,
+   "w": 19,
+   "h": 37.5,
+   "name": "wall",
+   "depth": 27.35
+  },
+  {
+   "file": "items/141-wall.png",
    "x": 735,
    "y": 547,
    "w": 14,
@@ -1266,58 +1284,40 @@
    "depth": 27.491304347826087
   },
   {
-   "file": "items/140-wall.png",
-   "x": 261,
-   "y": 558,
-   "w": 22,
-   "h": 42.5,
-   "name": "wall",
-   "depth": 27.6
-  },
-  {
-   "file": "items/141-wall.png",
-   "x": 724.5,
-   "y": 558,
-   "w": 22,
-   "h": 42.5,
-   "name": "wall",
-   "depth": 27.6
-  },
-  {
    "file": "items/142-wall.png",
-   "x": 272,
-   "y": 579,
-   "w": 22.5,
-   "h": 43,
+   "x": 269.5,
+   "y": 574,
+   "w": 19,
+   "h": 37.5,
    "name": "wall",
-   "depth": 28.6
+   "depth": 28.1
   },
   {
    "file": "items/143-wall.png",
-   "x": 713,
-   "y": 579,
-   "w": 22,
-   "h": 43,
+   "x": 719,
+   "y": 574,
+   "w": 19,
+   "h": 37.5,
    "name": "wall",
-   "depth": 28.6
+   "depth": 28.1
   },
   {
    "file": "items/144-wall-end.png",
-   "x": 284,
-   "y": 600.5,
-   "w": 9.5,
-   "h": 22,
-   "name": "wall-end",
-   "depth": 28.61
-  },
-  {
-   "file": "items/145-wall-end.png",
-   "x": 714,
-   "y": 600.5,
+   "x": 278.5,
+   "y": 589.5,
    "w": 9,
    "h": 22,
    "name": "wall-end",
-   "depth": 28.61
+   "depth": 28.11
+  },
+  {
+   "file": "items/145-wall-end.png",
+   "x": 720,
+   "y": 589.5,
+   "w": 8.5,
+   "h": 22,
+   "name": "wall-end",
+   "depth": 28.11
   },
   {
    "file": "items/146-wall.png",
