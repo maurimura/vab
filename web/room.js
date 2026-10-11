@@ -59,6 +59,7 @@ export class Room {
   /** Where this player sits or watches: the message saying so, sent again after reconnecting. */
   #place;
   #name;
+  #look;
   #links = new Map();
   #waitingSignals = new Map();
   /** Voice calls by name, and signals for calls not made yet. */
@@ -68,18 +69,21 @@ export class Room {
 
   /**
    * @param url the room's WebSocket, e.g. wss://host/ws/main
-   * @param events welcome(name), moved(id, x, y, flip, name), left(id), said(id, name, text),
+   * @param events welcome(name), moved(id, x, y, flip, name, look) with how they look when
+   *   they show up, look(id, look) when they change it, left(id), said(id, name, text),
    *   seats(cabinet, players), full(cabinet), watchers(cabinet, players), message(from, data)
    *   from another player at our cabinet, handover(from, epoch, bytes) a game handed over (see
    *   handOver), watchState(from, stream, bytes), watchInputs(from, stream, frame, inputs),
    *   watchFrames(from, stream, frame, bytes) and watchLink(from, stream, records) the game we
    *   watch (see watchState, watchInputs, watchFrames and watchLink)
    * @param name this player's name, if they set one before; else the room gives one
+   * @param look how this player looks (web/avatar.js)
    */
-  constructor(url, events, name) {
+  constructor(url, events, name, look) {
     this.#url = url;
     this.#events = events;
     this.#name = name;
+    this.#look = look;
     this.#connect(1000);
   }
 
@@ -87,6 +91,12 @@ export class Room {
   setName(name) {
     this.#name = name;
     this.#send({ type: "name", name });
+  }
+
+  /** How this player looks to everyone else. */
+  setLook(look) {
+    this.#look = look;
+    this.#send({ type: "look", look });
   }
 
   /** Says something to everyone in the room. False when not connected. */
@@ -284,8 +294,10 @@ export class Room {
         this.seats = new Map(Object.entries(message.seats));
         this.watchers = new Map(Object.entries(message.watchers));
         if (this.#name) this.#send({ type: "name", name: this.#name });
+        // Before where we are, which shows us to the others with it.
+        if (this.#look) this.#send({ type: "look", look: this.#look });
         events.welcome(this.#name ?? message.name);
-        for (const { id, x, y, flip, name } of message.players) events.moved(id, x, y, flip, name);
+        for (const { id, x, y, flip, name, look } of message.players) events.moved(id, x, y, flip, name, look);
         for (const [cabinet, players] of this.seats) events.seats(cabinet, players);
         for (const [cabinet, players] of this.watchers) events.watchers(cabinet, players);
         // Back again after a lost connection, with a new id: say where we are and sit back down
@@ -294,7 +306,10 @@ export class Room {
         if (this.#place) this.#send(this.#place);
         break;
       case "moved":
-        if (message.id !== this.id) events.moved(message.id, message.x, message.y, message.flip, message.name);
+        if (message.id !== this.id) events.moved(message.id, message.x, message.y, message.flip, message.name, message.look);
+        break;
+      case "look":
+        if (message.id !== this.id) events.look(message.id, message.look);
         break;
       case "said":
         events.said(message.id, message.name, message.text);

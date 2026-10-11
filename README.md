@@ -1,15 +1,16 @@
 # Arcade Bar
 
-The page shows the bar from `assets/maps/bar.ron` (made with the editor, see [Dev
-tools](#dev-tools)) and a placeholder player: arrows or WASD walk (Shift runs), and floor tiles
-without an object are walkable. Everyone on the page is in the same bar room and sees the others
+The page opens on a screen for picking a name and what to wear (see [Characters](#characters)),
+with the bar loading behind it. Then it shows the bar from `assets/maps/bar.ron` (made with the
+editor, see [Dev tools](#dev-tools)) and the player: arrows or WASD walk (Shift runs), and floor
+tiles without an object are walkable. Everyone on the page is in the same bar room and sees the others
 walk around (`?room=<name>` opens a separate one). E next to a cabinet sits you at it: you start its
 game, or join the one being played there (see [Online play](#online-play)); next to a table (pool,
 air hockey, shuffleboard, darts, below) it sits you at that. F watches the game being played there,
 at a cabinet, a table or the dartboard, as does E once every seat is taken (see
 [Watching](#watching)). Players sitting together can talk (see [Voice](#voice)). Esc stands up. Y
 opens the chat for everyone in the room; `/name <name>` there sets the name shown above your head,
-and a cookie keeps it. The controls show on a first visit and with `/help`; when a game starts, a
+and a cookie keeps it, and `/look` changes what you wear. The controls show on a first visit and with `/help`; when a game starts, a
 card lists its buttons as the game names them (the core reports them, e.g. "Z  Low Punch").
 
 E next to the pool table plays 8-ball: the table seen from above, the cue following the mouse
@@ -594,6 +595,31 @@ the stream against fresh states from player 1 every 1.5 s (needs `make netplay`)
 PLAYERS=4 node emulator/netplay-check.mjs emulator/dist/konami/fbneo.mjs $HOME/Downloads/ssriders.zip emulator/dist/ssriders.state
 PLAYERS=1 WHEEL=1 node emulator/netplay-check.mjs emulator/dist/outrun/fbneo.mjs $HOME/Downloads/outrun.zip emulator/dist/outrun.state
 ```
+
+## Characters
+
+The first screen (`web/onboarding.js`) is plain HTML in `web/index.html`, up before the client
+starts downloading; the client downloads behind it, its progress on the screen, and Enter goes into
+the bar once it has loaded. On it a player picks a name and an item for each layer of
+`assets/avatar/catalog.json` (hair, face, top, jacket, pants, shoes, hat, glasses, beard, skin),
+each in colours from the layer's palette or any colour at all. Both are kept in cookies, and
+`/look` in the chat opens the screen again. A first visit starts from a look picked at random.
+
+Each item is a 16x32 PNG, `assets/avatar/<layer>/<item>.png`, drawn over the body with the feet at
+the bottom middle; layers draw in the catalog's order. Pixels in a colour slot's reserved greys
+(the catalog's `keys`: light, mid and dark) take three shades of the colour picked for that slot,
+lighter towards yellow and darker towards blue; everything else is drawn as it is.
+`web/avatar.js` puts the layers together into one picture, for the screen's preview and for every
+player in the bar: Bevy turns it into the player's sprite (`own_look`, `player_look` in
+`client/src/room.rs`). The room passes looks on as text (`hair=afro/cf6a2c top=tee/d33a3a ...`)
+without reading them: with a newcomer's first position, in its welcome, and in a `look` message
+when someone changes theirs, not with every step. An item a page's catalog doesn't know is read as
+the layer's default.
+
+`python3 tools/art/build_avatar.py` draws the items (and `assets/characters/player.png`, the
+default look, which shows until a player's own has been put together), each as rows of characters
+for its pixels, and a sheet of all of them, `art/previews/avatar.png`. A new item is a PNG in the
+greys and a line in the catalog; `tools/art/test_build_avatar.py` checks the two agree.
 
 ## Sizes
 

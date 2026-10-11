@@ -272,7 +272,8 @@ fn not_found() -> Result<Response> {
 /// about each player lives on their socket (its attachment), and each socket is tagged with its
 /// player's id.
 ///
-/// Players have a name, shown above their head and next to what they say in the chat.
+/// Players have a name, shown above their head and next to what they say in the chat, and a
+/// look, what they wear (web/avatar.js), which the room keeps without reading it.
 ///
 /// Text messages are JSON (`FromPlayer`, `ToPlayer`). Binary messages are for another player,
 /// passed on as they are but for the address: `[to: u32 LE][bytes]` in, `[from: u32 LE][bytes]`
@@ -298,6 +299,9 @@ struct Player {
     /// The cabinet ("x,y") whose game they watch.
     #[serde(default)]
     watching: Option<String>,
+    /// How they look, as the page says it (web/avatar.js): passed on as it is.
+    #[serde(default)]
+    look: String,
 }
 
 /// The address of everyone watching the sender's cabinet; no player has this id.
@@ -306,6 +310,8 @@ const WATCHERS: u32 = 0;
 /// LE][bytes]`: each of them gets `[from][bytes]`, so the sender sends it once. No player has
 /// this id.
 const SEVERAL: u32 = u32::MAX;
+/// The longest look the room passes on.
+const MAX_LOOK: usize = 400;
 /// The most seats a place has: an arcade game's linked cabinets (Daytona USA's 8). Other games
 /// take up to 4 (assets/games.ron), tables 2 to 4.
 const MAX_SEATS: usize = 8;
@@ -347,6 +353,10 @@ enum FromPlayer {
     Name {
         name: String,
     },
+    /// Change how the player looks (up to `MAX_LOOK` characters).
+    Look {
+        look: String,
+    },
     /// Say something to everyone in the room (up to 200 characters).
     Say {
         text: String,
@@ -373,6 +383,11 @@ enum ToPlayer<'a> {
     },
     /// Also how a newcomer first shows up, and how a new name spreads.
     Moved(PlayerAt),
+    /// How a player looks now, after they changed it.
+    Look {
+        id: u32,
+        look: &'a str,
+    },
     /// A chat message.
     Said {
         id: u32,
@@ -408,6 +423,9 @@ struct PlayerAt {
     name: String,
     #[serde(flatten)]
     at: Position,
+    /// How they look: when they first show up, not with every step.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    look: Option<String>,
 }
 
 /// A message for several players, after its `SEVERAL` address: who it is for, and what.
@@ -667,6 +685,7 @@ impl DurableObject for Room {
             at: None,
             seat: None,
             watching: None,
+            look: String::new(),
         };
         pair.server.serialize_attachment(&player)?;
 
@@ -689,6 +708,7 @@ impl DurableObject for Room {
                     id: other.id,
                     name: other.name.clone(),
                     at: other.at?,
+                    look: Some(other.look.clone()),
                 })
             })
             .collect();
@@ -716,6 +736,8 @@ impl DurableObject for Room {
         };
         match serde_json::from_str::<FromPlayer>(&text)? {
             FromPlayer::Move(at) => {
+                // Showing up: with how they look.
+                let look = player.at.is_none().then(|| player.look.clone());
                 player.at = Some(at);
                 ws.serialize_attachment(&player)?;
                 let name = player.name;
@@ -723,6 +745,7 @@ impl DurableObject for Room {
                     id: player.id,
                     name,
                     at,
+                    look,
                 }))?;
             }
             FromPlayer::Name { name } => {
@@ -737,7 +760,20 @@ impl DurableObject for Room {
                         id: player.id,
                         name,
                         at,
+                        look: None,
                     }))?;
+                }
+            }
+            FromPlayer::Look { look } => {
+                let look = clean(&look, MAX_LOOK).unwrap_or_default();
+                player.look = look.clone();
+                ws.serialize_attachment(&player)?;
+                // Others see it once the player is somewhere, as they show up.
+                if player.at.is_some() {
+                    self.broadcast(&ToPlayer::Look {
+                        id: player.id,
+                        look: &look,
+                    })?;
                 }
             }
             FromPlayer::Say { text } => {

@@ -1,7 +1,7 @@
 // Two players at the shuffleboard table (client/src/shuffleboard): seats, a throw each seen
 // alike on both tables, the held puck, a reload mid-game, a whole round scored alike, and
 // someone leaving.
-import { check, player, run, sleep, state, use, waitFor } from "./lib.mjs";
+import { check, enter, player, run, sleep, state, use, waitFor } from "./lib.mjs";
 
 const room = `e2e-shuffleboard-${Date.now()}`;
 const game = async (it) => (await state(it)).shuffleboard;
@@ -69,9 +69,7 @@ await run("shuffleboard, two players", async () => {
 
   // b reloads mid-round, and gets the game back from a.
   await b.page.reload({ waitUntil: "load" });
-  await waitFor(b, (s) => s.mode === "Walking", { what: "b's bar to load", timeout: 60000 });
-  await b.page.mouse.click(640, 360);
-  await b.page.keyboard.press("ShiftLeft");
+  await enter(b);
   await at(b);
   gb = await waitFor(b, (s) => s.shuffleboard.opponent && !s.shuffleboard.waiting_for_start, {
     what: "b to get the game again",

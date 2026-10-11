@@ -1,6 +1,6 @@
 // Two players at the dartboard (client/src/darts): seats, the thrower's hand seen by the other,
 // darts scored alike on both boards, turns passing, a reload mid-game, and someone leaving.
-import { check, player, run, sleep, state, use, waitFor } from "./lib.mjs";
+import { check, enter, player, run, sleep, state, use, waitFor } from "./lib.mjs";
 
 const room = `e2e-darts-${Date.now()}`;
 const game = async (it) => (await state(it)).darts;
@@ -61,9 +61,7 @@ await run("darts, two players", async () => {
   check((await dart(players, [0, 0])) === b, "b throws a bull");
   // b reloads mid-turn, and gets the game back from a.
   await b.page.reload({ waitUntil: "load" });
-  await waitFor(b, (s) => s.mode === "Walking", { what: "b's bar to load", timeout: 60000 });
-  await b.page.mouse.click(640, 360);
-  await b.page.keyboard.press("ShiftLeft");
+  await enter(b);
   await at(b);
   gb = await waitFor(b, (s) => s.darts.opponent && !s.darts.waiting_for_start, {
     what: "b to get the game again",

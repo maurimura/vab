@@ -1,11 +1,14 @@
 //! Everyone else in the bar room, as the page hears about them (web/room.js): each walks to
 //! where the room last said they are. The player's own position goes out through `roomMove`.
-//! Everyone, the player too, has their name above their head.
+//! Everyone, the player too, has their name above their head, and looks as they picked: the page
+//! puts their clothes together into a picture (web/avatar.js) that becomes their sprite.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 
+use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::sprite::Anchor;
 use wasm_bindgen::prelude::*;
 
@@ -20,7 +23,7 @@ const UPDATE: f32 = 0.1;
 /// Further than this and they jump there (they sat down, or the connection dropped for a bit).
 const SNAP: f32 = 48.0;
 /// Where a name sits: a little above a character's head, in world pixels from their feet.
-const NAME_HEIGHT: f32 = 28.0;
+const NAME_HEIGHT: f32 = 36.0;
 
 enum Update {
     Moved {
@@ -29,6 +32,12 @@ enum Update {
         flip: bool,
         name: String,
     },
+    /// How they look now: a picture `width` pixels wide, RGBA.
+    Look {
+        id: u32,
+        width: u32,
+        pixels: Vec<u8>,
+    },
     Left(u32),
     Reset,
 }
@@ -36,6 +45,7 @@ enum Update {
 thread_local! {
     static UPDATES: RefCell<Vec<Update>> = const { RefCell::new(Vec::new()) };
     static OWN_NAME: RefCell<Option<String>> = const { RefCell::new(None) };
+    static OWN_LOOK: RefCell<Option<(u32, Vec<u8>)>> = const { RefCell::new(None) };
 }
 
 /// Called by index.html when a player shows up, moves or changes name; `x`, `y` are their feet
@@ -57,6 +67,19 @@ pub fn player_moved(id: u32, x: f32, y: f32, flip: bool, name: String) {
 #[wasm_bindgen]
 pub fn own_name(name: String) {
     OWN_NAME.set(Some(name));
+}
+
+/// Called by index.html with how a player looks, when they show up and when they change it: a
+/// picture `width` pixels wide, RGBA, feet at the bottom middle.
+#[wasm_bindgen]
+pub fn player_look(id: u32, width: u32, pixels: Vec<u8>) {
+    UPDATES.with_borrow_mut(|updates| updates.push(Update::Look { id, width, pixels }));
+}
+
+/// The same for the player.
+#[wasm_bindgen]
+pub fn own_look(width: u32, pixels: Vec<u8>) {
+    OWN_LOOK.set(Some((width, pixels)));
 }
 
 #[wasm_bindgen]
@@ -84,7 +107,14 @@ impl Plugin for RoomPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (apply_updates, walk_others, name_player, place_names).chain(),
+            (
+                apply_updates,
+                walk_others,
+                name_player,
+                dress_player,
+                place_names,
+            )
+                .chain(),
         )
         // The pinball machine fills the screen without covering the interface, as the other
         // games' screens do: the names above the players' heads hide while it's up.
@@ -141,11 +171,33 @@ fn spawn_name(commands: &mut Commands, name: String) -> Entity {
         .id()
 }
 
+/// A look's picture as an image, if it is one.
+fn picture(width: u32, pixels: Vec<u8>) -> Option<Image> {
+    let height = (pixels.len() as u32).checked_div(width * 4)?;
+    (height > 0 && pixels.len() as u32 == width * height * 4).then(|| {
+        Image::new(
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            pixels,
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::RENDER_WORLD,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn apply_updates(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
     zoom: Res<Zoom>,
     mut others: Local<HashMap<u32, Entity>>,
+    // How each looks, kept for whoever the room hasn't said is somewhere yet.
+    mut looks: Local<HashMap<u32, Handle<Image>>>,
     mut query: Query<(&mut Other, &mut Sprite, &NameTag)>,
     mut names: Query<&mut Text, With<NameText>>,
 ) {
@@ -172,8 +224,11 @@ fn apply_updates(
                     commands.entity(entity).insert(Other { feet, target: feet });
                     continue;
                 }
-                let mut sprite = Sprite::from_image(asset_server.load("characters/player.png"));
-                sprite.color = tint(id);
+                let image = looks
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| asset_server.load("characters/player.png"));
+                let mut sprite = Sprite::from_image(image);
                 sprite.flip_x = flip;
                 let tag = NameTag(spawn_name(&mut commands, name));
                 let entity = commands
@@ -187,12 +242,29 @@ fn apply_updates(
                     .id();
                 others.insert(id, entity);
             }
+            Update::Look { id, width, pixels } => {
+                let Some(image) = picture(width, pixels) else {
+                    continue;
+                };
+                let image = images.add(image);
+                if let Some(&entity) = others.get(&id) {
+                    // Through commands: they may have been spawned in this same batch.
+                    let changed = image.clone();
+                    commands
+                        .entity(entity)
+                        .entry::<Sprite>()
+                        .and_modify(move |mut sprite| sprite.image = changed);
+                }
+                looks.insert(id, image);
+            }
             Update::Left(id) => {
+                looks.remove(&id);
                 if let Some(entity) = others.remove(&id) {
                     despawn_with_name(&mut commands, entity, &query);
                 }
             }
             Update::Reset => {
+                looks.clear();
                 for (_, entity) in others.drain() {
                     despawn_with_name(&mut commands, entity, &query);
                 }
@@ -229,6 +301,17 @@ fn name_player(
             commands.entity(entity).insert(tag);
         }
     }
+}
+
+/// Dresses the player as they picked, when they go in and when they change it.
+fn dress_player(mut images: ResMut<Assets<Image>>, mut player: Single<&mut Sprite, With<Player>>) {
+    let Some(image) = OWN_LOOK
+        .take()
+        .and_then(|(width, pixels)| picture(width, pixels))
+    else {
+        return;
+    };
+    player.image = images.add(image);
 }
 
 /// Keeps each name centered above its character's head.
@@ -269,7 +352,7 @@ fn walk_others(time: Res<Time>, zoom: Res<Zoom>, mut others: Query<(&mut Other, 
     }
 }
 
-/// A color per player, so they can tell each other apart until there are real characters.
+/// A color per player, for telling who's who in the voice panel (voice.rs).
 pub fn tint(id: u32) -> Color {
     Color::hsl((id % 360) as f32, 0.7, 0.75)
 }

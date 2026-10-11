@@ -24,7 +24,7 @@ const DIM: Color = Color::srgba(1.0, 1.0, 1.0, 0.6);
 
 /// What to press, and what it does. Short enough not to wrap: keys are padded into a column
 /// (the font is monospaced).
-const IN_THE_BAR: [(&str, &str); 9] = [
+const IN_THE_BAR: [(&str, &str); 10] = [
     ("Arrows / W A S D", "Walk"),
     ("Shift", "Run"),
     ("E", "Play the cabinet or table you're next to"),
@@ -33,6 +33,7 @@ const IN_THE_BAR: [(&str, &str); 9] = [
     ("Shift+1-8", "Mute player 1-8 (or click them)"),
     ("Y", "Chat (Enter sends)"),
     ("/name Mauri", "Set your name, in the chat"),
+    ("/look", "Change what you wear, in the chat"),
     ("/help", "These controls, in the chat"),
 ];
 const AT_A_CABINET: [(&str, &str); 5] = [
@@ -44,12 +45,13 @@ const AT_A_CABINET: [(&str, &str); 5] = [
 ];
 const KEY_COLUMN: usize = 18;
 /// The same on a touch screen, short enough for a phone held upright.
-const IN_THE_BAR_TOUCH: [(&str, &str); 5] = [
+const IN_THE_BAR_TOUCH: [(&str, &str); 6] = [
     ("Drag", "Walk"),
     ("Play", "The cabinet or table by you"),
     ("Watch", "Watch the game there"),
     ("Chat", "Talk to the bar"),
     ("/name Mauri", "Set your name, in chat"),
+    ("/look", "Change what you wear, in chat"),
 ];
 const AT_A_CABINET_TOUCH: [(&str, &str); 5] = [
     ("Coin", "Insert a coin"),
