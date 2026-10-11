@@ -11,13 +11,14 @@
 //! The aim goes out with the buttons, in the high half of the same u32. Two players at its twin
 //! cabinet (`linked`) each aim on their own screen: each browser runs that player's own board.
 //!
-//! At a driving game (`wheel`: Out Run, Cruis'n USA) the arrows turn a steering wheel, in the
-//! worker (web/emulator/wheel.js). `/wheel` in the chat shows how it turns and tries other
-//! numbers (`/wheel lock=0.5 back=0.1 curve=2`), for this player alone and for as long as the
-//! page is open, to find the ones for assets/games.ron.
+//! Which key presses which of the game's buttons is the player's to change, game by game, in
+//! the controls panel (Tab: controls.rs). At a driving game (`wheel`: Out Run, Cruis'n USA)
+//! the steering keys turn a steering wheel, in the worker (web/emulator/wheel.js), as the
+//! player has it turn in the panel. `/wheel` in the chat shows how it turns and changes it with
+//! numbers (`/wheel lock=0.5 back=0.1 curve=2`), as the panel does, and prints the line for
+//! assets/games.ron.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -29,11 +30,14 @@ use world::{Game, Wheel};
 
 use crate::Mode;
 use crate::chat::{Chat, TuneWheel, chat_closed};
+use crate::controls::{Controls, Gear, LEFT, RIGHT};
 use crate::settings::Settings;
 use crate::touch::{self, Touch, TouchButton};
+use crate::voice::SEAT_KEYS;
 
-/// Keys and the RetroPad button ids (libretro.h) they press. FBNeo maps MK's panel to
-/// A S D = high punch, high kick, block and Z X C = low punch, low kick, block.
+/// Keys and the RetroPad button ids (libretro.h) they press, unless the player put a game's
+/// buttons on others (controls.rs). FBNeo maps MK's panel to A S D = high punch, high kick,
+/// block and Z X C = low punch, low kick, block.
 pub const KEYS: [(KeyCode, u16); 12] = [
     (KeyCode::ArrowUp, 4),
     (KeyCode::ArrowDown, 5),
@@ -138,8 +142,10 @@ pub struct PlayingGame {
     pub watching: bool,
     /// A lightgun game: the player aims (world::Game).
     pub gun: bool,
-    /// A driving game: how the arrows turn its wheel, as the player has it now.
+    /// A driving game: how the steering keys turn its wheel, as the player has it now, and as
+    /// assets/games.ron has it.
     pub wheel: Option<Wheel>,
+    pub usual_wheel: Option<Wheel>,
 }
 
 impl PlayingGame {
@@ -151,18 +157,6 @@ impl PlayingGame {
     /// The player steers a wheel the arrows turn (not when watching).
     pub fn steers(&self) -> bool {
         self.wheel.is_some() && !self.watching
-    }
-}
-
-/// Wheels tuned with `/wheel`, by ROM set: the game's next time too, until the page reloads.
-#[derive(Resource, Default)]
-pub struct WheelTuning(HashMap<String, Wheel>);
-
-impl WheelTuning {
-    /// How the arrows turn `game`'s wheel: as tuned, or as assets/games.ron has it.
-    pub fn wheel(&self, game: &Game) -> Option<Wheel> {
-        let tuned = self.0.get(&game.rom).copied();
-        game.wheel.map(|wheel| tuned.unwrap_or(wheel))
     }
 }
 
@@ -221,6 +215,14 @@ fn to_json(wheel: &Wheel) -> String {
     serde_json::to_string(wheel).unwrap_or_default()
 }
 
+/// Has the steering keys turn the wheel of the driving game being played as `wheel` does, from
+/// the next frame on. Only this player's wheel turns otherwise: it goes to the others in the
+/// input, already turned.
+pub fn turn_wheel(game: &mut PlayingGame, wheel: Wheel) {
+    game.wheel = Some(wheel);
+    emulator_wheel(&to_json(&wheel));
+}
+
 /// How the page and the room name a cabinet: its cell, "x,y".
 pub fn cabinet_id(cell: IVec2) -> String {
     format!("{},{}", cell.x, cell.y)
@@ -232,7 +234,6 @@ impl Plugin for EmulatorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Aim>()
             .init_resource::<Sent>()
-            .init_resource::<WheelTuning>()
             .add_systems(Update, tune_wheel)
             .add_systems(OnEnter(Mode::Playing), show_screen)
             .add_systems(
@@ -365,7 +366,7 @@ fn show_screen(
             ),
         ],
     ));
-    if game.is_some_and(|game| game.aims()) {
+    if game.as_ref().is_some_and(|game| game.aims()) {
         // A ring with a dot, white edged in black so it shows on any picture; placed by `aim`.
         let edge = Outline::new(Val::Px(1.0), Val::ZERO, Color::BLACK);
         overlay.with_child((
@@ -398,7 +399,8 @@ fn show_screen(
         ));
     }
     if touch.is_on() {
-        // In the corner, left of the page's Chat button (web/index.html).
+        // In the corner, left of the page's Chat button (web/index.html), with the controls
+        // panel's gear left of it (controls.rs).
         overlay.with_child((
             Node {
                 position_type: PositionType::Absolute,
@@ -413,7 +415,7 @@ fn show_screen(
 }
 
 /// How much of the top of a phone held upright is kept for the status line and Leave.
-const TOP_BAR: f32 = 52.0;
+pub const TOP_BAR: f32 = 52.0;
 
 /// Makes the screen as big as fits: the window's height, or its width in a window taller than
 /// the game's monitor.
@@ -498,8 +500,11 @@ fn show_status(mut status: Single<&mut Text, With<Status>>) {
 
 /// At a lightgun game, follows the mouse (or a finger) over the screen: where it aims, the
 /// crosshair there, and the pointer hidden over the screen.
+#[allow(clippy::too_many_arguments)]
 fn aim(
     game: Option<Res<PlayingGame>>,
+    controls: Res<Controls>,
+    gear: Query<&Interaction, With<Gear>>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut cursor: Query<&mut CursorOptions, With<PrimaryWindow>>,
     touch: Res<Touch>,
@@ -529,7 +534,13 @@ fn aim(
             )
         })
         .map(|from_middle| from_middle / size + Vec2::splat(0.5));
-    aim.on_screen = on.is_some_and(|at| at.cmpge(Vec2::ZERO).all() && at.cmple(Vec2::ONE).all());
+    // With the controls panel up, or on its gear, the pointer is for that, and shows.
+    let on_gear = gear
+        .iter()
+        .any(|interaction| *interaction != Interaction::None);
+    aim.on_screen = !controls.is_open()
+        && !on_gear
+        && on.is_some_and(|at| at.cmpge(Vec2::ZERO).all() && at.cmple(Vec2::ONE).all());
     aim.finger = touch.is_on() && aim.on_screen;
     // The mouse off the screen aims at its nearest edge; a finger off it (on the black around
     // the game) doesn't aim.
@@ -570,19 +581,23 @@ fn send_input(
     mouse: Res<ButtonInput<MouseButton>>,
     chat: Res<Chat>,
     settings: Res<Settings>,
+    controls: Res<Controls>,
     touch: Res<Touch>,
     game: Option<Res<PlayingGame>>,
     aim: Res<Aim>,
     mut sent: ResMut<Sent>,
 ) {
-    // While typing in the chat or tuning settings, the player's hands are off the controls.
-    // Shift with a number mutes a player (voice.rs), so it isn't Start or a coin.
-    let busy = chat.is_open() || settings.is_open();
+    // While typing in the chat, tuning settings or putting a button on a key, the player's
+    // hands are off the controls. With the controls panel up, the steering keys still turn the
+    // wheel, to try it. Shift with a number mutes a player (voice.rs), so it isn't a button.
+    let busy = chat.is_open() || settings.is_open() || controls.is_binding();
+    let trying = controls.is_open();
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
-    let mut mask = KEYS
+    let bindings = game.as_ref().map_or(KEYS, |game| controls.keys(&game.rom));
+    let mut mask = bindings
         .iter()
-        .filter(|(key, _)| !busy && keys.pressed(*key))
-        .filter(|(key, _)| !(shift && matches!(key, KeyCode::Digit1 | KeyCode::Digit5)))
+        .filter(|(key, id)| !busy && (!trying || matches!(*id, LEFT | RIGHT)) && keys.pressed(*key))
+        .filter(|(key, _)| !(shift && SEAT_KEYS.contains(key)))
         .fold(touch.pad(), |mask, (_, id)| mask | 1 << id);
     let mut input = 0;
     if game.is_some_and(|game| game.aims()) {
@@ -590,10 +605,10 @@ fn send_input(
         // as it's down.
         let shoot = aim.finger || (aim.on_screen && mouse.pressed(MouseButton::Left));
         let pedal = mouse.pressed(MouseButton::Right) || keys.pressed(KeyCode::Space);
-        if shoot && !busy {
+        if shoot && !busy && !trying {
             mask |= 1 << TRIGGER;
         }
-        if pedal && !busy {
+        if pedal && !busy && !trying {
             mask |= 1 << PEDAL;
         }
         input = aim.bits();
@@ -606,14 +621,14 @@ fn send_input(
     }
 }
 
-/// `/wheel` in the chat: shows how the arrows turn the wheel of the driving game being played,
-/// and with numbers (`lock=0.5 back=0.1 curve=2`, any of them) turns it so from now on. Only
-/// this player's wheel turns otherwise: it goes to the others in the input, already turned.
+/// `/wheel` in the chat: shows how the steering keys turn the wheel of the driving game being
+/// played, and with numbers (`lock=0.5 back=0.1 curve=2`, any of them) turns it so from now on,
+/// as the controls panel does, and keeps it so for next time.
 fn tune_wheel(
     mut asked: MessageReader<TuneWheel>,
     mode: Res<State<Mode>>,
     mut game: Option<ResMut<PlayingGame>>,
-    mut tuning: ResMut<WheelTuning>,
+    mut controls: ResMut<Controls>,
     mut chat: ResMut<Chat>,
     time: Res<Time>,
 ) {
@@ -621,7 +636,7 @@ fn tune_wheel(
         let playing = *mode.get() == Mode::Playing;
         let driving = game.as_deref_mut().filter(|game| playing && !game.watching);
         let said = match driving.and_then(|game| Some((game.wheel?, game))) {
-            Some((wheel, game)) => tune(game, wheel, settings, &mut tuning),
+            Some((wheel, game)) => tune(game, wheel, settings, &mut controls),
             None => "* /wheel tunes the steering of a driving game (Out Run, Cruis'n USA), \
                      sitting at it."
                 .to_string(),
@@ -631,12 +646,12 @@ fn tune_wheel(
 }
 
 /// What `/wheel <settings>` does to the `wheel` of the driving game being played, and says.
-fn tune(game: &mut PlayingGame, wheel: Wheel, settings: &str, tuning: &mut WheelTuning) -> String {
+fn tune(game: &mut PlayingGame, wheel: Wheel, settings: &str, controls: &mut Controls) -> String {
     if settings.trim().is_empty() {
         return format!(
             "* {}'s wheel: {} (seconds to full lock held, seconds back to the middle let go; \
-             curve 1 turns evenly, 2 barely for a tap). /wheel lock=0.5 changes any of them. \
-             For games.ron: {}",
+             curve 1 turns evenly, 2 barely for a tap). /wheel lock=0.5 changes any of them, \
+             or Tab. For games.ron: {}",
             game.title,
             wheel.ramp(),
             wheel.to_ron()
@@ -645,11 +660,11 @@ fn tune(game: &mut PlayingGame, wheel: Wheel, settings: &str, tuning: &mut Wheel
     match wheel.tuned(settings) {
         Err(error) => format!("* {error}. E.g. /wheel lock=0.6 back=0.1 curve=2"),
         Ok(tuned) => {
-            game.wheel = Some(tuned);
-            tuning.0.insert(game.rom.clone(), tuned);
-            emulator_wheel(&to_json(&tuned));
+            controls.set_game_wheel(&game.rom, tuned, game.usual_wheel);
+            controls.keep();
+            turn_wheel(game, tuned);
             format!(
-                "* {}'s wheel now: {} (until the page reloads). For games.ron: {}",
+                "* {}'s wheel now: {} (kept for next time). For games.ron: {}",
                 game.title,
                 tuned.ramp(),
                 tuned.to_ron()

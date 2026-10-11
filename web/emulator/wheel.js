@@ -17,7 +17,8 @@
 // one) straight ahead. So every machine that runs the frame (a watcher's, a rollback running it
 // again) turns the game's wheel the same, whatever state it started from, and the ramp is the
 // local player's business alone: `/wheel` in the chat changes it ("wheel" in worker.js) without
-// any other machine knowing.
+// any other machine knowing. world::Wheel::turn turns a wheel the same way, for the controls
+// panel's in the bar, where no game runs (client/src/controls.rs): change both together.
 
 export const WHEEL_LOCK = 127;
 const LEFT = 1 << 6;

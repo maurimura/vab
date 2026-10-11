@@ -12,6 +12,7 @@ use world::{Game, Map, cell_to_world, games_from_ron};
 
 use crate::Mode;
 use crate::chat::chat_closed;
+use crate::controls::Controls;
 use crate::emulator;
 use crate::help::help_closed;
 use crate::nearby::{self, Kind, Nearby, Use, hint_label, place_hint};
@@ -19,7 +20,7 @@ use crate::settings::settings_closed;
 use crate::touch::{Touch, TouchButton};
 
 /// The games cabinets can run, built into the client like the map.
-const GAMES: &str = include_str!("../../assets/games.ron");
+pub const GAMES: &str = include_str!("../../assets/games.ron");
 /// Where the hint sits: a little above a cabinet's top, in world pixels from its cell.
 const HINT_HEIGHT: f32 = 44.0;
 
@@ -139,7 +140,7 @@ fn play(
     touch: Res<Touch>,
     cabinets: Res<Cabinets>,
     nearby: Res<Nearby>,
-    tuning: Res<emulator::WheelTuning>,
+    controls: Res<Controls>,
     mut mode: ResMut<NextState<Mode>>,
 ) {
     let sit = keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Play);
@@ -155,8 +156,8 @@ fn play(
         return;
     };
     let watching = what == Use::Watch;
-    // A driving game's wheel turns as tuned with `/wheel`, if it was.
-    let wheel = tuning.wheel(game);
+    // A driving game's wheel turns as the player has it (controls.rs).
+    let wheel = controls.wheel(&game.rom, game.wheel);
     if watching {
         emulator::watch(*cell, game);
     } else {
@@ -168,6 +169,7 @@ fn play(
         watching,
         gun: game.gun,
         wheel,
+        usual_wheel: game.wheel,
     });
     mode.set(Mode::Playing);
 }

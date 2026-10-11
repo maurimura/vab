@@ -11,6 +11,11 @@ at a cabinet, a table or the dartboard, as does E once every seat is taken (see
 opens the chat for everyone in the room; `/name <name>` there sets the name shown above your head,
 and a cookie keeps it. The controls show on a first visit and with `/help`; when a game starts, a
 card lists its buttons as the game names them (the core reports them, e.g. "Z  Low Punch").
+The gear in the top right corner (or `/controls` in the chat) opens the controls panel, which
+changes your name (as `/name` does) and puts the buttons on other keys: in the bar for every
+game, at a cabinet (Tab there too) for that game alone, over every game's; both tune the driving
+games' wheel (see
+[Steering with the arrows](#steering-with-the-arrows)).
 
 E next to the pool table plays 8-ball: the table seen from above, the cue following the mouse
 (or a finger) around the cue ball. Holding the button pulls the cue back, further the longer
@@ -57,8 +62,8 @@ watches.
 Cruis'n USA (Midway V-Unit, 1994; MAME's `crusnusa41`, v4.1) is one player's: the next to press
 E watches. The arrows drive, as at Daytona USA: Left and Right turn a steering wheel as at Out
 Run (a tap barely turns it, a hold takes it to full lock in 0.6 s, and let go it's back in the
-middle in 0.1 s; `/wheel` in the chat tunes that: see
-[Steering with the arrows](#steering-with-the-arrows-out-run-cruisn-usa)), Up is the gas and
+middle in 0.1 s; Tab there tunes that: see
+[Steering with the arrows](#steering-with-the-arrows)), Up is the gas and
 Down the brake (MAME's own handling of a pedal on keys, 0.9 s to the floor). Z and X shift down
 and up, which matters with the manual transmission the game offers before each race (the
 automatic is the default); A, S and D are its three views and C the radio. Its menus are "turn
@@ -287,9 +292,9 @@ link is set at power-on, for now.
 A player's input for a frame, what GGRS sends and confirms and the watchers get, is 32 bits: the
 RetroPad's buttons in the low 16 (bit `1 << id`, ids from libretro.h), and at a lightgun game
 where the gun points in the high 16, 8 bits across the screen (0 its left edge, 255 its right)
-and 8 down (0 the top); at a driving game (Out Run, Cruis'n USA) bits 16-23 are where its wheel
+and 8 down (0 the top); at a driving game (Out Run, Cruis'n USA, Daytona USA, Sega Rally) bits 16-23 are where its wheel
 is turned, a signed byte, which the worker works out from the player's arrows (see
-[Steering with the arrows](#steering-with-the-arrows-out-run-cruisn-usa)).
+[Steering with the arrows](#steering-with-the-arrows)).
 Other games leave those 0. The emulator worker answers the core's RetroPad from the low half
 and, at a lightgun game only, its lightgun from both, at a driving game its wheel from bits 16-23
 (`web/emulator/libretro.js`).
@@ -394,7 +399,7 @@ its stream to a watcher. FBNeo toggles the gear when the shifter input differs f
 before's, which its states left out (`emulator/patches/burn-shift-state.patch`). Its cabinet skin
 is still to come: it stands in a plain cabinet next to Daytona USA's in `assets/maps/bar.ron`.
 
-### Steering with the arrows (Out Run, Cruis'n USA)
+### Steering with the arrows
 
 A driving cabinet has a wheel, a keyboard two arrows, and the cores' own answers to arrows are
 far too quick for a tap: FBNeo's "fake digital" Left and Right put Out Run's wheel at full lock
@@ -426,6 +431,15 @@ same way, so `span` is `assets/games.ron`'s alone.
 | --- | --- | --- | --- | --- |
 | Out Run | 0.3 s | 0.3 s | 1 | (10600, 23500) |
 | Cruis'n USA | 0.6 s | 0.1 s | 2 | (5200, 28900) |
+| Daytona USA, Sega Rally | 0.4 s | 0.14 s | 2 | the whole stick |
+
+Daytona USA's and Sega Rally's cores turned their wheel themselves from Left and Right (a ramp
+in their shims, slow for a quarter second and then fast); with `"steer": "wheel"` among their
+`options` they read the bar's wheel from the stick instead, so the controls panel's numbers and
+its drawing are theirs too. Their numbers keep the old feel: a short hold still lands in
+Daytona USA's ADVANCED band at the circuit select (the wheel at +16 to +64 of 96), a longer one
+EXPERT, and an arcade cabinet's watchers get the wheel with its buttons (the worker's
+`watch-frames` carry 24 bits of controls a frame).
 
 Out Run's wheel turns as it did, 7 of 127 a frame. Cruis'n USA's, measured in Node from a race
 at 121 mph, Right held, against the gas alone (the car's place across the road, in the game's
@@ -446,14 +460,30 @@ over a few frames (0.22 s from the middle to full lock when the wheel jumps ther
 `span`, (5200, 28900), which puts the curve where the game turns; over the whole stick a hold
 turned nothing for its first 0.18 s, and a 6-frame tap not at all.
 
+These are the game's numbers; each player can have their own, in the controls panel
+(`client/src/controls.rs`). The gear in the top right corner (or `/controls` in the chat)
+opens it: in the bar for every game, at a cabinet (Tab there too) for that game alone, over
+every game's:
+what a game doesn't set is as every game has it, and what every game doesn't as the game comes.
+Any button goes on another key there (Enter, then the key; a button that had it gets the old
+one), and the wheel's three numbers change with - and +, next to the wheel itself, drawn turned
+as far as it is, with a trace of its last two seconds and a line saying what a 0.1 s tap and a
+hold come to. At a game it's the game's wheel as the worker has it, which the steering keys
+still turn while the panel is up; in the bar, where no game runs, the panel turns one of its own
+the same way (`world::Wheel::turn`, wheel.js's twin), so a tap or a hold can be tried and seen
+either way. Every game's wheel starts as the first driving game's (Out Run's) and, once
+changed, is every driving game's. While driving, a small wheel in the corner shows the wheel too
+(the panel turns it off). What a player sets is kept in their browser (localStorage), and R in
+the panel puts back what it sets: a game's as every game's, every game's as they come. It all
+stays at this player's machine: the others get the wheel already turned, in the input, so
+nothing online can drift apart.
+
 `/wheel` in the chat, while driving, shows the wheel's numbers, and with any of them
-(`/wheel lock=0.5 back=0.15 curve=1.5`) turns it so from the next frame: at this player's
-machine only (the others get the wheel already turned, in the input, so nothing online can drift
-apart), and at that game until the page reloads. Its answer ends with the game's line for
-`assets/games.ron`. To find a game's numbers: sit at it, drive a few bends, change one number at
-a time (a tap should nudge the car over, a hold take a bend, letting go straighten it as fast as
-the game wants), then paste the last answer's `wheel: Some(...)` over the game's in
-`assets/games.ron`.
+(`/wheel lock=0.5 back=0.15 curve=1.5`) changes them as the panel does. Its answer ends with
+the game's line for `assets/games.ron`. To find a game's numbers for everyone: sit at it, drive
+a few bends, change one number at a time (a tap should nudge the car over, a hold take a bend,
+letting go straighten it as fast as the game wants), then `/wheel` and paste its
+`wheel: Some(...)` over the game's in `assets/games.ron`.
 ## Virtua Tennis
 
 Virtua Tennis (Sega NAOMI, 1999; Power Smash in Japan) runs on its own core, `flycast/`
