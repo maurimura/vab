@@ -44,11 +44,15 @@ export const G = {
   scoop: [16.0, 13.75],
   bullLane: { x0: 16.55, y0: 18.6, y1: 22.3 },
   captive: [17.6, 21.0],
-  slingL: [[3.4, 30.6], [3.4, 34.4], [5.75, 36.2]],
-  slingR: [[15.6, 30.6], [15.6, 34.4], [13.25, 36.2]],
+  // Round the flippers (the right side mirrors the left): each inlane's guide runs into the
+  // flipper along the line of its top at rest, so a ball rolls from one onto the other, and the
+  // slingshot sits far enough above that line for a ball to pass under it. Outlanes are 1.4
+  // inches wide, inlanes 1.35: a ball is 1.06.
+  slingL: [[3.74, 30.6], [3.74, 33.83], [6.14, 35.22]],
+  slingR: [[15.26, 30.6], [15.26, 33.83], [12.86, 35.22]],
   flipL: [6.15, 37.6], flipR: [12.85, 37.6],
-  sepL: [[1.85, 30.6], [1.85, 35.0], [2.3, 36.1], [3.6, 37.2], [5.6, 38.05]],
-  sepR: [[17.15, 30.6], [17.15, 35.0], [16.7, 36.1], [15.4, 37.2], [13.4, 38.05]],
+  sepL: [[1.91, 30.6], [1.91, 34.3], [2.35, 35.14], [5.96, 37.225]],
+  sepR: [[17.09, 30.6], [17.09, 34.3], [16.65, 35.14], [13.04, 37.225]],
   star: [9.5, 27.4],
   nB,
 };
@@ -181,9 +185,15 @@ function wallItem(pts, w = 0.25, h = 1.1, style = WOOD) {
 }
 wallItem([[0.2, 9.8], [0.2, 44.2]], 0.4, 1.15);
 wallItem([[20.1, 9.8], [20.1, 44.2]], 0.3, 1.15);
-wallItem([[18.72, 9.4], [18.72, 44.2]], 0.25, 1.1);
+// The shooter lane: right of its wall, below the wall's top (where its gate is).
+const SHOOTER = { x: 18.72, top: 10.1 };
+PHYS.shooter = SHOOTER;
+wallItem([[SHOOTER.x, SHOOTER.top], [SHOOTER.x, 44.2]], 0.25, 1.1);
 wallItem(G.orbitWall, 0.25, 1.1);
 wallItem([[G.lane.x0, G.lane.y0], [G.lane.x0, G.lane.y1]], 0.26, 1.1);
+// From the ramp's side to the top of the doors' lane: a ball coming down there rolls on into
+// the lane, not to a stop between the two.
+wallItem([[7.15, 17.3], [G.lane.x0, G.lane.y0]], 0.24, 1.1);
 wallItem([[G.lane.x1, G.lane.y0], [G.lane.x1, G.lane.y1]], 0.26, 1.1);
 wallItem([[G.bullLane.x0, G.bullLane.y0], [G.bullLane.x0, G.bullLane.y1]], 0.25, 1.1);
 add(22.3, (g) => {
@@ -198,8 +208,8 @@ add(22.3, (g) => {
 }, { name: "bull-pen" });
 wallItem(G.sepL, 0.22, 1.0);
 wallItem(G.sepR, 0.22, 1.0);
-wallItem([[5.6, 38.05], [6.6, 40.1]], 0.22, 0.9);
-wallItem([[13.4, 38.05], [12.4, 40.1]], 0.22, 0.9);
+wallItem([[5.96, 37.225], [6.6, 40.1]], 0.22, 0.9);
+wallItem([[13.04, 37.225], [12.4, 40.1]], 0.22, 0.9);
 // arch: steel band
 add(-5, (g) => {
   const outer = arcPts(ARCH.cx, ARCH.cy, ARCH.r + 0.1, 180, 360, 64);
@@ -219,9 +229,6 @@ rubberPost(null, 7.6, 24.6, C.orange);
 rubberPost(null, 11.6, 24.4, C.orange);
 rubberPost(null, 16.55, 22.45 + 0.0);
 rubberPost(null, 18.3, 22.6);
-rubberPost(30.7, 1.85, 30.5, C.orange);
-rubberPost(30.7, 17.15, 30.5, C.orange);
-rubberPost(null, 9.1, 7.3, C.orange);
 rubberPost(null, 16.4, 11.1, C.orange);
 
 // ---------------------------------------------------------------- cactus slingshots
@@ -460,7 +467,12 @@ add(9.6, (g) => {
   const top = RP[RP.length - 1];
   const lx = RL[RL.length - 1][0] - 0.35, rx = RR[RR.length - 1][0] + 0.35, y = top[1] - 0.2;
   const rocks = [[lx - 0.7, y - 0.9, 1.15], [rx + 0.8, y - 1.1, 1.25], [lx + 0.5, y - 1.6, 1.2], [rx - 0.4, y - 1.8, 1.3], [(lx + rx) / 2, y - 2.3, 1.35]];
-  for (const [x, yy, r] of rocks) PHYS.blocks.push({ name: "mine", points: arcPts(x, yy, r * 0.8, 0, 360, 10).slice(0, 10) });
+  // Round, for the physics: a ball can't come to rest on one.
+  PHYS.rocks = rocks.map(([x, yy, r]) => ({ x, y: yy, r: r * 0.8 }));
+  // The pile's upper boulders, up against the orbit's wall: they slope down to the right, so a
+  // ball that lands on them rolls off out of the corner.
+  const up = (deg, r = 7.95) => [ARCH.cx + r * Math.cos((deg * Math.PI) / 180), ARCH.cy + r * Math.sin((deg * Math.PI) / 180)];
+  PHYS.blocks.push({ name: "mine", points: [up(203), up(219), up(235), [6.2, 4.5], [4.4, 7.2]] });
   // The portal itself, over the ramp's top.
   PHYS.blocks.push({ name: "mine", points: [[lx, y - 0.6], [rx, y - 0.6], [rx, y + 0.25], [lx, y + 0.25]] });
   PHYS.mineExit = [rx + 1.7, y + 1.1];
@@ -584,7 +596,9 @@ G.posters.forEach(([x, y], i) => add(y, (g) => {
 }
 
 // ---------------------------------------------------------------- piano with the scoop in front of the keys
-PHYS.blocks.push({ name: "piano", points: [[G.piano.x0, G.piano.y0], [G.piano.x1, G.piano.y0], [G.piano.x1, G.piano.y1], [G.piano.x0, G.piano.y1]] });
+// Its back slopes a little (under its lid), so a ball that lands behind it rolls off to the
+// left, by the scoop, rather than resting against it.
+PHYS.blocks.push({ name: "piano", points: [[G.piano.x0, G.piano.y0 + 0.35], [G.piano.x1, G.piano.y0 - 0.2], [G.piano.x1, G.piano.y1], [G.piano.x0, G.piano.y1]] });
 add(15.9, (g) => {
   const { x0, x1, y0, y1, h } = G.piano;
   const box = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
@@ -638,6 +652,9 @@ add(18.75, (g) => {
   }
 }, { name: "bull-chute" });
 SH.blobs.push([17.7, 18.3, 1.5, 0.6]);
+// The bull and its chute close the pen: a ball coming down behind them rolls off their backs to
+// the left, out past the pen.
+PHYS.blocks.push({ name: "bull", points: [[16.6, 18.75], [18.65, 18.75], [18.65, 16.9], [17.6, 17.3], [16.6, 18.2]] });
 if (!EXPORT) add(G.captive[1], (g) => ball(g, ...G.captive));
 
 // ---------------------------------------------------------------- the sheriff and the outlaw
@@ -659,20 +676,41 @@ add(7.3, (g) => {
 }, { name: "outlaw" });
 
 // ---------------------------------------------------------------- inlane/outlane rollovers, gate, plunger
-PHYS.rollovers = [[1.12, 33.2], [2.75, 33.0], [16.25, 33.0], [17.88, 33.2], [1.25, 24.0]].map(([x, y]) => ({ x, y }));
-for (const [x, y] of [[1.12, 33.2], [2.75, 33.0], [16.25, 33.0], [17.88, 33.2], [1.25, 24.0]]) add(y, (g) => {
+const ROLLOVERS = [[1.1, 33.2], [2.7, 33.0], [16.3, 33.0], [17.9, 33.2], [1.25, 24.0]];
+PHYS.rollovers = ROLLOVERS.map(([x, y]) => ({ x, y }));
+for (const [x, y] of ROLLOVERS) add(y, (g) => {
   el("path", { d: projPath(cam, [[x - 0.12, y - 0.5], [x - 0.12, y + 0.5], [x + 0.12, y + 0.5], [x + 0.12, y - 0.5]], 0.07, false), fill: "none", stroke: INK, "stroke-width": 3.6 }, g);
   el("path", { d: projPath(cam, [[x - 0.12, y - 0.5], [x - 0.12, y + 0.5], [x + 0.12, y + 0.5], [x + 0.12, y - 0.5]], 0.07, false), fill: "none", stroke: C.steel, "stroke-width": 1.6 }, g);
 }, { name: "rollover", flat: true });
-PHYS.gate = { x0: 18.85, x1: 20.0, y: 9.55 };
-add(9.6, (g) => {
-  const y = 9.55;
-  el("path", { d: poly([proj(18.85, y, 1.3), proj(20.0, y, 1.3)], false), stroke: INK, "stroke-width": 4 }, g);
-  el("path", { d: poly([proj(18.85, y, 1.3), proj(20.0, y, 1.3)], false), stroke: C.steel, "stroke-width": 2 }, g);
-  const wire = [proj(19.0, y - 0.1, 1.28), proj(19.0, y - 0.3, 0.25), proj(19.85, y - 0.3, 0.25), proj(19.85, y - 0.1, 1.28)];
-  el("path", { d: poly(wire, false), stroke: INK, "stroke-width": 3.4, fill: "none" }, g);
-  el("path", { d: poly(wire, false), stroke: C.steel, "stroke-width": 1.4, fill: "none" }, g);
-}, { name: "gate" });
+// One-way gates: a wire flap hanging from a bar across a lane, that swings only `way`. At the
+// top of the shooter lane it lets the ball out but not back, and slopes so that a ball falling
+// back rolls off it onto the playfield. At the top of the left orbit it lets a ball shot up the
+// orbit go round the top, but stops one coming round the other way (a plunged ball), which drops
+// into the top lanes.
+PHYS.gates = [];
+function gateItem(a, b, way) {
+  PHYS.gates.push({ a, b, way });
+  add(Math.max(a[1], b[1]) + 0.05, (g) => {
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    const along = [(b[0] - a[0]) / len, (b[1] - a[1]) / len];
+    const at = (p, k, off, z) => proj(p[0] + along[0] * k + way[0] * off, p[1] + along[1] * k + way[1] * off, z);
+    el("path", { d: poly([proj(a[0], a[1], 1.3), proj(b[0], b[1], 1.3)], false), stroke: INK, "stroke-width": 4 }, g);
+    el("path", { d: poly([proj(a[0], a[1], 1.3), proj(b[0], b[1], 1.3)], false), stroke: C.steel, "stroke-width": 2 }, g);
+    const wire = [at(a, 0.15, 0.1, 1.28), at(a, 0.15, 0.3, 0.25), at(b, -0.15, 0.3, 0.25), at(b, -0.15, 0.1, 1.28)];
+    el("path", { d: poly(wire, false), stroke: INK, "stroke-width": 3.4, fill: "none" }, g);
+    el("path", { d: poly(wire, false), stroke: C.steel, "stroke-width": 1.4, fill: "none" }, g);
+  }, { name: "gate" });
+}
+// (Its low end just over the top of the lane's wall, so a ball rolls off it, not into it.)
+gateItem([SHOOTER.x - 0.12, SHOOTER.top - 0.1], [19.95, 9.5], [0, -1]);
+{
+  // Across the orbit near its top, from its inner wall to the arch; up the orbit is round the
+  // arch, angles increasing.
+  // Just past the end of its inner wall: a ball it stops slides off it, not into a corner.
+  const deg = 245, a = (deg * Math.PI) / 180;
+  const at = (r) => [ARCH.cx + r * Math.cos(a), ARCH.cy + r * Math.sin(a)];
+  gateItem(at(8.15), at(ARCH.r + 0.05), [-Math.sin(a), Math.cos(a)]);
+}
 // The plunger, pulled back by `pull` inches.
 export const PLUNGER = { pulls: [0, 0.15, 0.3, 0.45, 0.6, 0.75, 0.9, 1.05, 1.2] };
 PHYS.plunger = { x: 19.42, y: 40.6, maxPull: 1.2 };

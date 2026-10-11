@@ -9,7 +9,7 @@
 //! - slingshots and pop bumpers, which kick it away;
 //! - drop targets, which fall when hit, and standup targets, which don't;
 //! - a captive ball in its lane, which the ball knocks up into the bull at the top;
-//! - a one-way gate at the top of the shooter lane.
+//! - one-way gates: at the top of the shooter lane, and of the left orbit.
 //!
 //! It rolls over rollovers and through the swinging doors (which slow it a little), up the ramp
 //! if it's going fast enough (and back down if not), into the scoop if it's going slowly enough
@@ -44,11 +44,15 @@ pub struct Settings {
     pub flipper_bounce: f32,
     pub wall_bounce: f32,
     pub rubber_bounce: f32,
-    /// How hard pop bumpers and slingshots kick the ball (inches per second).
+    /// How fast pop bumpers and slingshots send the ball away (inches per second).
     pub bumper_kick: f32,
     pub sling_kick: f32,
-    /// How fast the plunger launches the ball, pulled all the way back.
+    /// How fast the plunger launches the ball, pulled all the way back. Let go at all, it
+    /// launches it fast enough to clear the gate at the top of the lane.
     pub plunger_speed: f32,
+    /// How much rolling slows the ball: this much of its speed a second. (In proportion to its
+    /// speed, so a slow ball isn't held still on a gentle slope.)
+    pub rolling: f32,
     /// How fast a ball must go into the ramp to make it to the top (inches per second): it's
     /// steep, and rough going.
     pub ramp_speed: f32,
@@ -62,14 +66,15 @@ impl Default for Settings {
             slope: GRAVITY * SLOPE_DEGREES.to_radians().sin(),
             flipper_speed: 38.0,
             flipper_return: 22.0,
-            flipper_bounce: 0.5,
-            wall_bounce: 0.45,
-            rubber_bounce: 0.72,
-            bumper_kick: 210.0,
-            sling_kick: 165.0,
-            plunger_speed: 470.0,
-            ramp_speed: 170.0,
-            max_speed: 900.0,
+            flipper_bounce: 0.4,
+            wall_bounce: 0.4,
+            rubber_bounce: 0.6,
+            bumper_kick: 120.0,
+            sling_kick: 110.0,
+            plunger_speed: 115.0,
+            rolling: 0.05,
+            ramp_speed: 115.0,
+            max_speed: 400.0,
         }
     }
 }
@@ -239,9 +244,10 @@ impl RampPath {
 const SCOOP_HOLD: f32 = 1.0;
 const MINE_HOLD: f32 = 0.8;
 /// The scoop catches a ball going slower than this (inches per second); a faster one skims over.
-const SCOOP_CATCH: f32 = 160.0;
-/// The scoop kicks the ball out toward the flippers; the mine drops it out toward the bumpers.
-const SCOOP_KICK: Vec2 = Vec2::new(-95.0, 82.0);
+const SCOOP_CATCH: f32 = 90.0;
+/// The scoop kicks the ball out toward the flippers (down past the end of the bar); the mine
+/// drops it out toward the bumpers.
+const SCOOP_KICK: Vec2 = Vec2::new(-10.0, 72.0);
 const MINE_DROP: Vec2 = Vec2::new(30.0, 70.0);
 /// Rolling back down the ramp, the ball speeds up at this rate (inches per second per second).
 const RAMP_BACK: f32 = 120.0;
@@ -251,6 +257,10 @@ const PLUNGER_PULL: f32 = 1.4;
 const ROLLOVER_REACH: f32 = 0.45;
 /// The ball just touching something doesn't bounce (so it can rest on a flipper).
 const RESTING: f32 = 12.0;
+/// How much of its speed a ball keeps, bouncing off the back of a gate: it's a loose flap.
+const GATE_BOUNCE: f32 = 0.25;
+/// Rubbing along whatever it bounces off slows the ball: this much, for how hard it hit.
+const FRICTION: f32 = 0.1;
 /// A slingshot or bumper hit slower than this doesn't fire.
 const KICK_THRESHOLD: f32 = 25.0;
 
@@ -306,6 +316,15 @@ impl Table {
                     Kind::Wall,
                 );
             }
+        }
+        for rock in &layout.rocks {
+            colliders.push(Collider {
+                shape: Shape::Circle {
+                    c: rock.center(),
+                    r: rock.r,
+                },
+                kind: Kind::Wall,
+            });
         }
         // Rubber rings: round one post, a circle; round several, the lines between them (whose
         // round ends are the posts). A slingshot's kicking side kicks.
@@ -367,8 +386,8 @@ impl Table {
             segment(&mut colliders, a.into(), b.into(), 0.08, Kind::Standup(i));
         }
 
-        // The ramp: measured along, and walled at its low end, where it's still too low to roll
-        // under (its mouth is open; a ball going in is on it).
+        // The ramp: measured along, and walled along both sides all the way up (its trestle; a
+        // ball doesn't roll under it). Its mouth is open: a ball going in is on it.
         let mut points = Vec::new();
         let mut along = 0.0;
         for (i, p) in layout.ramp.path.iter().enumerate() {
@@ -382,14 +401,13 @@ impl Table {
             points,
             half_width: layout.ramp.half_width,
         };
-        let low: Vec<(Vec3, Vec3)> = ramp
+        let sides: Vec<(Vec3, Vec3)> = ramp
             .points
             .iter()
-            .take_while(|(p, _)| p.z < 2.0 * BALL_RADIUS)
             .map(|(p, s)| (*p, ramp.at(*s).1))
             .collect();
         for side in [-1.0, 1.0] {
-            for pair in low.windows(2) {
+            for pair in sides.windows(2) {
                 let edge = |(p, d): (Vec3, Vec3)| {
                     let d = d.truncate().normalize_or_zero();
                     (p.truncate() + Vec2::new(-d.y, d.x) * side * ramp.half_width).to_array()
@@ -402,18 +420,6 @@ impl Table {
                     Kind::Wall,
                 );
             }
-        }
-        if let Some(&(p, d)) = low.last() {
-            let d = d.truncate().normalize_or_zero();
-            let across = Vec2::new(-d.y, d.x) * ramp.half_width;
-            let p = p.truncate();
-            segment(
-                &mut colliders,
-                (p - across).into(),
-                (p + across).into(),
-                0.06,
-                Kind::Wall,
-            );
         }
 
         let flipper = |place: &layout::FlipperPlace| {
@@ -456,6 +462,34 @@ impl Table {
 
     pub fn layout(&self) -> &Layout {
         &self.layout
+    }
+
+    /// The ball is in the shooter lane, below its gate: on the plunger, or about to be.
+    pub fn in_shooter_lane(&self, ball: &Ball) -> bool {
+        let shooter = self.layout.shooter;
+        ball.place == Place::Playfield
+            && ball.position.x > shooter.x
+            && ball.position.y > shooter.top
+    }
+
+    /// What the ball bounces off, for drawing it over the art (examples/trace.rs): lines from
+    /// `a` to `b`, `r` thick each side with round ends (a circle where `a` is `b`), the flippers
+    /// as they are now.
+    pub fn outlines(&self) -> Vec<(Vec2, Vec2, f32)> {
+        let mut outlines: Vec<_> = self
+            .colliders
+            .iter()
+            .map(|collider| match collider.shape {
+                Shape::Segment { a, b, r } => (a, b, r),
+                Shape::Circle { c, r } => (c, c, r),
+            })
+            .collect();
+        let params = self.layout.flipper;
+        for flipper in &self.flippers {
+            let tip = flipper.pivot + Vec2::from_angle(flipper.angle) * params.length;
+            outlines.push((flipper.pivot, tip, (params.pivot_r + params.tip_r) / 2.0));
+        }
+        outlines
     }
 
     /// A new ball, resting on the plunger.
@@ -501,6 +535,15 @@ impl Table {
             _ => ball.position,
         };
         flat.extend(self.height(ball))
+    }
+
+    /// Moves everything on by `seconds`, a frame at a time (for tests and tools).
+    pub fn advance_by(&mut self, seconds: f32) -> Vec<Event> {
+        let mut events = Vec::new();
+        for _ in 0..(seconds * 60.0).round() as usize {
+            events.extend(self.advance(1.0 / 60.0));
+        }
+        events
     }
 
     /// Moves everything on by `seconds`, in whole steps, and says what happened.
@@ -550,11 +593,11 @@ impl Table {
         self.captive = captive;
         self.step_captive(dt, events);
         let drain = self.layout.drain.y;
-        let shooter = self.layout.gate.x0;
+        let shooter = self.layout.shooter;
         balls.retain(|ball| {
             let gone = ball.place == Place::Playfield
                 && ball.position.y > drain
-                && ball.position.x < shooter;
+                && ball.position.x < shooter.x;
             if gone {
                 events.push(Event::Drain);
             }
@@ -597,9 +640,13 @@ impl Table {
         if self.plunger <= 0.0 {
             return;
         }
-        // Let go: whatever rests on the tip flies, as fast as it was pulled back.
+        // Let go: whatever rests on the tip flies, as fast as it was pulled back, and at least
+        // fast enough to climb the lane and clear its gate.
         let tip = p.y + self.plunger;
-        let speed = self.settings.plunger_speed * (self.plunger / p.max_pull);
+        let climb = p.y - self.layout.shooter.top + 1.0;
+        let softest = (2.0 * self.settings.slope * climb).sqrt() * 1.12;
+        let pulled = self.plunger / p.max_pull;
+        let speed = softest + (self.settings.plunger_speed - softest).max(0.0) * pulled;
         for ball in &mut self.balls {
             let on_tip = ball.place == Place::Playfield
                 && (ball.position.x - p.x).abs() < 0.5
@@ -653,12 +700,13 @@ impl Table {
     /// into the scoop.
     fn roll(&mut self, ball: &mut Ball, dt: f32, events: &mut Vec<Event>) {
         let before = ball.position;
+        ball.velocity *= 1.0 - self.settings.rolling * dt;
         ball.velocity.y += self.settings.slope * dt;
         ball.velocity = ball.velocity.clamp_length_max(self.settings.max_speed);
         ball.position += ball.velocity * dt;
         self.collide_still(ball, events);
         self.collide_flippers(ball);
-        self.collide_gate(ball, before);
+        self.collide_gates(ball, before);
         self.collide_plunger(ball);
         self.cross_doors(ball, before, events);
         self.cross_rollovers(ball, events);
@@ -745,17 +793,28 @@ impl Table {
                 Kind::Wall | Kind::DropTarget(_) | Kind::Standup(_) => wall_bounce,
                 _ => rubber_bounce,
             };
-            let bounce = if -closing < RESTING { 0.0 } else { bounce };
+            let resting = -closing < RESTING;
+            let bounce = if resting { 0.0 } else { bounce };
+            let tangent = ball.velocity - closing * normal;
             ball.velocity -= (1.0 + bounce) * closing * normal;
+            // Rubbing along it in a bounce slows the ball (rolling along it doesn't).
+            if !resting {
+                let rub = (FRICTION * (1.0 + bounce) * -closing).min(tangent.length());
+                ball.velocity -= tangent.normalize_or_zero() * rub;
+            }
             let hard = -closing > KICK_THRESHOLD;
+            // A pop bumper or slingshot sends the ball away at least this fast.
+            let kick = |velocity: &mut Vec2, speed: f32| {
+                *velocity += normal * (speed - velocity.dot(normal)).max(0.0);
+            };
             match collider.kind {
                 Kind::Bumper(i) => {
-                    ball.velocity += normal * bumper_kick;
+                    kick(&mut ball.velocity, bumper_kick);
                     self.bumper_flash[i] = 0.0;
                     events.push(Event::Bumper(i));
                 }
                 Kind::Sling(i) if hard => {
-                    ball.velocity += normal * sling_kick;
+                    kick(&mut ball.velocity, sling_kick);
                     self.sling_flash[i] = 0.0;
                     events.push(Event::Sling(i));
                 }
@@ -806,14 +865,30 @@ impl Table {
         }
     }
 
-    /// The gate at the top of the shooter lane lets the ball out, up the table, but not back.
-    fn collide_gate(&self, ball: &mut Ball, before: Vec2) {
-        let g = self.layout.gate;
-        let in_lane = ball.position.x > g.x0 - BALL_RADIUS * 0.5 && ball.position.x < g.x1 + 0.2;
-        if in_lane && before.y + BALL_RADIUS <= g.y && ball.position.y + BALL_RADIUS > g.y {
-            ball.position.y = g.y - BALL_RADIUS;
-            if ball.velocity.y > 0.0 {
-                ball.velocity.y *= -self.settings.wall_bounce;
+    /// One-way gates: a ball goes through going their way, swinging them open, and once it's
+    /// all the way through they close behind it: coming back, it bounces off them.
+    fn collide_gates(&self, ball: &mut Ball, before: Vec2) {
+        for gate in &self.layout.gates {
+            let (a, b) = (Vec2::from(gate.a), Vec2::from(gate.b));
+            let ab = b - a;
+            let t = (ball.position - a).dot(ab) / ab.length_squared();
+            if !(0.0..=1.0).contains(&t) {
+                continue;
+            }
+            // Across the gate, toward the side it lets the ball through to.
+            let mut normal = ab.perp().normalize();
+            if normal.dot(Vec2::from(gate.way)) < 0.0 {
+                normal = -normal;
+            }
+            let was = (before - a).dot(normal);
+            let now = (ball.position - a).dot(normal);
+            if was >= BALL_RADIUS - 0.01 && now < BALL_RADIUS {
+                ball.position += normal * (BALL_RADIUS - now);
+                let closing = ball.velocity.dot(normal);
+                if closing < 0.0 {
+                    let bounce = if -closing < RESTING { 0.0 } else { GATE_BOUNCE };
+                    ball.velocity -= (1.0 + bounce) * closing * normal;
+                }
             }
         }
     }
@@ -871,8 +946,6 @@ impl Table {
         let mut ball = self.captive;
         ball.velocity.y += self.settings.slope * dt;
         ball.position += ball.velocity * dt;
-        let mut scratch = Vec::new();
-        self.collide_still(&mut ball, &mut scratch);
         let lane = self.layout.captive.lane;
         let top = lane.y0 + BALL_RADIUS;
         let bottom = lane.y1 + 0.3;
@@ -886,6 +959,9 @@ impl Table {
                 ball.velocity.y *= -0.4;
             }
         }
+        // (After the bull: the bull and its chute are solid to the other balls too.)
+        let mut scratch = Vec::new();
+        self.collide_still(&mut ball, &mut scratch);
         if ball.position.y > bottom {
             ball.position.y = bottom;
             if ball.velocity.y > 0.0 {
@@ -899,6 +975,94 @@ impl Table {
         ball.velocity.x *= 0.98;
         self.captive = ball;
     }
+}
+
+/// Where a ball came to rest, and where it was dropped.
+#[derive(Clone, Copy, Debug)]
+pub struct DeadSpot {
+    pub from: Vec2,
+    pub at: Vec2,
+}
+
+/// Places a ball still stays still: dropped every `spacing` inches wherever a ball can get to
+/// on the playfield (outside the shooter lane), the balls that a few seconds later haven't
+/// moved for a second, not on the plunger or held by the scoop or the mine. A good table has
+/// none.
+pub fn dead_spots(layout: &Layout, spacing: f32) -> Vec<DeadSpot> {
+    let empty = Table::new(layout.clone(), Settings::default());
+    let shapes = empty.outlines();
+    let free = |p: Vec2| {
+        shapes.iter().all(|&(a, b, r)| {
+            let ab = b - a;
+            let t = ((p - a).dot(ab) / ab.length_squared().max(1e-9)).clamp(0.0, 1.0);
+            (p - (a + ab * t)).length() > r + BALL_RADIUS + 0.02
+        })
+    };
+    // Where a ball can get to: from between the flippers, and where the mine lets it out,
+    // through gaps it fits through. Only the playfield under the arch, left of the shooter lane.
+    let columns = (layout.shooter.x / spacing) as i32;
+    let rows = (layout.drain.y / spacing) as i32;
+    let cell = |i: i32, j: i32| Vec2::new(i as f32, j as f32) * spacing;
+    let arch = Vec2::new(layout.size[0] / 2.0 + 0.08, 9.8);
+    let open = |i: i32, j: i32| {
+        let p = cell(i, j);
+        (0..columns).contains(&i)
+            && (0..rows).contains(&j)
+            && (p.y > arch.y || (p - arch).length() < 9.8 - 0.6)
+            && free(p)
+    };
+    let mut reached = vec![false; (columns * rows) as usize];
+    let mut queue: Vec<(i32, i32)> = [Vec2::new(9.5, 34.0), Vec2::from(layout.mine_exit)]
+        .iter()
+        .map(|p| {
+            (
+                (p.x / spacing).round() as i32,
+                (p.y / spacing).round() as i32,
+            )
+        })
+        .collect();
+    while let Some((i, j)) = queue.pop() {
+        if !open(i, j) || reached[(j * columns + i) as usize] {
+            continue;
+        }
+        reached[(j * columns + i) as usize] = true;
+        queue.extend([(i + 1, j), (i - 1, j), (i, j + 1), (i, j - 1)]);
+    }
+    let lane = layout.captive.lane;
+    let mut spots = Vec::new();
+    for j in 0..rows {
+        for i in 0..columns {
+            let p = cell(i, j);
+            let in_pen = p.x > lane.x0 && p.y > lane.y0 && p.y < lane.y1 + 0.5;
+            if !reached[(j * columns + i) as usize] || in_pen || p.y > layout.drain.y - 2.0 {
+                continue;
+            }
+            let mut table = Table::new(layout.clone(), Settings::default());
+            table.balls.push(Ball::new(p));
+            table.advance_by(4.0);
+            let Some(before) = table.balls.first().map(|ball| ball.position) else {
+                continue;
+            };
+            let mut moved = 0.0f32;
+            for _ in 0..60 {
+                table.advance(1.0 / 60.0);
+                if let Some(ball) = table.balls.first() {
+                    moved = moved.max((ball.position - before).length());
+                }
+            }
+            if let Some(ball) = table.balls.first()
+                && ball.place == Place::Playfield
+                && !table.in_shooter_lane(ball)
+                && moved < 0.05
+            {
+                spots.push(DeadSpot {
+                    from: p,
+                    at: ball.position,
+                });
+            }
+        }
+    }
+    spots
 }
 
 /// A line `r` thick each side, with round ends.
@@ -1059,7 +1223,7 @@ mod tests {
         }
         let kicked = kicked.expect("hit the bumper");
         assert!(
-            kicked.length() > 150.0 && kicked.x < 0.0,
+            kicked.length() > 100.0 && kicked.x < 0.0,
             "kicked away: {kicked}"
         );
     }
@@ -1082,13 +1246,13 @@ mod tests {
         let mut table = saloon();
         let (mouth, way) = table.ramp.mouth();
         let from = mouth - way * 0.8;
-        let fast = way * 260.0;
+        let fast = way * 160.0;
         ball_at(&mut table, from.x, from.y, fast.x, fast.y);
         let events = run(&mut table, 2.5);
         assert!(events.contains(&Event::RampMade), "{events:?}");
         assert!(events.contains(&Event::MineKick), "{events:?}");
 
-        let slow = way * 130.0;
+        let slow = way * 80.0;
         ball_at(&mut table, from.x, from.y, slow.x, slow.y);
         let events = run(&mut table, 2.0);
         assert!(events.contains(&Event::RampBack), "{events:?}");
@@ -1131,14 +1295,71 @@ mod tests {
     #[test]
     fn the_shooter_gate_lets_balls_out_but_not_back() {
         let mut table = saloon();
-        let g = table.layout().gate;
-        let x = (g.x0 + g.x1) / 2.0;
-        ball_at(&mut table, x, g.y - 2.0, 0.0, 150.0);
-        run(&mut table, 0.3);
+        let shooter = table.layout().shooter;
+        // Dropped onto it from above, the ball rolls off it onto the playfield.
+        ball_at(&mut table, 19.4, shooter.top - 2.5, 0.0, 60.0);
+        run(&mut table, 1.5);
+        let ball = table.balls[0];
         assert!(
-            table.balls[0].position.y < g.y,
+            !table.in_shooter_lane(&ball),
             "got back in at {}",
-            table.balls[0].position
+            ball.position
         );
+        assert!(ball.position.x < shooter.x, "{}", ball.position);
+    }
+
+    #[test]
+    fn every_plunge_lands_in_play() {
+        let layout = Layout::from_json(SALOON).unwrap();
+        // The orbit's rollover, partway down the left orbit.
+        let orbit = layout.rollovers.len() - 1;
+        for tenth in 0..=10 {
+            let mut table = saloon();
+            table.serve();
+            run(&mut table, 0.3);
+            let pull = 0.02 + layout.plunger.max_pull * tenth as f32 / 10.0;
+            table.hold_plunger(true);
+            while table.plunger < pull.min(layout.plunger.max_pull) - 1e-4 {
+                table.advance(1.0 / 60.0);
+            }
+            table.hold_plunger(false);
+            let events = run(&mut table, 2.5);
+            assert!(!events.contains(&Event::Drain), "pulled {pull}: {events:?}");
+            assert!(
+                !events.contains(&Event::Rollover(orbit)),
+                "pulled {pull}, down the orbit: {events:?}"
+            );
+            assert!(
+                !table.in_shooter_lane(&table.balls[0]),
+                "pulled {pull}, still in the lane"
+            );
+        }
+    }
+
+    #[test]
+    fn nowhere_on_the_table_holds_a_ball_still() {
+        let spots = dead_spots(&Layout::from_json(SALOON).unwrap(), 0.6);
+        assert!(spots.is_empty(), "{spots:?}");
+    }
+
+    #[test]
+    fn the_orbit_gate_stops_a_ball_coming_round_the_top() {
+        let mut table = saloon();
+        let gate = table.layout().gates[1];
+        let (a, b) = (Vec2::from(gate.a), Vec2::from(gate.b));
+        let way = Vec2::from(gate.way);
+        // Coming round the arch from the right, against the gate's way: it bounces off.
+        let start = (a + b) / 2.0 + way * 1.5;
+        ball_at(&mut table, start.x, start.y, -way.x * 120.0, -way.y * 120.0);
+        run(&mut table, 0.1);
+        let past = (table.balls[0].position - a).dot(way);
+        assert!(past > 0.0, "went through, to {}", table.balls[0].position);
+        // Going up the orbit, it goes through.
+        let mut table = saloon();
+        let start = (a + b) / 2.0 - way * 1.5;
+        ball_at(&mut table, start.x, start.y, way.x * 120.0, way.y * 120.0);
+        run(&mut table, 0.05);
+        let past = (table.balls[0].position - a).dot(way);
+        assert!(past > 0.6, "stopped, at {}", table.balls[0].position);
     }
 }

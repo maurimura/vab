@@ -133,12 +133,10 @@ impl Machine {
 
     /// The ball waits on the plunger to be launched.
     fn on_plunger(&self) -> bool {
-        let gate = self.table.layout().gate;
-        self.table.balls.iter().any(|ball| {
-            ball.place == Place::Playfield
-                && ball.position.x > gate.x0
-                && ball.velocity.length() < 20.0
-        })
+        self.table
+            .balls
+            .iter()
+            .any(|ball| self.table.in_shooter_lane(ball) && ball.velocity.length() < 20.0)
     }
 
     fn light(&mut self, lamp: &'static str) {
@@ -615,7 +613,7 @@ fn play(
         machine.table.hold_plunger(plunge);
     }
 
-    for event in machine.table.advance(seconds) {
+    for event in machine.table.advance(seconds * settings.pinball_speed()) {
         machine.award(event);
     }
     // All the bottles down: a bonus, and they stand up again.

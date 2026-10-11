@@ -109,8 +109,8 @@ export function drawFloor(fs, defs, { C, G, mix, shade, archPts, W, L, only, all
     for (let y = y0 + 0.55; y < y1; y += 0.55) P2(art, `M${x0},${y}H${x1}`, "none", INK, 0.035);
     el("rect", { x: x1 - 0.25, y: y0, width: 0.25, height: y1 - y0, fill: "#8f5228", opacity: 0.6 }, art);
   };
-  plankStrip(0.3, 1.74, 29.8, 40.4);
-  plankStrip(17.26, 18.7, 29.8, 40.4);
+  plankStrip(0.3, 1.8, 29.8, 40.4);
+  plankStrip(17.2, 18.7, 29.8, 40.4);
   // left orbit lane floor
   P2(art, `M0.35,${horizon + 0.3}H1.97V25.9H0.35Z`, "#9a5a2c", INK, IW);
   for (let y = horizon + 0.9; y < 25.9; y += 0.6) P2(art, `M0.35,${y}H1.97`, "none", INK, 0.035);
@@ -195,8 +195,8 @@ export function drawFloor(fs, defs, { C, G, mix, shade, archPts, W, L, only, all
   // inlanes / outlanes
   insert(1.02, 36.3, { name: "kickback", shape: "oval", r: 0.3, color: C.red, on: false, rot: 90, label: "KICK\nBACK", lsize: 0.12 });
   insert(17.98, 36.3, { name: "special", shape: "oval", r: 0.3, color: C.red, on: true, rot: -90, label: "SPECIAL", lsize: 0.12 });
-  insert(2.85, 35.7, { name: "inlane-left", shape: "arrow", r: 0.28, color: C.sun, on: true, rot: 150 });
-  insert(16.15, 35.7, { name: "inlane-right", shape: "arrow", r: 0.28, color: C.sun, on: true, rot: -150 });
+  insert(2.7, 34.55, { name: "inlane-left", shape: "arrow", r: 0.28, color: C.sun, on: true, rot: 150 });
+  insert(16.3, 34.55, { name: "inlane-right", shape: "arrow", r: 0.28, color: C.sun, on: true, rot: -150 });
   // shoot again between flippers
   insert(9.5, 39.15, { name: "shoot-again", shape: "shoe", r: 0.42, color: C.red, on: false });
   // bumper lights by the poker table

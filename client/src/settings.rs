@@ -53,6 +53,8 @@ pub enum Knob {
     Plunger,
     RampNeeds,
     BallTopSpeed,
+    RollingDrag,
+    GameSpeed,
 }
 
 struct Spec {
@@ -66,7 +68,7 @@ struct Spec {
 }
 
 /// Every knob in the order the panel lists them, under the heading of the game they're for.
-const SPECS: [Spec; 36] = [
+const SPECS: [Spec; 38] = [
     Spec {
         knob: Knob::TopSpeed,
         label: "Hardest shot",
@@ -368,9 +370,9 @@ const SPECS: [Spec; 36] = [
         knob: Knob::Plunger,
         label: "Full plunge",
         unit: "in/s",
-        min: 100.0,
-        max: 1000.0,
-        step: 10.0,
+        min: 60.0,
+        max: 400.0,
+        step: 5.0,
         decimals: 0,
     },
     Spec {
@@ -378,7 +380,7 @@ const SPECS: [Spec; 36] = [
         label: "Ramp needs",
         unit: "in/s",
         min: 20.0,
-        max: 400.0,
+        max: 300.0,
         step: 5.0,
         decimals: 0,
     },
@@ -386,10 +388,28 @@ const SPECS: [Spec; 36] = [
         knob: Knob::BallTopSpeed,
         label: "Ball top speed",
         unit: "in/s",
-        min: 200.0,
-        max: 2000.0,
-        step: 25.0,
+        min: 100.0,
+        max: 1000.0,
+        step: 10.0,
         decimals: 0,
+    },
+    Spec {
+        knob: Knob::RollingDrag,
+        label: "Rolling drag",
+        unit: "/s",
+        min: 0.0,
+        max: 1.0,
+        step: 0.01,
+        decimals: 2,
+    },
+    Spec {
+        knob: Knob::GameSpeed,
+        label: "Game speed",
+        unit: "x",
+        min: 0.25,
+        max: 1.5,
+        step: 0.05,
+        decimals: 2,
     },
 ];
 
@@ -504,7 +524,13 @@ impl Settings {
             plunger_speed: self.get(Knob::Plunger),
             ramp_speed: self.get(Knob::RampNeeds),
             max_speed: self.get(Knob::BallTopSpeed),
+            rolling: self.get(Knob::RollingDrag),
         }
+    }
+
+    /// How fast the pinball machine runs: 1 is real time.
+    pub fn pinball_speed(&self) -> f32 {
+        self.get(Knob::GameSpeed)
     }
 
     /// Moves the value of the picked knob by `steps` of its step, within its range.
@@ -568,6 +594,8 @@ fn defaults() -> [f32; SPECS.len()] {
         Knob::Plunger => pinball.plunger_speed,
         Knob::RampNeeds => pinball.ramp_speed,
         Knob::BallTopSpeed => pinball.max_speed,
+        Knob::RollingDrag => pinball.rolling,
+        Knob::GameSpeed => 1.0,
     })
 }
 

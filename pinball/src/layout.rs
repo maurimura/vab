@@ -20,6 +20,8 @@ pub struct Layout {
     pub rubbers: Vec<Vec<Circle>>,
     /// Solid things standing on the playfield: their outline.
     pub blocks: Vec<Block>,
+    /// Round solid things (rocks): nothing a ball can rest on.
+    pub rocks: Vec<Circle>,
     pub slings: Vec<Sling>,
     pub bumpers: Vec<Circle>,
     pub ramp: Ramp,
@@ -31,7 +33,9 @@ pub struct Layout {
     pub rollovers: Vec<Point>,
     /// Where the mine at the top of the ramp lets the ball back out onto the playfield.
     pub mine_exit: [f32; 2],
-    pub gate: Gate,
+    /// One-way gates.
+    pub gates: Vec<Gate>,
+    pub shooter: Shooter,
     pub plunger: Plunger,
     pub drain: Drain,
     pub flippers: Vec<FlipperPlace>,
@@ -152,11 +156,20 @@ pub struct Lane {
     pub y1: f32,
 }
 
+/// A gate across a lane, from `a` to `b`, that a ball goes through going `way` and bounces off
+/// coming the other way.
 #[derive(Deserialize, Clone, Copy, Debug)]
 pub struct Gate {
-    pub x0: f32,
-    pub x1: f32,
-    pub y: f32,
+    pub a: [f32; 2],
+    pub b: [f32; 2],
+    pub way: [f32; 2],
+}
+
+/// The shooter lane, where the plunger is: right of its wall at `x`, below the wall's top.
+#[derive(Deserialize, Clone, Copy, Debug)]
+pub struct Shooter {
+    pub x: f32,
+    pub top: f32,
 }
 
 #[derive(Deserialize, Clone, Copy, Debug)]

@@ -11,14 +11,29 @@
 //   display dark) and its rank lamps, and the ball.
 // - sprites.json: where each image goes (in 1920x1080 screen pixels), its depth and states.
 // - layout.json: what the ball collides with, in table inches, and the camera (the pinball crate).
+//
+// `--layout` writes layout.json alone, in a moment, for trying changes to the table's shape.
 import fs from "node:fs";
 import path from "node:path";
 import { PNG } from "pngjs";
 import { open } from "./chrome.mjs";
 
-const table = process.argv[2] ?? "saloon";
+const table = process.argv.slice(2).find((arg) => !arg.startsWith("--")) ?? "saloon";
+const layoutOnly = process.argv.includes("--layout");
 const SCALE = Number(process.env.SCALE ?? 2);
 const out = path.resolve("../../assets/pinball", table);
+if (layoutOnly) {
+  const { browser, page } = await open("file://" + path.resolve(table, "export.html"));
+  // Some parts (the rubber rings) only say where they are as they're drawn.
+  const layout = await page.evaluate(() => {
+    for (const item of window.SCENE.items) window.SCENE.item(item.i);
+    return window.SCENE.physics();
+  });
+  fs.writeFileSync(path.join(out, "layout.json"), JSON.stringify(layout, null, 1));
+  await browser.close();
+  console.log("wrote", path.join(out, "layout.json"));
+  process.exit(0);
+}
 fs.rmSync(out, { recursive: true, force: true });
 for (const dir of ["items", "states", "lamps", "ranks"]) fs.mkdirSync(path.join(out, dir), { recursive: true });
 
