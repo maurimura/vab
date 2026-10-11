@@ -13,7 +13,8 @@ fn main() {
         let s = camera.project(p);
         [s.x.round(), s.y.round()]
     };
-    let table = Table::new(layout.clone(), pinball::Settings::default());
+    let settings = pinball::Settings { flipper_speed: 26.0, flipper_bounce: 0.3, ..pinball::Settings::default() };
+    let table = Table::new(layout.clone(), settings);
     let outlines: Vec<_> = table
         .outlines()
         .into_iter()
@@ -26,7 +27,7 @@ fn main() {
     for (i, side) in [Side::Left, Side::Right].into_iter().enumerate() {
         for step in 0..14 {
             let wait = 0.05 + step as f32 * 0.025;
-            let mut table = Table::new(layout.clone(), pinball::Settings::default());
+            let mut table = Table::new(layout.clone(), settings);
             let flipper = table.flippers[i];
             let along = Vec2::from_angle(flipper.angle);
             let above = Vec2::new(along.y, -along.x) * if i == 0 { 1.0 } else { -1.0 };

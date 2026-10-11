@@ -64,16 +64,16 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             slope: GRAVITY * SLOPE_DEGREES.to_radians().sin(),
-            flipper_speed: 38.0,
+            flipper_speed: 26.0,
             flipper_return: 22.0,
-            flipper_bounce: 0.4,
+            flipper_bounce: 0.3,
             wall_bounce: 0.4,
             rubber_bounce: 0.6,
             bumper_kick: 120.0,
             sling_kick: 110.0,
             plunger_speed: 115.0,
             rolling: 0.05,
-            ramp_speed: 115.0,
+            ramp_speed: 70.0,
             max_speed: 400.0,
         }
     }
@@ -1246,13 +1246,13 @@ mod tests {
         let mut table = saloon();
         let (mouth, way) = table.ramp.mouth();
         let from = mouth - way * 0.8;
-        let fast = way * 160.0;
+        let fast = way * 100.0;
         ball_at(&mut table, from.x, from.y, fast.x, fast.y);
         let events = run(&mut table, 2.5);
         assert!(events.contains(&Event::RampMade), "{events:?}");
         assert!(events.contains(&Event::MineKick), "{events:?}");
 
-        let slow = way * 80.0;
+        let slow = way * 55.0;
         ball_at(&mut table, from.x, from.y, slow.x, slow.y);
         let events = run(&mut table, 2.0);
         assert!(events.contains(&Event::RampBack), "{events:?}");

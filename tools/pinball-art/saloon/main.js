@@ -225,8 +225,6 @@ rubberPost(25.7, 2.1, 25.6);
 rubberPost(10.8, 2.1, 10.6, C.orange);
 rubberPost(null, G.lane.x0, G.lane.y1 + 0.05);
 rubberPost(null, G.lane.x1, G.lane.y1 + 0.05);
-rubberPost(null, 7.6, 24.6, C.orange);
-rubberPost(null, 11.6, 24.4, C.orange);
 rubberPost(null, 16.55, 22.45 + 0.0);
 rubberPost(null, 18.3, 22.6);
 rubberPost(null, 16.4, 11.1, C.orange);
