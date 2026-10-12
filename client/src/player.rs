@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use bevy::prelude::*;
 use bevy::sprite::Anchor;
-use world::{Map, TILE_HEIGHT, cell_to_world, world_to_cell};
+use world::{Map, TILE_HEIGHT, TILE_WIDTH, cell_to_world, world_to_cell};
 
 use crate::Mode;
 use crate::chat::chat_closed;
@@ -20,6 +20,9 @@ use crate::touch::Touch;
 const SPEED: f32 = 64.0;
 /// How many times faster the player runs, holding Shift.
 const RUN: f32 = 2.0;
+/// How far back from a wall the player keeps, gliding along it, in world pixels: right on its
+/// edge, rounding could put their feet in the wall's cell.
+const HAIR: f32 = 0.01;
 /// Roughly how many world pixels tall the view is; the zoom is the whole number closest to it.
 const VIEW_HEIGHT: f32 = 270.0;
 /// In a window much taller than wide (a phone held upright), how many it is wide instead.
@@ -66,6 +69,36 @@ impl Walkable {
 
     fn allows(&self, feet: Vec2) -> bool {
         self.contains(world_to_cell(feet))
+    }
+
+    /// How far a step from `feet` gets: the whole step if it's free, otherwise along the wall
+    /// it ran into. Walls run along the floor's diagonals, so it glides along those first (the
+    /// one closer to the way it was going, at a corner), then sideways or up and down, along a
+    /// wall that zigzags.
+    fn slide(&self, feet: Vec2, step: Vec2) -> Vec2 {
+        let mut diagonals = [
+            along(step, Vec2::new(TILE_WIDTH, TILE_HEIGHT)),
+            along(step, Vec2::new(TILE_WIDTH, -TILE_HEIGHT)),
+        ];
+        if diagonals[1].length_squared() > diagonals[0].length_squared() {
+            diagonals.reverse();
+        }
+        // Along one diagonal, and a hair back from the wall the rest of the step went into.
+        let glide = |along: Vec2, into: Vec2| {
+            (along.length() > HAIR).then(|| along - into.normalize_or_zero() * HAIR)
+        };
+        let [closer, farther] = diagonals;
+        [
+            Some(step),
+            glide(closer, farther),
+            glide(farther, closer),
+            Some(Vec2::new(step.x, 0.0)),
+            Some(Vec2::new(0.0, step.y)),
+        ]
+        .into_iter()
+        .flatten()
+        .find(|attempt| *attempt != Vec2::ZERO && self.allows(feet + *attempt))
+        .unwrap_or(Vec2::ZERO)
     }
 
     pub fn contains(&self, cell: IVec2) -> bool {
@@ -144,18 +177,23 @@ fn walk(
     let step = direction.normalize() * Vec2::new(1.0, 0.5) * speed * time.delta_secs();
 
     for (mut player, mut sprite) in &mut players {
-        // The whole step if it's free, otherwise slide along whichever axis is.
-        for attempt in [step, Vec2::new(step.x, 0.0), Vec2::new(0.0, step.y)] {
-            if attempt != Vec2::ZERO && walkable.allows(player.feet + attempt) {
-                player.feet += attempt;
-                break;
-            }
-        }
-        if step.x != 0.0 {
-            sprite.flip_x = step.x < 0.0;
+        let moved = walkable.slide(player.feet, step);
+        player.feet += moved;
+        // Facing the way the player goes, or wants to when a wall stops them.
+        let sideways = if moved.x != 0.0 { moved.x } else { step.x };
+        if sideways != 0.0 {
+            sprite.flip_x = sideways < 0.0;
         }
         room::room_move(player.feet.x, player.feet.y, sprite.flip_x);
     }
+}
+
+/// The part of a step that runs along a wall going `wall`'s way, measured on the floor rather
+/// than on the screen, where up and down are squashed to half: walking into a wall at 45° keeps
+/// 70% of the speed rather than a quarter.
+fn along(step: Vec2, wall: Vec2) -> Vec2 {
+    let floor = Vec2::new(1.0, TILE_WIDTH / TILE_HEIGHT);
+    (step * floor).project_onto(wall * floor) / floor
 }
 
 /// Snapped to whole screen pixels, with the same depth rule as map objects (lower on screen
@@ -193,5 +231,68 @@ fn follow(
     transform.translation = target.extend(transform.translation.z);
     if let Projection::Orthographic(ortho) = &mut *projection {
         ortho.scale = window.scale_factor() / scale;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 20 by 20 floor, but for the cells `wall` says are walls.
+    fn floor(wall: impl Fn(IVec2) -> bool) -> Walkable {
+        let cells = (0..20).flat_map(|x| (0..20).map(move |y| IVec2::new(x, y)));
+        Walkable(cells.filter(|cell| !wall(*cell)).collect())
+    }
+
+    /// Where the player's feet end up, walking from the middle of `cell` with the keys for
+    /// `direction` held, for `frames` sixtieths of a second.
+    fn walk(walkable: &Walkable, cell: IVec2, direction: Vec2, frames: usize) -> Vec2 {
+        let step = direction.normalize() * Vec2::new(1.0, 0.5) * SPEED / 60.0;
+        let mut feet = cell_to_world(cell.x, cell.y);
+        for _ in 0..frames {
+            feet += walkable.slide(feet, step);
+            assert!(walkable.allows(feet), "walked into a wall at {feet}");
+        }
+        feet
+    }
+
+    #[test]
+    fn walking_up_into_a_diagonal_wall_glides_along_it() {
+        // Walls up and to the right, running from the bottom right to the top left.
+        let to_the_right = floor(|cell| cell.y == 4);
+        let start = IVec2::new(10, 5);
+        let from = cell_to_world(start.x, start.y);
+        let feet = walk(&to_the_right, start, Vec2::Y, 60);
+        assert!(
+            feet.y > from.y + 8.0 && feet.x < from.x - 16.0,
+            "{from} to {feet}"
+        );
+
+        // And the mirror: walls up and to the left, running from the bottom left to the top right.
+        let to_the_left = floor(|cell| cell.x == 4);
+        let start = IVec2::new(5, 10);
+        let from = cell_to_world(start.x, start.y);
+        let feet = walk(&to_the_left, start, Vec2::Y, 60);
+        assert!(
+            feet.y > from.y + 8.0 && feet.x > from.x + 16.0,
+            "{from} to {feet}"
+        );
+    }
+
+    #[test]
+    fn walking_straight_at_a_wall_stops_at_it() {
+        let walls = floor(|cell| cell.y == 4);
+        let feet = walk(&walls, IVec2::new(10, 6), Vec2::new(1.0, 1.0), 60);
+        let wall = cell_to_world(10, 4);
+        // Not slid off sideways: still about in line with the cell it walked towards.
+        let off_line = (feet - wall).perp_dot(Vec2::new(TILE_WIDTH, TILE_HEIGHT).normalize());
+        assert!(off_line.abs() < 2.0, "slid {off_line} off to {feet}");
+    }
+
+    #[test]
+    fn gliding_off_the_end_of_a_wall_walks_on_past_it() {
+        let walls = floor(|cell| cell.y == 4 && cell.x >= 8);
+        let feet = walk(&walls, IVec2::new(10, 5), Vec2::Y, 120);
+        assert!(world_to_cell(feet).y < 4, "stuck at {feet}");
     }
 }
