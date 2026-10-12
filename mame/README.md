@@ -279,8 +279,8 @@ the shifter sequential:
 | 3 Start | 1 | Start 1 | "Start" |
 | 2 Select | 5 | Coin 1 | "Coin" |
 
-- The wheel is the bar's own (`wheel` in `assets/games.ron`, `web/emulator/wheel.js`: a tap
-  barely turns it, a hold to full lock in 0.6 s; README.md, "Steering with the arrows"), handed
+- The wheel is the bar's own (`wheel` in `assets/games.ron`, `web/emulator/wheel.js`: evenly,
+  a hold to full lock in 0.4 s; README.md, "Steering with the arrows"), handed
   to MAME as the RetroPad's left stick X: the fork binds that absolute axis to IPT_PADDLE's
   standard sequence (`assignmenthelper.cpp`, `add_directional_assignments`), and
   `analog_field::frame_update` (`src/emu/ioport.cpp`) takes an absolute value whenever it

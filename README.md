@@ -86,8 +86,8 @@ watches.
 
 Cruis'n USA (Midway V-Unit, 1994; MAME's `crusnusa41`, v4.1) is one player's: the next to press
 E watches. The arrows drive, as at Daytona USA: Left and Right turn a steering wheel as at Out
-Run (a tap barely turns it, a hold takes it to full lock in 0.6 s, and let go it's back in the
-middle in 0.1 s; Tab there tunes that: see
+Run (a hold takes it to full lock in 0.4 s, and let go it's back in the middle in 0.15 s; Tab
+there tunes that: see
 [Steering with the arrows](#steering-with-the-arrows)), Up is the gas and
 Down the brake (MAME's own handling of a pedal on keys, 0.9 s to the floor). Z and X shift down
 and up, which matters with the manual transmission the game offers before each race (the
@@ -438,8 +438,10 @@ a frame, as the worker samples the player's keys:
   turns for a tap, a quarter of the way at half the time, and speeds up toward the lock), going
   on from wherever the wheel is;
 - let go (or both held), it comes back to the middle evenly, from full lock in `back` seconds;
-- the other arrow brings it straight to the middle and on from there, as Cannonball (Out Run's
-  engine, ported) turns its wheel from keys.
+- the other arrow sweeps it back through the middle and on to that side, as a real wheel turns:
+  evenly to the middle, as fast as letting go would or a hold turns it, whichever is quicker,
+  then along the curve. (Cannonball, Out Run's engine ported, put it in the middle at once,
+  which the bar did at first: a turn broken off and started again. `back` 0 still does.)
 
 The wheel goes out in the input (bits 16-23, a signed byte, -127 to 127), so a watcher's machine
 turns the game's wheel just as the player's did, and `libretro.js` answers the core's analog
@@ -454,31 +456,35 @@ same way, so `span` is `assets/games.ron`'s alone.
 
 | game | `lock` | `back` | `curve` | `span` |
 | --- | --- | --- | --- | --- |
-| Out Run | 0.3 s | 0.3 s | 1 | (10600, 23500) |
-| Cruis'n USA | 0.6 s | 0.1 s | 2 | (5200, 28900) |
-| Daytona USA, Sega Rally | 0.4 s | 0.14 s | 2 | the whole stick |
+| Out Run | 0.4 s | 0.15 s | 1 | (10600, 23500) |
+| Cruis'n USA | 0.4 s | 0.15 s | 1 | (5200, 28900) |
+| Daytona USA, Sega Rally | 0.4 s | 0.15 s | 1 | the whole stick |
+
+Every driving game turns alike, the numbers tuned in the controls panel (below); only `span`,
+a property of the core, differs. They started out apart: Out Run 0.3 s, 0.3 s, curve 1;
+Cruis'n USA 0.6 s, 0.1 s, curve 2; Daytona USA and Sega Rally 0.4 s, 0.14 s, curve 2.
 
 Daytona USA's and Sega Rally's cores turned their wheel themselves from Left and Right (a ramp
 in their shims, slow for a quarter second and then fast); with `"steer": "wheel"` among their
 `options` they read the bar's wheel from the stick instead, so the controls panel's numbers and
-its drawing are theirs too. Their numbers keep the old feel: a short hold still lands in
-Daytona USA's ADVANCED band at the circuit select (the wheel at +16 to +64 of 96), a longer one
-EXPERT, and an arcade cabinet's watchers get the wheel with its buttons (the worker's
-`watch-frames` carry 24 bits of controls a frame).
+its drawing are theirs too. A short hold still lands in Daytona USA's ADVANCED band at the
+circuit select (the wheel at +16 to +64 of 96: a hold of 4 to 15 frames, evenly to full lock in
+0.4 s), a longer one (18 frames or more) EXPERT, and an arcade cabinet's watchers get the wheel
+with its buttons (the worker's `watch-frames` carry 24 bits of controls a frame).
 
-Out Run's wheel turns as it did, 7 of 127 a frame. Cruis'n USA's, measured in Node from a race
-at 121 mph, Right held, against the gas alone (the car's place across the road, in the game's
-units: its wheels are 518 apart):
+Out Run's wheel first turned as it had, 7 of 127 a frame. Cruis'n USA's first ramp (0.6 s,
+0.1 s, curve 2), measured in Node from a race at 121 mph, Right held, against the gas alone (the
+car's place across the road, in the game's units: its wheels are 518 apart):
 
-| Right held | MAME's key ramp, before: 0.5 s, 1 s later | now: 0.5 s, 1 s later |
+| Right held | MAME's key ramp, before: 0.5 s, 1 s later | the first ramp: 0.5 s, 1 s later |
 | --- | --- | --- |
 | 6 frames (0.1 s) | 213, 598 | 33, 151 |
 | 15 frames (0.26 s) | 571, 2168 | 128, 435 |
 | 30 frames (0.52 s) | 567, 2671 | 290, 2220 |
 
-A tap now nudges the car where it used to throw it, a hold still gets to full lock, and the
-game's wheel reading is back at centre 3 to 14 frames after the arrow goes up (12 to 29 before),
-so the car stops turning when the player lets go. The game itself ignores the first sixth of its
+With it a tap nudged the car where MAME's ramp threw it, a hold still got to full lock, and the
+game's wheel reading was back at centre 3 to 14 frames after the arrow went up (12 to 29 with
+MAME's), so the car stopped turning when the player let go. The game itself ignores the first sixth of its
 wheel's travel (its reading stays put up to MAME's 0x80 ± 18, the stick at ±5200, wheel ±20 of
 127), is at full lock from about 88% (the stick at ±28900), and its reading follows the wheel
 over a few frames (0.22 s from the middle to full lock when the wheel jumps there): hence its
