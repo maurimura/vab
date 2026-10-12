@@ -3,10 +3,12 @@
 //! watches the game being played there, as does E once every seat is taken. On a touch screen
 //! the Play and Watch buttons show instead (nearby.rs).
 //!
-//! At a game whose seats are characters (The Simpsons: Marge, Homer, Bart and Lisa, each on
-//! their own controls), the hint also says who plays each, and a free one's number key sits
-//! you as them (1 for the first); E takes the first free. On a touch screen each free one has
-//! a button instead of Play.
+//! At a game for 2 to 4 players, the player picks where to play, as at an arcade's control
+//! panel: the hint also lists the seats, P1, P2... or the characters on them where each player's
+//! controls are a character of their own (The Simpsons: Marge, Homer, Bart and Lisa), with who
+//! plays each, and a free one's number key sits you there (1 for P1); E takes the first free.
+//! On a touch screen each free one has a button instead of Play. An `arcade` game's linked
+//! cabinets (Daytona USA's 8) have no picker: E takes a free one.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -70,27 +72,37 @@ fn seats_at(cell: IVec2) -> Vec<Option<String>> {
     SEATED.with_borrow(|seated| seated.get(&cabinet).cloned().unwrap_or_default())
 }
 
-/// Which of a game's `characters` are free, as `seats` are taken.
-fn free(characters: &[String], seats: &[Option<String>]) -> Vec<bool> {
-    (0..characters.len())
+/// What the picker calls `game`'s seats: its characters, P1, P2... at any other game for 2 to
+/// 4 players, or nothing (no picker): a one-player game, or an `arcade` game's linked cabinets.
+fn seat_names(game: &Game) -> Vec<String> {
+    if !game.characters.is_empty() {
+        return game.characters.clone();
+    }
+    if game.arcade || !(2..=4).contains(&game.players) {
+        return Vec::new();
+    }
+    (1..=game.players).map(|seat| format!("P{seat}")).collect()
+}
+
+/// Which of the seats `names` names are free, as `seats` are taken.
+fn free(names: &[String], seats: &[Option<String>]) -> Vec<bool> {
+    (0..names.len())
         .map(|seat| seats.get(seat).is_none_or(Option::is_none))
         .collect()
 }
 
-/// The hint's line at a game whose seats are characters: who plays each, and before a free one
-/// the number key that picks them. A touch screen has their buttons, and says only who plays.
-fn characters_line(characters: &[String], seats: &[Option<String>], touch: bool) -> String {
-    let each = characters
-        .iter()
-        .enumerate()
-        .filter_map(
-            |(seat, character)| match seats.get(seat).cloned().flatten() {
-                Some(name) if name.is_empty() => Some(format!("{character}: taken")),
-                Some(name) => Some(format!("{character}: {name}")),
-                None if touch => None,
-                None => Some(format!("{}  {character}", seat + 1)),
-            },
-        );
+/// The hint's line with the picker: who plays in each of the seats `names` names, and before a
+/// free one the number key that picks it. A touch screen has their buttons, and says only who
+/// plays.
+fn seats_line(names: &[String], seats: &[Option<String>], touch: bool) -> String {
+    let each = names.iter().enumerate().filter_map(|(seat, what)| {
+        match seats.get(seat).cloned().flatten() {
+            Some(name) if name.is_empty() => Some(format!("{what}: taken")),
+            Some(name) => Some(format!("{what}: {name}")),
+            None if touch => None,
+            None => Some(format!("{}  {what}", seat + 1)),
+        }
+    });
     each.collect::<Vec<_>>().join("    ")
 }
 
@@ -103,7 +115,7 @@ impl Plugin for CabinetsPlugin {
                 Update,
                 (
                     show_hint,
-                    name_characters,
+                    name_seat_buttons,
                     play.run_if(chat_closed)
                         .run_if(help_closed)
                         .run_if(settings_closed),
@@ -174,12 +186,12 @@ fn show_hint(
     };
     let (seated, watching) = people_at(*cell);
     let seats = seats_at(*cell);
-    let characters = &game.characters;
-    let play = seated < game.players && characters.is_empty();
-    let free = free(characters, &seats);
-    nearby::offer_characters(&mut buttons, play, seated > 0, &free);
+    let names = seat_names(game);
+    let play = seated < game.players && names.is_empty();
+    let free = free(&names, &seats);
+    nearby::offer_seats(&mut buttons, play, seated > 0, &free);
     let mut label = nearby::hint_text(&game.title, seated, game.players, watching, touch.is_on());
-    let line = characters_line(characters, &seats, touch.is_on());
+    let line = seats_line(&names, &seats, touch.is_on());
     if !line.is_empty() {
         label = format!("{label}\n{line}");
     }
@@ -195,8 +207,8 @@ fn show_hint(
     );
 }
 
-/// On a touch screen the characters' buttons say who each is, for the game nearby.
-fn name_characters(
+/// On a touch screen the seats' buttons say which each is, for the game nearby.
+fn name_seat_buttons(
     cabinets: Res<Cabinets>,
     nearby: Res<Nearby>,
     buttons: Query<(&TouchButton, &Children)>,
@@ -209,13 +221,14 @@ fn name_characters(
         let TouchButton::Seat(seat) = button else {
             continue;
         };
-        let Some(character) = game.characters.get(usize::from(*seat)) else {
+        let names = seat_names(game);
+        let Some(name) = names.get(usize::from(*seat)) else {
             continue;
         };
         let mut texts = labels.iter_many_mut(children);
         while let Some(mut text) = texts.fetch_next() {
-            if text.0 != *character {
-                text.0.clone_from(character);
+            if text.0 != *name {
+                text.0.clone_from(name);
             }
         }
     }
@@ -233,7 +246,7 @@ fn play(
     let Some((cell, game)) = cabinets.nearby(&nearby) else {
         return;
     };
-    let picked = picked(&keys, &touch, &free(&game.characters, &seats_at(*cell)));
+    let picked = picked(&keys, &touch, &free(&seat_names(game), &seats_at(*cell)));
     let sit =
         keys.just_pressed(KeyCode::KeyE) || touch.tapped(TouchButton::Play) || picked.is_some();
     let watch = keys.just_pressed(KeyCode::KeyF) || touch.tapped(TouchButton::Watch);
@@ -263,7 +276,7 @@ fn play(
     mode.set(Mode::Playing);
 }
 
-/// The free character picked, by seat: their number key (Shift with one mutes someone instead:
+/// The free seat picked: their number key (Shift with one mutes someone instead:
 /// voice.rs), or on a touch screen their button.
 fn picked(keys: &ButtonInput<KeyCode>, touch: &Touch, free: &[bool]) -> Option<u32> {
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
@@ -293,24 +306,43 @@ mod tests {
     }
 
     #[test]
-    fn the_hint_says_who_plays_each_character_and_the_keys_for_the_others() {
+    fn the_hint_says_who_plays_each_seat_and_the_keys_for_the_others() {
         // The room lists seats up to the last one taken.
         let seats = [None, None, Some("Ana".to_string())];
         assert_eq!(
-            characters_line(&simpsons(), &seats, false),
+            seats_line(&simpsons(), &seats, false),
             "1  Marge    2  Homer    Bart: Ana    4  Lisa"
         );
         // Fingers have the free ones' buttons.
-        assert_eq!(characters_line(&simpsons(), &seats, true), "Bart: Ana");
-        assert_eq!(characters_line(&simpsons(), &[], true), "");
+        assert_eq!(seats_line(&simpsons(), &seats, true), "Bart: Ana");
+        assert_eq!(seats_line(&simpsons(), &[], true), "");
         assert_eq!(free(&simpsons(), &seats), [true, true, false, true]);
-        // Games without characters have no such line, and nothing to pick.
-        assert_eq!(characters_line(&[], &seats, false), "");
+        // No picker, no line, nothing to pick.
+        assert_eq!(seats_line(&[], &seats, false), "");
         assert!(free(&[], &seats).is_empty());
     }
 
     #[test]
-    fn a_number_key_picks_a_free_character() {
+    fn every_game_for_two_to_four_has_a_picker() {
+        let games = games_from_ron(GAMES).unwrap();
+        let names = |rom: &str| seat_names(games.iter().find(|game| game.rom == rom).unwrap());
+        // As an arcade's control panel: P1, P2...
+        assert_eq!(names("mk2"), ["P1", "P2"]);
+        assert_eq!(names("nbajam"), ["P1", "P2", "P3", "P4"]);
+        assert_eq!(names("dinou"), ["P1", "P2", "P3"]);
+        // Or the characters on them.
+        assert_eq!(names("simpsons"), simpsons());
+        assert_eq!(
+            seats_line(&names("mk2"), &[Some("Ana".into())], false),
+            "P1: Ana    2  P2"
+        );
+        // One player, or an arcade game's linked cabinets: E takes a free one.
+        assert!(names("outrun").is_empty());
+        assert!(names("daytona").is_empty());
+    }
+
+    #[test]
+    fn a_number_key_picks_a_free_seat() {
         let free = [true, true, false, true];
         let touch = Touch::default();
         let mut keys = ButtonInput::<KeyCode>::default();
@@ -325,7 +357,7 @@ mod tests {
         keys.press(KeyCode::ShiftLeft);
         keys.press(KeyCode::Digit1);
         assert_eq!(picked(&keys, &touch, &free), None);
-        // No characters, nothing to pick.
+        // No picker, nothing to pick.
         let mut keys = ButtonInput::<KeyCode>::default();
         keys.press(KeyCode::Digit1);
         assert_eq!(picked(&keys, &touch, &[]), None);
