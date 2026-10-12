@@ -613,7 +613,7 @@
         room?.setName(name);
         own_name(name);
         myName = name;
-        tableSeatsChanged();
+        seatsChanged();
       };
 
       // Everyone else's names, for saying who plays a game, and this player's own.
@@ -1031,7 +1031,7 @@
           if (alone) {
             this.#nowPlaying(new Map([[seat, room.id]]));
           } else {
-            this.#show(`Player ${seat + 1}. Joining the game...`);
+            this.#show(`${this.#who(seat)}. Joining the game...`);
             this.#joinTimeout = setTimeout(
               () => this.#playing || this.#show(`Couldn't join the game. ${leave} and try again.`),
               20000,
@@ -1058,7 +1058,7 @@
           this.#epoch++;
           if (this.#game.linked) {
             // Linked boards: everyone starts over, each from their own board's start-up state.
-            this.#show(`Player ${this.seat + 1}. Linking up with ${this.#others()}: both games start over...`);
+            this.#show(`${this.#who(this.seat)}. Linking up with ${this.#others()}: both games start over...`);
             const players = [...this.#players].sort(([a], [b]) => a - b);
             for (const [, id] of players) {
               if (id !== room.id) room.message(id, { cabinet: this.cabinet, epoch: this.#epoch, players, linked: true });
@@ -1066,7 +1066,7 @@
             this.#goOnline(this.#epoch);
             return;
           }
-          this.#show(joined.length ? `Player ${joined[0] + 1} is joining...` : "Someone left, going on without them...");
+          this.#show(joined.length ? `${this.#who(joined[0])} is joining...` : "Someone left, going on without them...");
           this.#worker.postMessage({ type: "capture", epoch: this.#epoch });
           this.#stream();
         }
@@ -1114,7 +1114,7 @@
           this.#linkPlayers();
           this.#playing = true;
           const seats = [...this.#players.keys()].sort((a, b) => a - b);
-          this.#show(`Player ${this.seat + 1}. Connecting to ${this.#others()}...`);
+          this.#show(`${this.#who(this.seat)}. Connecting to ${this.#others()}...`);
           // The input delay is picked from the round trip to the others, timed now: a lockstep
           // game and a heavy rollback core (Supermodel) both cover the ping to stay smooth
           // (worker.js). Cheap cores ignore it.
@@ -1142,7 +1142,7 @@
             : seats > 1
               ? " Anyone who sits at this cabinet joins you."
               : "";
-          this.#show(`Player ${this.seat + 1}.${joins}`);
+          this.#show(`${this.#who(this.seat)}.${joins}`);
         }
 
         /** A link to each other player: the lower seat offers WebRTC. */
@@ -1188,12 +1188,24 @@
         }
 
         #others() {
-          const seats = [...this.#players.keys()].filter((seat) => seat !== this.seat).map((seat) => seat + 1);
+          const others = [...this.#players.keys()].filter((seat) => seat !== this.seat).sort((a, b) => a - b);
+          if (this.#game.characters.length) return list(others.map((seat) => this.#whom(seat)));
+          const seats = others.map((seat) => seat + 1);
           return seats.length === 1 ? `player ${seats[0]}` : `players ${seats.slice(0, -1).join(", ")} and ${seats.at(-1)}`;
         }
 
+        /** Who plays at `seat`: "Player 2", or at a game whose seats are characters, theirs. */
+        #who(seat) {
+          return this.#game.characters[seat] ?? `Player ${seat + 1}`;
+        }
+
+        /** The same, mid-sentence. */
+        #whom(seat) {
+          return this.#game.characters[seat] ?? `player ${seat + 1}`;
+        }
+
         #netplay({ event, seat, ping, frame, delay, rollback, fps, stalls, link, lost }) {
-          const me = `Player ${this.seat + 1}`;
+          const me = this.#who(this.seat);
           if (this.#game.linked && event === "synchronized") return this.#show(`${me}, linked with ${this.#others()}`);
           if (link && event === "stats") {
             // A linked board: its own game, and the other's D frames later (worker.js).
@@ -1207,11 +1219,11 @@
             return;
           }
           if (event === "synchronized" || event === "resumed") this.#show(`${me}, online with ${this.#others()}`);
-          if (event === "interrupted") this.#show(`${me}. Waiting for player ${seat + 1}'s connection...`);
+          if (event === "interrupted") this.#show(`${me}. Waiting for ${this.#whom(seat)}'s connection...`);
           if (event === "desync") {
             const lowest = Math.min(...this.#players.keys());
-            const from = lowest === this.seat ? "this machine" : `player ${lowest + 1}'s machine`;
-            this.#show(`${me}. Out of step with player ${seat + 1} since frame ${frame}: starting over from ${from}...`);
+            const from = lowest === this.seat ? "this machine" : `${this.#whom(lowest)}'s machine`;
+            this.#show(`${me}. Out of step with ${this.#whom(seat)} since frame ${frame}: starting over from ${from}...`);
             this.#resync();
           }
           if (event === "stats" && !this.#status.includes("Out of step") && !this.#status.includes("Waiting")) {
@@ -1691,15 +1703,15 @@
       };
 
       let play;
-      window.emulatorPlay = async (core, rom, bios, files, cabinet, turns, players, lockstep, gun, linked, options, arcade, wheel) => {
+      window.emulatorPlay = async (core, rom, bios, files, cabinet, turns, players, lockstep, gun, linked, options, arcade, wheel, characters, seat) => {
         play?.stop();
-        const game = { core, rom, bios, files, turns, players, cabinet, lockstep, gun, linked, options: coreOptions(options), wheel: gameWheel(wheel) };
+        const game = { core, rom, bios, files, turns, players, characters, cabinet, lockstep, gun, linked, options: coreOptions(options), wheel: gameWheel(wheel) };
         const current = (play = arcade ? new Arcade(game) : new Play(game));
         stayAwake(true);
         game_status("Taking a seat...");
         await joined;
         if (play !== current) return;
-        room.sit(cabinet, players);
+        room.sit(cabinet, players, seat);
         current.watchers(room.watchers.get(cabinet) ?? []);
       };
       window.emulatorWatch = (core, rom, bios, files, cabinet, turns, gun, linked, options, arcade, wheel) => {
@@ -1770,9 +1782,13 @@
       function tableSeats(table, players) {
         // An empty seat is 0, an id no player has; ids go past 2^31, so unsigned.
         const ids = players.map((id) => id ?? 0);
-        const seatNames = players.map((id) => (id === null ? "" : id === room.id ? myName : names.get(id) ?? ""));
-        table_seats(table, room.id, Uint32Array.from(ids), seatNames);
+        table_seats(table, room.id, Uint32Array.from(ids), seatNames(players));
       }
+      /** Who sits at a cabinet, for its hint: which seats are taken (1) and by whom. */
+      function cabinetSeats(cabinet, players) {
+        cabinet_seats(cabinet, Uint8Array.from(players, (id) => (id === null ? 0 : 1)), seatNames(players));
+      }
+      const seatNames = (players) => players.map((id) => (id === null ? "" : id === room.id ? myName : names.get(id) ?? ""));
       // Rollback packets between the two players at an air hockey table (client/src/hockey/
       // online.rs), over the room's link: straight between the browsers once WebRTC connects,
       // through the room until then.
@@ -1798,10 +1814,10 @@
         room.unlink(link);
         tableLinks.delete(partner);
       };
-      /** Again for every table, after a name changed. */
-      function tableSeatsChanged() {
+      /** Again for every table and cabinet, after a name changed. */
+      function seatsChanged() {
         if (!room) return;
-        for (const [table, players] of room.seats) if (isTable(table)) tableSeats(table, players);
+        for (const [place, players] of room.seats) (isTable(place) ? tableSeats : cabinetSeats)(place, players);
       }
 
       // The client, counted as it downloads for the first screen, and a gzipped one unpacked as
@@ -1859,7 +1875,7 @@
           names.set(id, name);
           player_moved(id, x, y, flip, name);
           if (look !== undefined) dress(id, look);
-          if (renamed) tableSeatsChanged();
+          if (renamed) seatsChanged();
         },
         look: (id, look) => dress(id, look),
         left(id) {
@@ -1869,8 +1885,8 @@
         said: (id, name, text) => chat_said(name, text),
         seats(cabinet, players) {
           voice.seated();
-          cabinet_seats(cabinet, players.filter((id) => id !== null).length);
           if (isTable(cabinet)) tableSeats(cabinet, players);
+          else cabinetSeats(cabinet, players);
           if (play?.cabinet === cabinet) play.seated(players);
         },
         full(cabinet) {

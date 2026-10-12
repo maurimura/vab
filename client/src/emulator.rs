@@ -86,7 +86,8 @@ extern "C" {
     /// core's lightgun from the aim, `linked` games give each player their own board, linked to
     /// the others' (paced like lockstep), `options` (JSON) are the core's settings, `arcade`
     /// games are linked cabinets, each player's browser running only their own, free-running,
-    /// and a driving game's `wheel` (JSON) has the arrows turn a wheel (world::Game).
+    /// a driving game's `wheel` (JSON) has the arrows turn a wheel, and at a game whose seats
+    /// are `characters` the player sits as the one in `seat`, if it's still free (world::Game).
     #[wasm_bindgen(js_name = emulatorPlay)]
     fn emulator_play(
         core: &str,
@@ -102,6 +103,8 @@ extern "C" {
         options: &str,
         arcade: bool,
         wheel: Option<String>,
+        characters: Vec<String>,
+        seat: Option<u32>,
     );
     /// Watches the game at `cabinet` ("x,y"), streamed from one of its players (at a `linked`
     /// game, the lowest seat's own board; an `arcade` game's: one player's cabinet at a time).
@@ -161,8 +164,9 @@ impl PlayingGame {
 }
 
 /// Starts the game at the cabinet in `cell`, its wheel (a driving game's) turning as `wheel`
-/// says; switch to `Mode::Playing` to show it.
-pub fn play(cell: IVec2, game: &Game, wheel: Option<Wheel>) {
+/// says, in `seat` if it's free (a character picked) or else the first free one; switch to
+/// `Mode::Playing` to show it.
+pub fn play(cell: IVec2, game: &Game, wheel: Option<Wheel>, seat: Option<u32>) {
     LATEST_FRAME.set(None);
     LATEST_STATUS.set(None);
     let cabinet = cabinet_id(cell);
@@ -181,6 +185,8 @@ pub fn play(cell: IVec2, game: &Game, wheel: Option<Wheel>) {
         &options(game),
         game.arcade,
         wheel.as_ref().map(to_json),
+        game.characters.clone(),
+        seat,
     );
 }
 

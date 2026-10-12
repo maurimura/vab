@@ -60,6 +60,8 @@ pub enum TouchButton {
     Play,
     /// Watches the game being played there.
     Watch,
+    /// Plays the character in this seat, at a game whose seats are characters (cabinets.rs).
+    Seat(u8),
     Leave,
     /// The gear that opens the controls panel (controls.rs).
     Controls,

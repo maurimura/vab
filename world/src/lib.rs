@@ -116,6 +116,11 @@ pub struct Game {
     /// game).
     #[serde(default = "two")]
     pub players: u32,
+    /// Who each seat plays, at a game where every player's controls are a character of their
+    /// own (The Simpsons: Marge on player 1's, Homer on 2's...), in seat order: the player picks
+    /// one to sit as, instead of taking the first free seat.
+    #[serde(default)]
+    pub characters: Vec<String>,
     /// Online, the players' machines run in lockstep with a few frames of input delay instead
     /// of rolling back: for cores whose save state is too big to take every frame (Supermodel's
     /// is 32 MB).
@@ -444,7 +449,19 @@ mod tests {
                 .bios
                 .is_none()
         );
-        assert!(mk2.options.is_empty() && !mk2.arcade);
+        assert!(mk2.options.is_empty() && !mk2.arcade && mk2.characters.is_empty());
+        // Four players, each a character of their own on their seat's controls.
+        for (rom, characters) in [
+            ("simpsons", ["Marge", "Homer", "Bart", "Lisa"]),
+            ("ssriders", ["Steve", "Billy", "Bob", "Cormano"]),
+        ] {
+            let game = games.iter().find(|g| g.rom == rom).unwrap();
+            assert_eq!(game.characters, characters);
+            assert_eq!(game.players as usize, characters.len());
+        }
+        // Cadillacs and Dinosaurs has its own character select.
+        let dino = games.iter().find(|g| g.rom == "dinou").unwrap();
+        assert!(dino.characters.is_empty());
         let daytona = games.iter().find(|g| g.rom == "daytona").unwrap();
         assert_eq!(daytona.core, "daytona");
         assert_eq!(daytona.players, 8);

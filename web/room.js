@@ -118,9 +118,12 @@ export class Room {
     }, wait);
   }
 
-  /** Takes a free seat at a cabinet whose game takes `seats` players. */
-  sit(cabinet, seats) {
-    this.#place = { type: "sit", cabinet, seats };
+  /**
+   * Takes a free seat at a cabinet whose game takes `seats` players: `seat` if it's free (a
+   * character the player picked), else the lowest.
+   */
+  sit(cabinet, seats, seat) {
+    this.#place = { type: "sit", cabinet, seats, seat };
     this.#send(this.#place);
   }
 

@@ -10,6 +10,10 @@ node tools/e2e/shuffleboard.mjs   # or just one
 ```
 
 - `tables.mjs`: one player visits the pool, air hockey and shuffleboard tables.
+- `characters.mjs`: three players at The Simpsons (`GAME=ssriders` for Sunset Riders), whose
+  seats are characters: the hint lists them with their number keys, 3 sits one as Bart, the
+  next can't take Bart and picks Homer with 2, both see who the other plays, and E sits the
+  third as the first free one, Marge.
 - `controls.mjs`: the controls panel for every game and for one. The gear in the bar opens it
   (and closes it); Enter on Your name opens the page's name box, where Esc keeps the name and
   a new one and Enter sets it (cookie too); the arrows turn its wheel (and don't walk), + slows every game's, Steer left
