@@ -5,7 +5,7 @@ import { WHEEL_LOCK, Wheel, wheelIn } from '../web/emulator/wheel.js';
 const LEFT = 1 << 6;
 const RIGHT = 1 << 7;
 const UP = 1 << 4;
-/** assets/games.ron's wheels, at the cores' frame rates. */
+/** Two ramps, at the cores' frame rates: an even one and a curved one (the ones Out Run and Cruis'n USA first had). */
 const OUT_RUN = { lock: 0.3, back: 0.3, curve: 1 };
 const CRUISN = { lock: 0.6, back: 0.1, curve: 2 };
 const CRUISN_FPS = 57.9;

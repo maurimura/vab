@@ -535,13 +535,13 @@ mod tests {
         );
         // The one-player games: Out Run, Cruis'n USA and Sega Rally Championship.
         assert_eq!(games.iter().filter(|g| g.players == 1).count(), 3);
-        // Steered with a wheel the arrows turn evenly, full lock in 0.3 s and back as fast,
+        // Steered with a wheel the arrows turn evenly, full lock in 0.4 s and back in 0.15 s,
         // over the part of the stick FBNeo's dead zones leave.
         assert_eq!(
             outrun.wheel,
             Some(Wheel {
-                lock: 0.3,
-                back: 0.3,
+                lock: 0.4,
+                back: 0.15,
                 curve: 1.0,
                 span: (10600, 23500)
             })
@@ -566,7 +566,9 @@ mod tests {
             assert_eq!(game.options.get("steer").map(String::as_str), Some("wheel"));
         }
         for wheel in games.iter().filter_map(|game| game.wheel) {
-            assert!(wheel.lock > 0.0 && wheel.back > 0.0 && wheel.curve > 0.0);
+            // All turn alike, evenly, full lock in 0.4 s and straight again in 0.15 s: only
+            // where on the stick the core reads it differs.
+            assert_eq!((wheel.lock, wheel.back, wheel.curve), (0.4, 0.15, 1.0));
             assert!(wheel.span.0 < wheel.span.1 && wheel.span.1 <= 32767);
             // What `/wheel` prints for games.ron reads back as the same wheel.
             let line = format!(
@@ -750,14 +752,14 @@ mod tests {
             !cruisn.gun && !cruisn.linked && !cruisn.lockstep && !cruisn.turns && !cruisn.arcade
         );
         assert!(cruisn.bios.is_none() && cruisn.options.is_empty());
-        // Steered with a wheel that a tap barely turns, full lock in 0.6 s held, back in 0.1 s,
+        // Steered with the driving games' wheel, full lock in 0.4 s held and back in 0.15 s,
         // over the part of the stick the game answers to (MAME reads all of it, the game not).
         assert_eq!(
             cruisn.wheel,
             Some(Wheel {
-                lock: 0.6,
-                back: 0.1,
-                curve: 2.0,
+                lock: 0.4,
+                back: 0.15,
+                curve: 1.0,
                 span: (5200, 28900)
             })
         );
