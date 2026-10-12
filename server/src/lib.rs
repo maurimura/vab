@@ -338,10 +338,13 @@ struct Seat {
 enum FromPlayer {
     Move(Position),
     /// Take a free seat at a cabinet whose game takes `seats` players (2 if not said, at most
-    /// `MAX_SEATS`), leaving any other.
+    /// `MAX_SEATS`), leaving any other: `seat` if it's free (the character the player picked,
+    /// at a game whose seats are its characters), else the lowest free one.
     Sit {
         cabinet: String,
         seats: Option<usize>,
+        #[serde(default)]
+        seat: Option<usize>,
     },
     /// Watch the game at a cabinet, leaving any seat.
     Watch {
@@ -545,7 +548,14 @@ impl Room {
         })
     }
 
-    fn sit(&self, ws: &WebSocket, player: &mut Player, cabinet: String, of: usize) -> Result<()> {
+    fn sit(
+        &self,
+        ws: &WebSocket,
+        player: &mut Player,
+        cabinet: String,
+        of: usize,
+        wanted: Option<usize>,
+    ) -> Result<()> {
         if player
             .seat
             .as_ref()
@@ -556,7 +566,11 @@ impl Room {
         self.stand(ws, player)?;
         let mut players = self.seats_at(&cabinet, player.id);
         players.resize(players.len().max(of), None);
-        let Some(index) = players.iter().position(Option::is_none) else {
+        let free = |index: &usize| players.get(*index).is_some_and(Option::is_none);
+        let Some(index) = wanted
+            .filter(free)
+            .or_else(|| players.iter().position(Option::is_none))
+        else {
             return ws.send(&ToPlayer::Full { cabinet: &cabinet });
         };
         players[index] = Some(player.id);
@@ -786,9 +800,13 @@ impl DurableObject for Room {
                     })?;
                 }
             }
-            FromPlayer::Sit { cabinet, seats } => {
+            FromPlayer::Sit {
+                cabinet,
+                seats,
+                seat,
+            } => {
                 let of = seats.unwrap_or(2).clamp(1, MAX_SEATS);
-                self.sit(&ws, &mut player, cabinet, of)?;
+                self.sit(&ws, &mut player, cabinet, of, seat)?;
             }
             FromPlayer::Watch { cabinet } => self.watch(&ws, &mut player, cabinet)?,
             FromPlayer::Stand => self.stand(&ws, &mut player)?,

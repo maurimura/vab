@@ -6,7 +6,9 @@
 // (flycast/), `bios` a BIOS set loaded next to it, and `files` more files the core needs, as
 // paths under /roms/ in R2 that it finds at the same path, folders and all (a NAOMI
 // GD-ROM game's disc: "vtennisg/gds-0011.chd"). `players` is how many play at once (2 if not said,
-// up to 4, or 8 in arcade mode; 1 and the next to press E watches); `turns` games take turns on
+// up to 4, or 8 in arcade mode; 1 and the next to press E watches); `characters` are who each
+// seat plays where every player's controls are a character of their own (The Simpsons, Sunset
+// Riders), in seat order, and the player picks one to sit as; `turns` games take turns on
 // player 1's controls; `lockstep` games play online without rollback (a Sega core's save state is
 // too big to take every frame); `gun` games are played with a lightgun: the mouse or a finger aims,
 // with a crosshair on the screen; `linked` games are a twin cabinet, two boards joined by the
@@ -35,9 +37,9 @@
     (rom: "mslug", core: "neogeo", title: "Metal Slug", bios: Some("neogeo"), cabinets: ["mslug"]),
     (rom: "snowbrosb", core: "snowbros", title: "Snow Bros.", cabinets: ["snowbros"]),
     (rom: "mvscu", core: "capcom", title: "Marvel vs. Capcom", cabinets: ["mvsc"]),
-    (rom: "ssriders", core: "konami", title: "Sunset Riders", players: 4, cabinets: ["sunsetriders"]),
+    (rom: "ssriders", core: "konami", title: "Sunset Riders", players: 4, characters: ["Steve", "Billy", "Bob", "Cormano"], cabinets: ["sunsetriders"]),
     (rom: "dinou", core: "capcom", title: "Cadillacs and Dinosaurs", players: 3, cabinets: ["dino"]),
-    (rom: "simpsons", core: "konami", title: "The Simpsons", players: 4, cabinets: ["simpsons"]),
+    (rom: "simpsons", core: "konami", title: "The Simpsons", players: 4, characters: ["Marge", "Homer", "Bart", "Lisa"], cabinets: ["simpsons"]),
     (rom: "sf2ce", core: "capcom", title: "Street Fighter II' Champion Edition", cabinets: ["sf2ce"]),
     (rom: "pacman", core: "classics", title: "Pac-Man", turns: true, cabinets: ["pacman"]),
     (rom: "atetris", core: "classics", title: "Tetris", cabinets: ["atetris"]),

@@ -4,7 +4,8 @@
 //! and a table are both next to the player, E uses the one they stand closest to. What they all
 //! say and do is here too: the hint's words (`hint_text`), what E and F do (`chosen`: E plays,
 //! or watches once every seat is taken; F watches), and on a touch screen the Play and Watch
-//! buttons, one pair for everything, shown by whatever is nearest (`offer`).
+//! buttons, one pair for everything, shown by whatever is nearest (`offer`), and above them a
+//! button per character at a game whose seats are characters (`offer_characters`).
 
 use bevy::prelude::*;
 use world::{Placed, cell_to_world, world_to_cell};
@@ -155,10 +156,22 @@ pub fn offer<'a>(
     play: bool,
     watch: bool,
 ) {
+    offer_characters(buttons, play, watch, &[]);
+}
+
+/// `offer` at a game whose seats are characters (cabinets.rs): also the button of each seat
+/// `free` says is free, which plays its character.
+pub fn offer_characters<'a>(
+    buttons: impl IntoIterator<Item = (&'a TouchButton, Mut<'a, Visibility>)>,
+    play: bool,
+    watch: bool,
+    free: &[bool],
+) {
     for (button, mut shown) in buttons {
         let offered = match button {
             TouchButton::Play => play,
             TouchButton::Watch => watch,
+            TouchButton::Seat(seat) => free.get(usize::from(*seat)).copied().unwrap_or(false),
             _ => continue,
         };
         shown.set_if_neq(if offered {
@@ -186,26 +199,50 @@ impl Plugin for NearbyPlugin {
 }
 
 /// The Play and Watch buttons for fingers, in the corner: one pair, for whatever is nearest.
+/// Above them, the characters' buttons, named by the game nearby (cabinets.rs).
 fn spawn_buttons(mut commands: Commands, touch: Res<Touch>) {
     if !touch.is_on() {
         return;
     }
+    let character = |seat| {
+        (
+            touch::button(TouchButton::Seat(seat), "", 72.0, 44.0),
+            Visibility::Hidden,
+        )
+    };
     commands.spawn((
         Node {
             position_type: PositionType::Absolute,
             right: Val::Px(16.0),
             bottom: Val::Px(24.0),
-            column_gap: Val::Px(10.0),
+            flex_direction: FlexDirection::Column,
+            align_items: AlignItems::FlexEnd,
+            row_gap: Val::Px(10.0),
             ..default()
         },
         children![
             (
-                touch::button(TouchButton::Watch, "Watch", 96.0, 48.0),
-                Visibility::Hidden,
+                Node {
+                    column_gap: Val::Px(8.0),
+                    ..default()
+                },
+                children![character(0), character(1), character(2), character(3)],
             ),
             (
-                touch::button(TouchButton::Play, "Play", 96.0, 48.0),
-                Visibility::Hidden,
+                Node {
+                    column_gap: Val::Px(10.0),
+                    ..default()
+                },
+                children![
+                    (
+                        touch::button(TouchButton::Watch, "Watch", 96.0, 48.0),
+                        Visibility::Hidden,
+                    ),
+                    (
+                        touch::button(TouchButton::Play, "Play", 96.0, 48.0),
+                        Visibility::Hidden,
+                    ),
+                ],
             ),
         ],
     ));
