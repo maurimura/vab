@@ -15,6 +15,8 @@ mod room;
 mod seats;
 mod settings;
 mod shuffleboard;
+mod staff;
+mod talk;
 #[cfg(feature = "test-hooks")]
 mod testing;
 mod touch;
@@ -37,6 +39,8 @@ use pool::{PoolPlugin, PoolTables};
 use room::RoomPlugin;
 use settings::SettingsPlugin;
 use shuffleboard::{ShuffleboardPlugin, ShuffleboardTables};
+use staff::{Staff, StaffPlugin};
+use talk::TalkPlugin;
 use touch::TouchPlugin;
 use voice::VoicePlugin;
 use world::{Map, MapPlugin, map_sprite};
@@ -86,6 +90,8 @@ fn main() {
         RoomPlugin,
         SettingsPlugin,
         ControlsPlugin,
+        StaffPlugin,
+        TalkPlugin,
         TouchPlugin,
         VoicePlugin,
     ))
@@ -148,6 +154,7 @@ fn build_bar(
     }
     let walkable = Walkable::from_map(map);
     spawn_player(&mut commands, &asset_server, &walkable);
+    let staff = Staff::from_map(map, &walkable);
     commands.insert_resource(walkable);
     let cabinets = Cabinets::from_map(map);
     let pool_tables = PoolTables::from_map(map);
@@ -171,7 +178,12 @@ fn build_bar(
             usables.add(kind, table);
         }
     }
+    // The bartender is talked to from across the counter (the cleaner, wherever they are: staff.rs).
+    for cell in staff.counter() {
+        usables.add_cell(Kind::Bartender, *cell);
+    }
     commands.insert_resource(usables);
+    commands.insert_resource(staff);
     commands.insert_resource(cabinets);
     commands.insert_resource(pool_tables);
     commands.insert_resource(hockey_tables);

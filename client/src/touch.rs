@@ -69,6 +69,10 @@ pub enum TouchButton {
     Pad(u16),
     /// Someone in the voice panel (voice.rs), which handles the tap itself.
     Voice,
+    /// Talks to someone on the staff, next to them (talk/).
+    Talk,
+    /// One of the things to say to them, by its place in the list.
+    Choice(u8),
 }
 
 /// What the fingers on the screen are doing.

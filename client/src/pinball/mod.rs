@@ -17,7 +17,7 @@ use crate::touch::{Touch, TouchButton};
 
 const TILE: &str = "objects/pinball_saloon";
 /// Where the hint sits: a little above the machine's backbox, in world pixels from its middle.
-const HINT_HEIGHT: f32 = 52.0;
+pub const HINT_HEIGHT: f32 = 52.0;
 
 pub struct PinballPlugin;
 

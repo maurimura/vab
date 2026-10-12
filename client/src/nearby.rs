@@ -1,5 +1,6 @@
 //! Which thing in the bar the player can use: of the cabinets, tables and dartboards in the 8
-//! cells around their feet, the nearest. Each kind has its own hint and E (cabinets.rs, pool,
+//! cells around their feet, the nearest; or someone on the staff to talk to (talk/), the
+//! bartender from across the counter and the cleaner from next to them. Each kind has its own hint and E (cabinets.rs, pool,
 //! hockey, shuffleboard, darts), but only the nearest thing offers itself, so where a cabinet
 //! and a table are both next to the player, E uses the one they stand closest to. What they all
 //! say and do is here too: the hint's words (`hint_text`), what E and F do (`chosen`: E plays,
@@ -23,6 +24,10 @@ pub enum Kind {
     Shuffleboard,
     Darts,
     Pinball,
+    /// The counter the bartender serves at, to talk to them.
+    Bartender,
+    /// The cleaner, wherever they are.
+    Cleaner,
 }
 
 /// Everything in the bar the player can use: what it is, the cell it's placed on, and every
@@ -38,6 +43,15 @@ impl Usables {
     /// A one-cell thing (a cabinet).
     pub fn add_cell(&mut self, kind: Kind, cell: IVec2) {
         self.0.push((kind, cell, vec![cell]));
+    }
+
+    /// Something that moves about (the cleaner), now at `cell`: the only one of its kind.
+    pub fn place(&mut self, kind: Kind, cell: IVec2) {
+        if let Some(found) = self.0.iter_mut().find(|(k, _, _)| *k == kind) {
+            *found = (kind, cell, vec![cell]);
+        } else {
+            self.add_cell(kind, cell);
+        }
     }
 }
 
@@ -150,13 +164,14 @@ pub fn place_hint(
 }
 
 /// On a touch screen, shows the Play and Watch buttons that apply to the thing nearby and hides
-/// the other: whatever is nearest calls this from its hint, so the two never disagree.
+/// the other: whatever is nearest calls this from its hint, so the two never disagree. Talk is
+/// for the staff (talk/), which offer it with `offer_talk`.
 pub fn offer<'a>(
     buttons: impl IntoIterator<Item = (&'a TouchButton, Mut<'a, Visibility>)>,
     play: bool,
     watch: bool,
 ) {
-    offer_characters(buttons, play, watch, &[]);
+    show_buttons(buttons, play, watch, false, &[]);
 }
 
 /// `offer` at a game whose seats are characters (cabinets.rs): also the button of each seat
@@ -167,10 +182,26 @@ pub fn offer_characters<'a>(
     watch: bool,
     free: &[bool],
 ) {
+    show_buttons(buttons, play, watch, false, free);
+}
+
+/// On a touch screen, the Talk button alone, next to someone on the staff.
+pub fn offer_talk<'a>(buttons: impl IntoIterator<Item = (&'a TouchButton, Mut<'a, Visibility>)>) {
+    show_buttons(buttons, false, false, true, &[]);
+}
+
+fn show_buttons<'a>(
+    buttons: impl IntoIterator<Item = (&'a TouchButton, Mut<'a, Visibility>)>,
+    play: bool,
+    watch: bool,
+    talk: bool,
+    free: &[bool],
+) {
     for (button, mut shown) in buttons {
         let offered = match button {
             TouchButton::Play => play,
             TouchButton::Watch => watch,
+            TouchButton::Talk => talk,
             TouchButton::Seat(seat) => free.get(usize::from(*seat)).copied().unwrap_or(false),
             _ => continue,
         };
@@ -242,6 +273,10 @@ fn spawn_buttons(mut commands: Commands, touch: Res<Touch>) {
                         touch::button(TouchButton::Play, "Play", 96.0, 48.0),
                         Visibility::Hidden,
                     ),
+                    (
+                        touch::button(TouchButton::Talk, "Talk", 96.0, 48.0),
+                        Visibility::Hidden,
+                    ),
                 ],
             ),
         ],
@@ -262,7 +297,7 @@ fn hide_buttons(mut buttons: Query<(&TouchButton, &mut Visibility)>) {
     offer(&mut buttons, false, false);
 }
 
-fn find(usables: Option<Res<Usables>>, player: Query<&Player>, mut nearby: ResMut<Nearby>) {
+pub fn find(usables: Option<Res<Usables>>, player: Query<&Player>, mut nearby: ResMut<Nearby>) {
     let found = match (usables, player.single()) {
         (Some(usables), Ok(player)) => nearest(&usables.0, player.feet),
         _ => None,

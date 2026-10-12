@@ -16,8 +16,10 @@
 //!   puck from where it is at exactly that velocity (table pixels per second), as a push would.
 //! - `vab.throwDart(x, y)`: at the dartboard, on this player's turn, throws a dart that lands
 //!   exactly at `x`, `y` (millimetres from the board's middle, y up), the hand's sway aside.
+//! - `vab.clockAhead(seconds)`: the staff (staff.rs) go by a clock that many seconds ahead of
+//!   the room's, to see a later shift.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use bevy::prelude::*;
 use serde_json::{Map as Json, Value, json};
@@ -40,6 +42,8 @@ thread_local! {
     static THROW: RefCell<Option<Vec2>> = const { RefCell::new(None) };
     /// The dart `vab.throwDart` asked for, until the darts game takes it.
     static DART: RefCell<Option<Vec2>> = const { RefCell::new(None) };
+    /// How far ahead of the room's clock `vab.clockAhead` put the staff's, in seconds.
+    static CLOCK_AHEAD: Cell<f64> = const { Cell::new(0.0) };
 }
 
 #[wasm_bindgen]
@@ -67,6 +71,15 @@ pub fn vab_throw(vx: f32, vy: f32) {
 #[wasm_bindgen]
 pub fn vab_throw_dart(x: f32, y: f32) {
     DART.with_borrow_mut(|dart| *dart = Some(Vec2::new(x, y)));
+}
+
+#[wasm_bindgen]
+pub fn vab_clock_ahead(seconds: f64) {
+    CLOCK_AHEAD.set(seconds);
+}
+
+pub fn clock_ahead() -> f64 {
+    CLOCK_AHEAD.get()
 }
 
 /// The dart asked for, if any: taken, so it's thrown once.

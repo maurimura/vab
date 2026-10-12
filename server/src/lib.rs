@@ -376,9 +376,11 @@ enum FromPlayer {
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 enum ToPlayer<'a> {
-    /// First message: the player's id and name, and everyone else.
+    /// First message: the player's id and name, and everyone else; and the time, in
+    /// milliseconds since 1970, which every page in the room goes by (the bar's staff do).
     Welcome {
         id: u32,
+        now: f64,
         name: &'a str,
         players: Vec<PlayerAt>,
         seats: BTreeMap<String, Vec<Option<u32>>>,
@@ -728,6 +730,7 @@ impl DurableObject for Room {
             .collect();
         pair.server.send(&ToPlayer::Welcome {
             id,
+            now: js_sys::Date::now(),
             name: &player.name,
             players,
             seats,

@@ -157,6 +157,21 @@ pub struct Game {
     /// (web/emulator/wheel.js, web/emulator/libretro.js).
     #[serde(default)]
     pub wheel: Option<Wheel>,
+    /// What kind of game it is, which the bartender sorts games by (client/src/talk).
+    #[serde(default)]
+    pub genre: Option<Genre>,
+}
+
+/// What kind of game a cabinet's is.
+#[derive(Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Genre {
+    Fighting,
+    /// Beat 'em ups and shooters, lightgun games among them.
+    Action,
+    Racing,
+    Sports,
+    /// Older games: Pac-Man, Tetris, Space Invaders.
+    Classic,
 }
 
 fn two() -> u32 {
@@ -804,5 +819,13 @@ mod tests {
         let back = Map::from_ron(&map.to_ron()).unwrap();
         assert_eq!(back.floor, map.floor);
         assert_eq!(back.objects, map.objects);
+    }
+
+    #[test]
+    fn every_game_has_a_genre_for_the_bartender_to_list_it_under() {
+        let games = games_from_ron(include_str!("../../assets/games.ron")).unwrap();
+        for game in &games {
+            assert!(game.genre.is_some(), "{} has no genre", game.title);
+        }
     }
 }

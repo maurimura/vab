@@ -63,10 +63,13 @@ export async function player(name, room) {
 }
 
 /** Into the bar from the first screen (web/onboarding.js), as it looked, once the bar has loaded;
- * after a reload too. */
+ * after a reload too, when the player, in before, goes straight in without picking. */
 export async function enter(it) {
-  await it.page.waitForSelector("#look-items button");
-  await it.page.click("#look-enter");
+  const returning = await it.page.evaluate(() => document.getElementById("onboarding").classList.contains("returning"));
+  if (!returning) {
+    await it.page.waitForSelector("#look-items button");
+    await it.page.click("#look-enter");
+  }
   await it.page.waitForSelector("#onboarding", { hidden: true, timeout: 60000 });
   await waitFor(it, (state) => state.mode === "Walking", { what: "the bar to load", timeout: 60000 });
   // Two of Bevy's frames, for the welcome to be up before the key that closes it: the bar may

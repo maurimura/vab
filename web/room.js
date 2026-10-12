@@ -49,6 +49,8 @@ export class Room {
   seats = new Map();
   /** Who watches each cabinet's game: cabinet -> player ids. */
   watchers = new Map();
+  /** How far the room's clock is ahead of this browser's, in milliseconds, from its welcome. */
+  clockOffset = 0;
 
   #url;
   #events;
@@ -294,6 +296,7 @@ export class Room {
     switch (message.type) {
       case "welcome":
         this.id = message.id;
+        if (message.now) this.clockOffset = message.now - Date.now();
         this.seats = new Map(Object.entries(message.seats));
         this.watchers = new Map(Object.entries(message.watchers));
         if (this.#name) this.#send({ type: "name", name: this.#name });

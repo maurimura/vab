@@ -28,7 +28,7 @@ use crate::voice::SEAT_KEYS;
 /// The games cabinets can run, built into the client like the map.
 pub const GAMES: &str = include_str!("../../assets/games.ron");
 /// Where the hint sits: a little above a cabinet's top, in world pixels from its cell.
-const HINT_HEIGHT: f32 = 44.0;
+pub const HINT_HEIGHT: f32 = 44.0;
 
 thread_local! {
     /// Who sits at each cabinet ("x,y"), from the room: their names by seat, None where free.
@@ -56,7 +56,7 @@ pub fn cabinet_watchers(cabinet: String, count: u32) {
 }
 
 /// How many sit at the cabinet in `cell`, and how many watch its game.
-fn people_at(cell: IVec2) -> (u32, u32) {
+pub fn people_at(cell: IVec2) -> (u32, u32) {
     let cabinet = emulator::cabinet_id(cell);
     let seated = seats_at(cell).iter().flatten().count() as u32;
     let watching = WATCHING.with_borrow(|counts| counts.get(&cabinet).copied().unwrap_or(0));
@@ -136,6 +136,11 @@ impl Cabinets {
 
     pub fn cells(&self) -> impl Iterator<Item = IVec2> + '_ {
         self.0.iter().map(|(cell, _)| *cell)
+    }
+
+    /// Every cabinet with a game, and the game.
+    pub fn all(&self) -> &[(IVec2, Game)] {
+        &self.0
     }
 
     /// The cabinet nearest the player, if it's nearer than anything else (nearby.rs).
