@@ -660,22 +660,16 @@ mod tests {
             assert!(near(at, 1.0 - frame as f64 / 18.0), "{frame}: {at}");
         }
         // As fast as letting go, when that's quicker; with no time back, the middle at once.
-        assert!(near(
-            Wheel {
-                back: 0.1,
-                ..out_run
-            }
-            .turn(0.5, -1.0, 60.0),
-            0.5 - 1.0 / 6.0
-        ));
-        assert!(near(
-            Wheel {
-                back: 0.0,
-                ..out_run
-            }
-            .turn(0.5, -1.0, 60.0),
-            -1.0 / 18.0
-        ));
+        let quick_back = Wheel {
+            back: 0.1,
+            ..out_run
+        };
+        assert!(near(quick_back.turn(0.5, -1.0, 60.0), 0.5 - 1.0 / 6.0));
+        let no_back = Wheel {
+            back: 0.0,
+            ..out_run
+        };
+        assert!(near(no_back.turn(0.5, -1.0, 60.0), -1.0 / 18.0));
         // Along its curve as `held` has it, whatever the frame rate.
         let soft = Wheel {
             curve: 2.0,
