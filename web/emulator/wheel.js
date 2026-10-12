@@ -9,8 +9,10 @@
 //   and it speeds up toward the lock). The wheel goes on from wherever it is: from the time a
 //   hold would have taken to get it there, a frame more.
 // - Let go (or both held), it comes back to the middle evenly, from full lock in `back` seconds.
-// - The other arrow brings it straight to the middle and on from there, as Cannonball (Out Run's
-//   engine, ported) turns its wheel from keys.
+// - The other arrow sweeps it back through the middle and on to that side, as a wheel turns:
+//   back to the middle evenly, as fast as letting go would bring it or a hold turn it, whichever
+//   is quicker, then along the curve from there for the rest of the frame. (Cannonball, Out
+//   Run's engine ported, puts it in the middle at once, and so does `back` 0.)
 //
 // It runs where the player's controls are sampled (worker.js), once a frame, and goes out in the
 // input itself, bits 16-23, a signed byte: -127 full left to 127 full right, 0 (any input without
@@ -51,11 +53,20 @@ export class Wheel {
     const right = (input & RIGHT) !== 0;
     const toward = left === right ? 0 : left ? -1 : 1;
     if (toward) {
-      // How far it is toward that side (none, on the other), and how long a hold takes to get there.
-      const turned = Math.max(0, toward * this.position) / WHEEL_LOCK;
-      const held = this.lock * turned ** (1 / this.curve);
-      const along = Math.min(1, (held + 1 / this.fps) / this.lock);
-      this.position = toward * WHEEL_LOCK * along ** this.curve;
+      // On the other side, how long it takes to get back to the middle, a second's turn `speed`.
+      const frame = 1 / this.fps;
+      const speed = WHEEL_LOCK / Math.min(this.lock, this.back);
+      const middle = Math.max(0, -toward * this.position) / speed;
+      if (middle > frame) {
+        this.position += toward * speed * frame;
+      } else {
+        // How far it is toward that side (none, on the other), and how long a hold takes to get
+        // there; on along the curve for what's left of the frame.
+        const turned = Math.max(0, toward * this.position) / WHEEL_LOCK;
+        const held = this.lock * turned ** (1 / this.curve);
+        const along = Math.min(1, (held + frame - middle) / this.lock);
+        this.position = toward * WHEEL_LOCK * along ** this.curve;
+      }
     } else {
       const step = WHEEL_LOCK / (this.back * this.fps);
       this.position = this.position > 0 ? Math.max(0, this.position - step) : Math.min(0, this.position + step);

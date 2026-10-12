@@ -438,8 +438,10 @@ a frame, as the worker samples the player's keys:
   turns for a tap, a quarter of the way at half the time, and speeds up toward the lock), going
   on from wherever the wheel is;
 - let go (or both held), it comes back to the middle evenly, from full lock in `back` seconds;
-- the other arrow brings it straight to the middle and on from there, as Cannonball (Out Run's
-  engine, ported) turns its wheel from keys.
+- the other arrow sweeps it back through the middle and on to that side, as a real wheel turns:
+  evenly to the middle, as fast as letting go would or a hold turns it, whichever is quicker,
+  then along the curve. (Cannonball, Out Run's engine ported, put it in the middle at once,
+  which the bar did at first: a turn broken off and started again. `back` 0 still does.)
 
 The wheel goes out in the input (bits 16-23, a signed byte, -127 to 127), so a watcher's machine
 turns the game's wheel just as the player's did, and `libretro.js` answers the core's analog

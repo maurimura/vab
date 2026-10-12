@@ -184,7 +184,8 @@ fn two() -> u32 {
 pub struct Wheel {
     /// Seconds from the middle to full lock, an arrow held.
     pub lock: f64,
-    /// Seconds from full lock back to the middle, let go.
+    /// Seconds from full lock back to the middle, let go (and with the other arrow, if quicker
+    /// than `lock`).
     pub back: f64,
     /// How the turn goes while held: after a fraction f of `lock`, the wheel is at f^curve of
     /// full lock. 1 turns evenly; 2 barely turns for a tap and speeds up toward the lock.
@@ -244,11 +245,19 @@ impl Wheel {
     /// a game's (its `turn`, over -127..127), for a wheel turned without a game.
     pub fn turn(&self, at: f64, toward: f64, fps: f64) -> f64 {
         if toward != 0.0 {
+            // On the other side, how long it takes to get back to the middle, a second's turn
+            // `speed`: as fast as letting go brings it or a hold turns it, whichever is quicker.
+            let frame = 1.0 / fps;
+            let speed = 1.0 / self.lock.min(self.back);
+            let middle = (-toward * at).max(0.0) / speed;
+            if middle > frame {
+                return at + toward * speed * frame;
+            }
             // How far it is toward that side (none, on the other), and how long a hold takes
-            // to get there.
+            // to get there; on along the curve for what's left of the frame.
             let turned = (toward * at).max(0.0);
             let held = self.lock * turned.powf(1.0 / self.curve);
-            let along = ((held + 1.0 / fps) / self.lock).min(1.0);
+            let along = ((held + frame - middle) / self.lock).min(1.0);
             toward * along.powf(self.curve)
         } else {
             let step = 1.0 / (self.back * fps);
@@ -641,8 +650,16 @@ mod tests {
             at = out_run.turn(at, 0.0, 60.0);
         }
         assert!(near(at, 0.5));
-        // The other way brings it straight to the middle and on from there.
-        assert!(near(out_run.turn(0.5, -1.0, 60.0), -1.0 / 18.0));
+        // The other way sweeps it back through the middle and on, evenly here: lock to lock in
+        // 36 frames.
+        let mut at = 1.0;
+        for frame in 1..=36 {
+            at = out_run.turn(at, -1.0, 60.0);
+            assert!(near(at, 1.0 - frame as f64 / 18.0), "{frame}: {at}");
+        }
+        // As fast as letting go, when that's quicker; with no time back, the middle at once.
+        assert!(near(Wheel { back: 0.1, ..out_run }.turn(0.5, -1.0, 60.0), 0.5 - 1.0 / 6.0));
+        assert!(near(Wheel { back: 0.0, ..out_run }.turn(0.5, -1.0, 60.0), -1.0 / 18.0));
         // Along its curve as `held` has it, whatever the frame rate.
         let soft = Wheel {
             curve: 2.0,
