@@ -11,6 +11,11 @@
 //! The aim goes out with the buttons, in the high half of the same u32. Two players at its twin
 //! cabinet (`linked`) each aim on their own screen: each browser runs that player's own board.
 //!
+//! At a game whose seats the player picks (cabinets.rs), 1 to 4 are the players' Starts, as on
+//! an arcade's control panel: the player's own seat's is Start, and another's, if that seat is
+//! free, moves them there and starts them (alone, their game goes on; with others, they rejoin
+//! it from there: web/index.html).
+//!
 //! Which key presses which of the game's buttons is the player's to change, game by game, in
 //! the controls panel (Tab: controls.rs). At a driving game (`wheel`: Out Run, Cruis'n USA)
 //! the steering keys turn a steering wheel, in the worker (web/emulator/wheel.js), as the
@@ -18,7 +23,7 @@
 //! numbers (`/wheel lock=0.5 back=0.1 curve=2`), as the panel does, and prints the line for
 //! assets/games.ron.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
@@ -37,32 +42,43 @@ use crate::voice::SEAT_KEYS;
 
 /// Keys and the RetroPad button ids (libretro.h) they press, unless the player put a game's
 /// buttons on others (controls.rs). FBNeo maps MK's panel to A S D = high punch, high kick,
-/// block and Z X C = low punch, low kick, block.
-pub const KEYS: [(KeyCode, u16); 12] = [
+/// block and Z X C = low punch, low kick, block. 1 to 4 are the players' Starts (`STARTS`).
+pub const KEYS: [(KeyCode, u16); 15] = [
     (KeyCode::ArrowUp, 4),
     (KeyCode::ArrowDown, 5),
     (KeyCode::ArrowLeft, 6),
     (KeyCode::ArrowRight, 7),
     (KeyCode::Digit5, 2), // coin (SELECT)
-    (KeyCode::Digit1, 3), // start
-    (KeyCode::KeyA, 1),   // Y
-    (KeyCode::KeyS, 9),   // X
-    (KeyCode::KeyD, 10),  // L
-    (KeyCode::KeyZ, 0),   // B
-    (KeyCode::KeyX, 8),   // A
-    (KeyCode::KeyC, 11),  // R
+    (KeyCode::Digit1, 3), // start, P1's
+    (KeyCode::Digit2, 16),
+    (KeyCode::Digit3, 17),
+    (KeyCode::Digit4, 18),
+    (KeyCode::KeyA, 1),  // Y
+    (KeyCode::KeyS, 9),  // X
+    (KeyCode::KeyD, 10), // L
+    (KeyCode::KeyZ, 0),  // B
+    (KeyCode::KeyX, 8),  // A
+    (KeyCode::KeyC, 11), // R
 ];
 /// The RetroPad buttons a lightgun game's mouse presses, which press its gun's
 /// (web/emulator/libretro.js): the trigger is B, as Z, and Aux A (Time Crisis II's pedal) is A,
 /// as X.
 pub const TRIGGER: u16 = 0;
 pub const PEDAL: u16 = 8;
+/// Player 1 to 4's Start, as the keys have them: the RetroPad's (START) for P1, then ids past
+/// its 16 buttons for the others. At a game whose seats the player picks (`PlayingGame::starts`)
+/// the player's own seat's presses Start, and another's sits them there if it's free, and
+/// starts them, as at an arcade's control panel; elsewhere P1's is Start and the others nothing.
+pub const STARTS: [u16; 4] = [START, 16, 17, 18];
+const START: u16 = 3;
 /// The crosshair across, in logical pixels.
 const CROSSHAIR: f32 = 22.0;
 
 thread_local! {
     static LATEST_FRAME: RefCell<Option<(UVec2, Vec<u8>)>> = const { RefCell::new(None) };
     static LATEST_STATUS: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// The seat the player plays in, once the page says.
+    static SEAT: Cell<Option<u32>> = const { Cell::new(None) };
 }
 
 /// Called by index.html with each RGBA frame the emulator worker posts.
@@ -75,6 +91,13 @@ pub fn push_frame(rgba: Vec<u8>, width: u32, height: u32) {
 #[wasm_bindgen]
 pub fn game_status(text: String) {
     LATEST_STATUS.set(Some(text));
+}
+
+/// Called by index.html with the seat the player plays in, when they sit and when they move to
+/// another (pressing its Start): 0 for player 1.
+#[wasm_bindgen]
+pub fn game_seat(seat: u32) {
+    SEAT.set(Some(seat));
 }
 
 // Defined in index.html.
@@ -129,6 +152,10 @@ extern "C" {
     /// 16-23 (0 the screen's left edge, 255 its right) and y in bits 24-31 (0 the top).
     #[wasm_bindgen(js_name = emulatorInput)]
     fn emulator_input(input: u32);
+    /// Moves the player to `seat` at the cabinet they play at, if it's free, and starts them
+    /// there: they pressed that player's Start.
+    #[wasm_bindgen(js_name = emulatorStartAs)]
+    fn emulator_start_as(seat: u32);
     /// How the arrows turn the wheel of the driving game being played, from now on: a
     /// world::Wheel as JSON, whose `lock`, `back` and `curve` the worker takes (its `span` is
     /// the game's, the same on every machine).
@@ -149,6 +176,9 @@ pub struct PlayingGame {
     /// assets/games.ron has it.
     pub wheel: Option<Wheel>,
     pub usual_wheel: Option<Wheel>,
+    /// How many players' Starts sit the player in that seat (`STARTS`): the seats of a game
+    /// they pick a seat at (cabinets.rs), none at others.
+    pub starts: u32,
 }
 
 impl PlayingGame {
@@ -169,6 +199,7 @@ impl PlayingGame {
 pub fn play(cell: IVec2, game: &Game, wheel: Option<Wheel>, seat: Option<u32>) {
     LATEST_FRAME.set(None);
     LATEST_STATUS.set(None);
+    SEAT.set(None);
     let cabinet = cabinet_id(cell);
     let bios = game.bios.clone();
     emulator_play(
@@ -600,11 +631,34 @@ fn send_input(
     let trying = controls.is_open();
     let shift = keys.any_pressed([KeyCode::ShiftLeft, KeyCode::ShiftRight]);
     let bindings = game.as_ref().map_or(KEYS, |game| controls.keys(&game.rom));
+    let usable = |key: &KeyCode, id: &u16| {
+        !busy && (!trying || matches!(*id, LEFT | RIGHT)) && !(shift && SEAT_KEYS.contains(key))
+    };
     let mut mask = bindings
         .iter()
-        .filter(|(key, id)| !busy && (!trying || matches!(*id, LEFT | RIGHT)) && keys.pressed(*key))
-        .filter(|(key, _)| !(shift && SEAT_KEYS.contains(key)))
+        .filter(|(key, id)| usable(key, id) && !STARTS.contains(id) && keys.pressed(*key))
         .fold(touch.pad(), |mask, (_, id)| mask | 1 << id);
+    // The players' Starts: the player's own seat's is Start, another's moves them there.
+    let starts = game
+        .as_ref()
+        .filter(|game| !game.watching)
+        .map_or(0, |game| game.starts);
+    let start_keys = bindings
+        .iter()
+        .filter(|(key, id)| usable(key, id))
+        .filter_map(|(key, id)| Some((*key, STARTS.iter().position(|start| start == id)? as u32)));
+    for (key, player) in start_keys {
+        let own = if starts < 2 {
+            player == 0
+        } else {
+            SEAT.get() == Some(player)
+        };
+        if own && keys.pressed(key) {
+            mask |= 1 << START;
+        } else if !own && player < starts && keys.just_pressed(key) {
+            emulator_start_as(player);
+        }
+    }
     let mut input = 0;
     if game.is_some_and(|game| game.aims()) {
         // A click shoots where it aims, on the screen only; a finger on it shoots for as long

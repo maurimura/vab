@@ -8,7 +8,7 @@
 // GD-ROM game's disc: "vtennisg/gds-0011.chd"). `players` is how many play at once (2 if not said,
 // up to 4, or 8 in arcade mode; 1 and the next to press E watches); `characters` are who each
 // seat plays where every player's controls are a character of their own (The Simpsons, Sunset
-// Riders), in seat order, and the player picks one to sit as; `turns` games take turns on
+// Riders), in seat order, picked from instead of P1, P2...; `turns` games take turns on
 // player 1's controls; `lockstep` games play online without rollback (a Sega core's save state is
 // too big to take every frame); `gun` games are played with a lightgun: the mouse or a finger aims,
 // with a crosshair on the screen; `linked` games are a twin cabinet, two boards joined by the

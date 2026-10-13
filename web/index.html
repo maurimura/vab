@@ -481,6 +481,7 @@
         chat_said,
         chat_typed,
         game_buttons,
+        game_seat,
         game_status,
         help_welcome,
         own_look,
@@ -896,6 +897,8 @@
       class Play {
         seat;
         #game;
+        /** The player pressed another player's Start: once there, Start is pressed for them. */
+        #startOnArrival;
         #worker;
         #packets;
         /** The player's controls, as Bevy last sent them (a u32: buttons, and a lightgun's aim). */
@@ -920,19 +923,29 @@
         /** When this machine last handed its game out again after a drift. */
         #resyncedAt = -Infinity;
 
-        constructor(game) {
+        constructor(game, { startOnArrival = false } = {}) {
           this.#game = game;
+          this.#startOnArrival = startOnArrival;
           this.cabinet = game.cabinet;
           /** A lightgun game: the right mouse button is part of the game (client/src/emulator.rs). */
           this.gun = game.gun;
         }
 
-        /** Who sits at our cabinet changed. */
+        get game() {
+          return this.#game;
+        }
+
+        /**
+         * Who sits at our cabinet changed. "rejoin" when we moved to another seat while others
+         * play: our machine is the old seat's, so the page starts a new Play there, which joins
+         * as anyone sitting down does (rejoin below).
+         */
         seated(players) {
           this.#seated = new Map(players.flatMap((id, seat) => (id === null ? [] : [[seat, id]])));
           const seat = players.indexOf(room.id);
           if (seat < 0) return; // not seated (yet)
           if (!this.#worker) return this.#start(seat);
+          if (seat !== this.seat) return this.#moved(seat);
           if (!this.#playing && this.#seated.size === 1) {
             // Everyone left before handing us their game: start it ourselves.
             this.#worker.postMessage({ type: "solo" });
@@ -954,6 +967,37 @@
         input(input) {
           this.#input = input;
           this.#worker?.postMessage({ type: "input", input });
+        }
+
+        /**
+         * The player pressed another player's Start (client/src/emulator.rs): to that seat, if
+         * it's free, and Start there. The room moves us, and seated() follows.
+         */
+        startAs(seat) {
+          const { linked, players } = this.#game;
+          if (linked || seat === this.seat || seat >= players || this.#seated.has(seat)) return;
+          this.#startOnArrival = true;
+          room.sit(this.cabinet, players, seat);
+        }
+
+        /**
+         * The room moved us to `seat`. Alone, our machine goes on as it was, our controls on that
+         * seat's controller from now on; with others, we start over there ("rejoin").
+         */
+        #moved(seat) {
+          if (!this.#playing || this.#seated.size > 1) return "rejoin";
+          this.seat = seat;
+          this.#worker.postMessage({ type: "seat", seat });
+          game_seat(seat);
+          this.#arrive();
+          this.#nowPlaying(new Map([[seat, room.id]]));
+        }
+
+        /** Presses Start for the player once their game runs, if they came by pressing it. */
+        #arrive() {
+          if (!this.#startOnArrival) return;
+          this.#startOnArrival = false;
+          this.#worker.postMessage({ type: "press-start" });
         }
 
         /** How the arrows turn a driving game's wheel (`/wheel` in the chat): our machine's alone. */
@@ -1028,6 +1072,8 @@
           };
           worker.postMessage(start, [packets.port2]);
           worker.postMessage({ type: "input", input: this.#input });
+          game_seat(seat);
+          this.#arrive();
           if (alone) {
             this.#nowPlaying(new Map([[seat, room.id]]));
           } else {
@@ -1714,6 +1760,20 @@
         room.sit(cabinet, players, seat);
         current.watchers(room.watchers.get(cabinet) ?? []);
       };
+      /** Another player's Start, pressed (client/src/emulator.rs): to that seat, if it's free. */
+      window.emulatorStartAs = (seat) => play?.startAs?.(seat);
+      /**
+       * We moved to another seat while others play (Play.seated): our machine was the old seat's,
+       * so a new one joins from the new seat, handed the game as anyone sitting down is, and
+       * presses Start once it runs.
+       */
+      function rejoin(players) {
+        const { game } = play;
+        play.stop();
+        const current = (play = new Play(game, { startOnArrival: true }));
+        current.watchers(room.watchers.get(game.cabinet) ?? []);
+        current.seated(players);
+      }
       window.emulatorWatch = (core, rom, bios, files, cabinet, turns, gun, linked, options, arcade, wheel) => {
         play?.stop();
         const game = { core, rom, bios, files, turns, gun, linked, cabinet, options: coreOptions(options), wheel: gameWheel(wheel) };
@@ -1887,7 +1947,7 @@
           voice.seated();
           if (isTable(cabinet)) tableSeats(cabinet, players);
           else cabinetSeats(cabinet, players);
-          if (play?.cabinet === cabinet) play.seated(players);
+          if (play?.cabinet === cabinet && play.seated(players) === "rejoin") rejoin(players);
         },
         full(cabinet) {
           if (play?.cabinet === cabinet) game_status(`All seats are taken. ${leave} to go back.`);

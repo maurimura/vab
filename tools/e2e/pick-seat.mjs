@@ -1,15 +1,16 @@
-// Picking a character at a game whose seats are characters (client/src/cabinets.rs): The
-// Simpsons, or GAME (Sunset Riders: ssriders). The hint says who plays each and the number keys
-// for the free ones; a free one's key sits the player as them, a taken one's does nothing, and
-// the status line says who each plays.
+// Picking where to play at a cabinet (client/src/cabinets.rs). At a game whose seats are
+// characters, The Simpsons or GAME (Sunset Riders: ssriders), the hint says who plays each and
+// the number keys for the free ones; a free one's key sits the player as them, a taken one's
+// does nothing, and the status line says who each plays. At any other game for 2 to 4, Mortal
+// Kombat II, the seats are P1, P2...
 import { check, player, run, sleep, state, waitFor } from "./lib.mjs";
 
 const GAME = process.env.GAME ?? "simpsons";
 const CHARACTERS = { simpsons: ["Marge", "Homer", "Bart", "Lisa"], ssriders: ["Steve", "Billy", "Bob", "Cormano"] }[GAME];
 
 /** Puts the player next to the cabinet, and waits for its hint. */
-async function next(it) {
-  await it.page.evaluate((name) => window.vab.goTo(name), GAME);
+async function next(it, game = GAME) {
+  await it.page.evaluate((name) => window.vab.goTo(name), game);
   return waitFor(it, (s) => s.hint && s.nearby?.kind === "Cabinet", { what: `the hint at ${GAME}` });
 }
 
@@ -49,4 +50,14 @@ await run(`Picking a character at ${GAME}`, async () => {
   await three.page.keyboard.press("KeyE");
   s = await waitFor(three, (s) => s.mode === "Playing" && s.status?.startsWith(first), { what: `player three playing ${first}` });
   check(true, `E sits player three as ${first}, the first free: ${JSON.stringify(s.status)}`);
+
+  // Mortal Kombat II: P1 and P2, as on its control panel.
+  await three.page.keyboard.press("Escape");
+  await waitFor(three, (s) => s.mode === "Walking", { what: "the bar again" });
+  s = await next(three, "mk2");
+  await waitFor(three, (s) => s.hint.endsWith("1  P1    2  P2"), { what: "P1 and P2 in the hint" });
+  check(true, "at Mortal Kombat II the hint offers P1 and P2");
+  await three.page.keyboard.press("Digit2");
+  s = await waitFor(three, (s) => s.mode === "Playing" && s.status?.startsWith("Player 2"), { what: "player three as player 2" });
+  check(true, `2 sits player three as player 2: ${JSON.stringify(s.status)}`);
 });

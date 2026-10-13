@@ -117,8 +117,8 @@ pub struct Game {
     #[serde(default = "two")]
     pub players: u32,
     /// Who each seat plays, at a game where every player's controls are a character of their
-    /// own (The Simpsons: Marge on player 1's, Homer on 2's...), in seat order: the player picks
-    /// one to sit as, instead of taking the first free seat.
+    /// own (The Simpsons: Marge on player 1's, Homer on 2's...), in seat order: what the player
+    /// picks from to sit as, instead of P1, P2...
     #[serde(default)]
     pub characters: Vec<String>,
     /// Online, the players' machines run in lockstep with a few frames of input delay instead

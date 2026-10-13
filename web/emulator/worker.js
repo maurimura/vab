@@ -98,6 +98,10 @@
 //        input delay. A linked game starts over linked instead (no state: its own start-up
 //        one), `roundTrip` setting the link's delay.
 //      { type: "solo" } Everyone else left: play on alone (a linked game starts over alone).
+//      { type: "seat", seat } Alone, the player moved to another seat: their controls go to
+//        its controller.
+//      { type: "press-start" } Holds Start for the player a moment once the game runs (they
+//        came to their seat by pressing its Start).
 //      { type: "stream", on } Streams this machine's game to the watchers, or stops.
 //      { type: "snapshot", to } A state for a new watcher, to go on from with the stream.
 //      { type: "watch-state", bytes, stream, seat } | { type: "watch-inputs", frame, inputs } |
@@ -271,6 +275,15 @@ let localInput = 0;
 let pressed = 0;
 /** The RetroPad mask in an input; the aim is above it. */
 const BUTTONS = 0xffff;
+/**
+ * Frames left of Start held for the player ("press-start": they came to their seat by pressing
+ * its Start), from the first the game runs: a game without a Start (Sunset Riders) gets its
+ * first button, which joins it.
+ */
+let startFor = 0;
+const START_FRAMES = 12;
+/** The RetroPad's Start (libretro.h). */
+const PAD_START = 3;
 /** A driving game's wheel in an input (wheel.js). */
 const WHEEL_BITS = 0xff0000;
 let cabinet;
@@ -290,6 +303,7 @@ onmessage = ({ data: msg }) => {
     localInput = input;
   } else if (msg.type === "audio") ({ port: audioPort, sampleRate: speakerRate = speakerRate } = msg);
   else if (msg.type === "wheel") wheel.set(msg);
+  else if (msg.type === "press-start") startFor = START_FRAMES;
   else if (msg.type === "start") start(msg);
   // Anything else is for the loaded game; it can arrive while the game still downloads.
   else if (cabinet) cabinet.handle(msg);
@@ -304,8 +318,12 @@ const wheel = new Wheel();
  * worth by the arrows held, goes in it (bits 16-23), so whoever runs the frame turns it the same.
  */
 function sampleInput() {
-  const input = (localInput | pressed) >>> 0;
+  let input = (localInput | pressed) >>> 0;
   pressed = 0;
+  if (startFor > 0) {
+    startFor--;
+    input = (input | (cabinet?.core.buttons.has(PAD_START) ? 1 << PAD_START : 1)) >>> 0;
+  }
   return cabinet?.steers ? wheel.turn(input) : input;
 }
 
@@ -592,6 +610,9 @@ class Cabinet {
   handle(msg) {
     if (msg.type === "capture") this.#capture(msg.epoch);
     if (msg.type === "online") this.#online(msg);
+    // Alone, the player moved to another seat (pressed its Start): their controls go to its
+    // controller from the next frame.
+    if (msg.type === "seat" && !this.#session) this.#seat = msg.seat;
     if (msg.type === "solo") {
       this.#leaveSession();
       if (this.#linkSide !== undefined) this.#unlink();

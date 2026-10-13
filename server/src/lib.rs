@@ -67,7 +67,7 @@ async fn serve_map(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let map_from_r2 = ctx.env.var("MAP_FROM_R2").map(|var| var.to_string());
     let saved = match map_from_r2.as_deref() {
         Ok("false") => None,
-        _ => from_r2(&req, &ctx, MAP_KEY).await?,
+        _ => from_r2(&req, &ctx, "BUCKET", MAP_KEY).await?,
     };
     let response = match saved {
         Some(response) => response,
@@ -209,27 +209,41 @@ async fn ice_servers(env: &Env) -> Result<Response> {
     json(response.text().await?)
 }
 
-/// Streams `<prefix>/<file>` from the R2 bucket.
+/// Streams `<prefix>/<file>` from the R2 bucket, or where it has none, from the `FALLBACK`
+/// bucket if the Worker has one: the preview Worker's is the site's, so its own bucket only
+/// needs what differs (cores built from a branch, and their start-up states).
 async fn serve_from_r2(req: Request, ctx: RouteContext<()>, prefix: &str) -> Result<Response> {
     let Some(file) = ctx.param("file") else {
         return not_found();
     };
-    match from_r2(&req, &ctx, &format!("{prefix}/{file}")).await? {
+    let key = format!("{prefix}/{file}");
+    if let Some(response) = from_r2(&req, &ctx, "BUCKET", &key).await? {
+        return Ok(response);
+    }
+    if ctx.bucket("FALLBACK").is_err() {
+        return not_found();
+    }
+    match from_r2(&req, &ctx, "FALLBACK", &key).await? {
         Some(response) => Ok(response),
         None => not_found(),
     }
 }
 
-/// Streams `key` from the R2 bucket, with the content type it was uploaded with, or `None`
-/// when there's no such object. Answers 304 when the browser's copy (If-None-Match) is still
-/// current.
-async fn from_r2(req: &Request, ctx: &RouteContext<()>, key: &str) -> Result<Option<Response>> {
+/// Streams `key` from the R2 bucket bound as `bucket`, with the content type it was uploaded
+/// with, or `None` when there's no such object. Answers 304 when the browser's copy
+/// (If-None-Match) is still current.
+async fn from_r2(
+    req: &Request,
+    ctx: &RouteContext<()>,
+    bucket: &str,
+    key: &str,
+) -> Result<Option<Response>> {
     let cached_etag = req
         .headers()
         .get("if-none-match")?
         .map(|etag| etag.trim_matches('"').to_string());
     let Some(object) = ctx
-        .bucket("BUCKET")?
+        .bucket(bucket)?
         .get(key)
         .only_if(Conditional {
             etag_does_not_match: cached_etag,
@@ -338,8 +352,8 @@ struct Seat {
 enum FromPlayer {
     Move(Position),
     /// Take a free seat at a cabinet whose game takes `seats` players (2 if not said, at most
-    /// `MAX_SEATS`), leaving any other: `seat` if it's free (the character the player picked,
-    /// at a game whose seats are its characters), else the lowest free one.
+    /// `MAX_SEATS`), leaving any other: `seat` if it's free (the one the player picked), else
+    /// the lowest free one. Someone sitting there already moves to `seat` if it's free.
     Sit {
         cabinet: String,
         seats: Option<usize>,
@@ -558,22 +572,32 @@ impl Room {
         of: usize,
         wanted: Option<usize>,
     ) -> Result<()> {
-        if player
+        // Sitting here already, the player only moves to the seat wanted if it's free (pressing
+        // another player's Start: client/src/emulator.rs).
+        let here = player
             .seat
             .as_ref()
-            .is_some_and(|seat| seat.cabinet == cabinet)
-        {
-            return Ok(());
+            .filter(|seat| seat.cabinet == cabinet)
+            .map(|seat| (seat.index, seat.of));
+        if here.is_none() {
+            self.stand(ws, player)?;
         }
-        self.stand(ws, player)?;
         let mut players = self.seats_at(&cabinet, player.id);
-        players.resize(players.len().max(of), None);
+        let size = here.map_or(of, |(_, here)| here.max(of));
+        players.resize(players.len().max(size), None);
         let free = |index: &usize| players.get(*index).is_some_and(Option::is_none);
-        let Some(index) = wanted
-            .filter(free)
-            .or_else(|| players.iter().position(Option::is_none))
-        else {
-            return ws.send(&ToPlayer::Full { cabinet: &cabinet });
+        let index = match here {
+            Some((index, _)) => match wanted.filter(|wanted| *wanted != index).filter(free) {
+                Some(wanted) => wanted,
+                None => return Ok(()),
+            },
+            None => match wanted
+                .filter(free)
+                .or_else(|| players.iter().position(Option::is_none))
+            {
+                Some(index) => index,
+                None => return ws.send(&ToPlayer::Full { cabinet: &cabinet }),
+            },
         };
         players[index] = Some(player.id);
         let of = players.len();

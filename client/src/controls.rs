@@ -40,7 +40,7 @@ use world::{Wheel, games_from_ron};
 use crate::Mode;
 use crate::cabinets::GAMES;
 use crate::chat::{Chat, type_in_chat};
-use crate::emulator::{self, KEYS, PlayingGame, TOP_BAR};
+use crate::emulator::{self, KEYS, PlayingGame, STARTS, TOP_BAR};
 use crate::help::{GameButtons, close_panel};
 use crate::room::OwnName;
 use crate::settings::Settings;
@@ -49,9 +49,9 @@ use crate::touch::{Touch, TouchButton};
 /// The RetroPad's Left and Right (libretro.h), which turn a driving game's wheel.
 pub const LEFT: u16 = 6;
 pub const RIGHT: u16 = 7;
-/// The game's buttons in the order the panel lists them, by RetroPad id: Coin and Start, the
-/// stick, then the buttons as their keys lie, A S D over Z X C.
-const ORDER: [u16; 12] = [2, 3, 4, 5, 6, 7, 1, 9, 10, 0, 8, 11];
+/// The game's buttons in the order the panel lists them, by RetroPad id: Coin and the players'
+/// Starts (emulator::STARTS), the stick, then the buttons as their keys lie, A S D over Z X C.
+const ORDER: [u16; 15] = [2, 3, 16, 17, 18, 4, 5, 6, 7, 1, 9, 10, 0, 8, 11];
 /// What to call a button the game doesn't name, by RetroPad id: the six by their place on a
 /// cabinet's panel, three over three, as the keys and the touch pad have them.
 const UNNAMED: [&str; 12] = [
@@ -205,7 +205,7 @@ fn named_key(name: &str) -> Option<KeyCode> {
 }
 
 /// Which key presses each of a game's buttons, by RetroPad id, in emulator::KEYS's order.
-pub type Layout = [(KeyCode, u16); 12];
+pub type Layout = [(KeyCode, u16); 15];
 
 /// What the browser keeps of a player's controls.
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq)]
@@ -463,10 +463,16 @@ enum Row {
 }
 
 /// The panel's lines: the player's name, then the buttons of a game whose buttons are
-/// `buttons` (all, until the game says, and in the bar), and the wheel if the player `steers`
-/// one. A touch screen has no keys to put buttons on.
-fn rows(buttons: &[(u16, String)], steers: bool, touch: bool) -> Vec<Row> {
-    let named = |id: &u16| buttons.is_empty() || buttons.iter().any(|(on, _)| on == id);
+/// `buttons` (all, until the game says, and in the bar), with the Starts of its `starts`
+/// players (emulator::STARTS) where a Start sits the player in its seat, and the wheel if the
+/// player `steers` one. A touch screen has no keys to put buttons on.
+fn rows(buttons: &[(u16, String)], starts: u32, steers: bool, touch: bool) -> Vec<Row> {
+    let start = |id: &u16| STARTS.iter().position(|start| start == id);
+    let named = |id: &u16| match start(id) {
+        Some(player) if starts > 1 => (player as u32) < starts,
+        Some(player) if player > 0 => false,
+        _ => buttons.is_empty() || buttons.iter().any(|(on, _)| on == id),
+    };
     let mut rows = vec![Row::Name];
     if !touch {
         rows.extend(ORDER.into_iter().filter(named).map(Row::Key));
@@ -484,6 +490,8 @@ struct View {
     rows: Vec<Row>,
     /// What the game calls its buttons, by RetroPad id (none in the bar).
     names: Vec<(u16, String)>,
+    /// How many players' Starts sit the player in that seat (emulator::STARTS).
+    starts: u32,
     keys: Layout,
     /// The wheel the steering keys turn, as set: a driving game's, or every game's.
     wheel: Option<Wheel>,
@@ -503,8 +511,9 @@ impl View {
                 let wheel = controls.shown_every_wheel();
                 Some(View {
                     title: "Every game".into(),
-                    rows: rows(&[], wheel.is_some(), touch),
+                    rows: rows(&[], STARTS.len() as u32, wheel.is_some(), touch),
                     names: Vec::new(),
+                    starts: STARTS.len() as u32,
                     keys: controls.every_keys(),
                     wheel,
                 })
@@ -513,8 +522,9 @@ impl View {
                 let game = game.filter(|game| !game.watching && game.rom == *rom)?;
                 Some(View {
                     title: game.title.clone(),
-                    rows: rows(buttons, game.steers(), touch),
+                    rows: rows(buttons, game.starts, game.steers(), touch),
                     names: buttons.to_vec(),
+                    starts: game.starts,
                     keys: controls.keys(rom),
                     wheel: game.wheel.filter(|_| game.steers()),
                 })
@@ -522,8 +532,14 @@ impl View {
         }
     }
 
-    /// What button `id` is called.
+    /// What button `id` is called: the players' Starts by player where Start sits the player in
+    /// its seat, else as the game names it, or by its place on the panel.
     fn name(&self, id: u16) -> &str {
+        const PLAYERS: [&str; 4] = ["P1 Start", "P2 Start", "P3 Start", "P4 Start"];
+        match STARTS.iter().position(|start| *start == id) {
+            Some(player) if self.starts > 1 || player > 0 => return PLAYERS[player],
+            _ => {}
+        }
         self.names
             .iter()
             .find(|(on, _)| *on == id)
@@ -670,12 +686,12 @@ fn report(
     let (keys, rows, wheel) = match &game {
         Some(game) => (
             controls.keys(&game.rom),
-            rows(&buttons.0, game.steers(), touch.is_on()),
+            rows(&buttons.0, game.starts, game.steers(), touch.is_on()),
             game.wheel,
         ),
         None => (
             controls.every_keys(),
-            rows(&[], true, touch.is_on()),
+            rows(&[], STARTS.len() as u32, true, touch.is_on()),
             controls.shown_every_wheel(),
         ),
     };
@@ -1916,7 +1932,7 @@ mod tests {
         assert_eq!(key_of(&keys, LEFT), KeyCode::KeyJ);
         assert_eq!(key_of(&keys, 3), KeyCode::KeyK);
         let all: std::collections::HashSet<_> = keys.iter().map(|(key, _)| *key).collect();
-        assert_eq!(all.len(), 12);
+        assert_eq!(all.len(), KEYS.len());
     }
 
     #[test]
@@ -1987,13 +2003,32 @@ mod tests {
     fn rows_list_what_the_game_names() {
         let named = vec![(3, "Start".to_string()), (6, "Steer left".to_string())];
         assert_eq!(
-            rows(&named, false, false),
+            rows(&named, 0, false, false),
             [Row::Name, Row::Key(3), Row::Key(LEFT)]
         );
-        assert_eq!(rows(&[], false, false).len(), 13);
+        // In the bar, every button and all four players' Starts.
+        assert_eq!(rows(&[], 4, false, false).len(), 16);
         assert_eq!(
-            rows(&named, true, true),
+            rows(&named, 0, true, true),
             [Row::Name, Row::Lock, Row::Back, Row::Curve, Row::Corner]
+        );
+        // A two-player game: P1's and P2's Starts, even where the game has no Start (Sunset
+        // Riders joins with a button: its Starts only move the player).
+        assert_eq!(
+            rows(&named, 2, false, false),
+            [Row::Name, Row::Key(3), Row::Key(16), Row::Key(LEFT)]
+        );
+        let no_start = vec![(0, "Fire 1".to_string())];
+        assert_eq!(
+            rows(&no_start, 4, false, false),
+            [
+                Row::Name,
+                Row::Key(3),
+                Row::Key(16),
+                Row::Key(17),
+                Row::Key(18),
+                Row::Key(0)
+            ]
         );
     }
 
