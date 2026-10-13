@@ -5,7 +5,7 @@ import { WHEEL_LOCK, Wheel, wheelIn } from '../web/emulator/wheel.js';
 const LEFT = 1 << 6;
 const RIGHT = 1 << 7;
 const UP = 1 << 4;
-/** assets/games.ron's wheels, at the cores' frame rates. */
+/** Two ramps, at the cores' frame rates: an even one and a curved one (the ones Out Run and Cruis'n USA first had). */
 const OUT_RUN = { lock: 0.3, back: 0.3, curve: 1 };
 const CRUISN = { lock: 0.6, back: 0.1, curve: 2 };
 const CRUISN_FPS = 57.9;
@@ -51,17 +51,36 @@ test("Cruis'n USA's wheel barely turns for a tap and speeds up toward full lock"
   assert.deepEqual(hold(left, LEFT, 40), turns.map((turn) => 0 - turn || 0));
 });
 
-test('the other arrow brings the wheel back through the middle at once', () => {
+test('the other arrow sweeps the wheel back through the middle and on, no jump', () => {
+  // Out Run's: as fast back as held, so lock to lock evenly in 36 frames, 0.6 s.
+  const outRun = new Wheel(OUT_RUN, 60);
+  hold(outRun, RIGHT, 18);
+  const sweep = [WHEEL_LOCK, ...hold(outRun, LEFT, 40)];
+  sweep.slice(1, 37).forEach((turn, i) => assert.ok([7, 8].includes(sweep[i] - turn), `${sweep[i]} -> ${turn}`));
+  assert.equal(sweep.indexOf(-WHEEL_LOCK), 36);
+  // Cruis'n USA's: back to the middle as fast as letting go (0.1 s, quicker than its 0.6 s lock),
+  // then on along the curve for the rest of the frame it got there in.
+  const cruisn = new Wheel(CRUISN, CRUISN_FPS);
+  hold(cruisn, RIGHT, 40);
+  assert.deepEqual(hold(cruisn, LEFT, 5), [105, 83, 61, 39, 17]);
+  cruisn.turn(LEFT);
+  const left = (6 / CRUISN_FPS - CRUISN.back) / CRUISN.lock;
+  assert.ok(Math.abs(cruisn.position + WHEEL_LOCK * left ** 2) < 1e-9, `${cruisn.position}`);
+  // From partway, the same: never further from where it was than a frame's turn.
+  const partway = new Wheel(OUT_RUN, 60);
+  hold(partway, RIGHT, 6);
+  assert.deepEqual(hold(partway, LEFT, 8), [35, 28, 21, 14, 7, 0, -7, -14]);
+  // No time back: the middle at once and on from there, as Cannonball turns it.
+  const snap = new Wheel({ ...OUT_RUN, back: 0 }, 60);
+  hold(snap, RIGHT, 10);
+  assert.equal(wheelIn(snap.turn(LEFT)), -7);
+  // Both arrows at once: straightening, as with neither.
   for (const [ramp, fps] of [[OUT_RUN, 60], [CRUISN, CRUISN_FPS]]) {
     const wheel = new Wheel(ramp, fps);
-    const first = hold(new Wheel(ramp, fps), LEFT, 1)[0];
     hold(wheel, RIGHT, 10);
-    assert.ok(wheel.position > 0);
-    // From the middle on, as if it had just started from there.
-    assert.equal(wheelIn(wheel.turn(LEFT)), first);
-    // Both arrows at once: straightening, as with neither.
-    hold(wheel, LEFT, 3);
+    hold(wheel, LEFT, 30);
     const before = wheel.position;
+    assert.ok(before < 0);
     wheel.turn(LEFT | RIGHT);
     assert.ok(Math.abs(wheel.position - Math.min(0, before + WHEEL_LOCK / (ramp.back * fps))) < 1e-9);
   }
