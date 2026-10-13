@@ -16,7 +16,7 @@ use wasm_bindgen::prelude::*;
 use crate::Mode;
 use crate::chat::type_in_chat;
 use crate::controls::{Controls, key_name};
-use crate::emulator::{KEYS, PEDAL, PlayingGame, TRIGGER};
+use crate::emulator::{KEYS, PEDAL, PlayingGame, STARTS, TRIGGER};
 use crate::touch::{Touch, read_touches};
 
 /// How long a game's card stays up, in seconds.
@@ -379,7 +379,10 @@ fn list_buttons(
     // By what the keys press, wherever the player put them.
     let keys = game.as_ref().map_or(KEYS, |game| controls.keys(&game.rom));
     let arrow = |id: u16| (4..=7).contains(&id);
-    let coin_or_start = |id: u16| id == 2 || id == START;
+    // Where Start sits the player in its seat, each player's (emulator::STARTS).
+    let starts = game.as_ref().map_or(0, |game| game.starts);
+    let player = |id: u16| STARTS.iter().position(|start| *start == id);
+    let coin_or_start = |id: u16| id == 2 || player(id).is_some();
     commands
         .entity(*card)
         .despawn_children()
@@ -387,8 +390,15 @@ fn list_buttons(
             card.spawn(text(&title, 14.0, KEY_COLOR));
             // Coin and Start first, then the stick, then the buttons.
             for (key, id) in keys.into_iter().filter(|(_, id)| coin_or_start(*id)) {
-                if let Some(name) = named(id) {
-                    row(card, key_name(key).unwrap_or("?"), name, key_width, 13.0);
+                let name = match player(id) {
+                    Some(player) if starts > 1 => {
+                        ((player as u32) < starts).then(|| format!("P{} Start", player + 1))
+                    }
+                    Some(player) if player > 0 => None,
+                    _ => named(id).map(str::to_string),
+                };
+                if let Some(name) = name {
+                    row(card, key_name(key).unwrap_or("?"), &name, key_width, 13.0);
                 }
             }
             // A lightgun game: the mouse is the gun (emulator.rs).

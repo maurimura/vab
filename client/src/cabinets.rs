@@ -272,6 +272,12 @@ fn play(
         gun: game.gun,
         wheel,
         usual_wheel: game.wheel,
+        // A linked game's seats are its boards, each started from its own state: no moving.
+        starts: if game.linked {
+            0
+        } else {
+            seat_names(game).len() as u32
+        },
     });
     mode.set(Mode::Playing);
 }

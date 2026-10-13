@@ -32,14 +32,20 @@ tag = "v1"
 new_sqlite_classes = ["Room"]
 
 # A separate Worker for trying changes before they reach the site, with its own rooms and its
-# own R2 bucket (cores, ROMs and states are uploaded to it like to the main one):
-# make preview deploys it to https://vab-preview.<account>.workers.dev.
+# own R2 bucket: make preview deploys it to https://vab-preview.<account>.workers.dev. Whatever
+# its bucket doesn't have comes from the site's (FALLBACK: read, never written), so it only
+# needs what differs, cores built from a branch and the start-up states made with them; ROM
+# sets, BIOS sets and discs are the site's. Its map is its own all the same (MAP_KEY).
 [env.preview]
 name = "vab-preview"
 
 [[env.preview.r2_buckets]]
 binding = "BUCKET"
 bucket_name = "vab-preview"
+
+[[env.preview.r2_buckets]]
+binding = "FALLBACK"
+bucket_name = "vab"
 
 [env.preview.durable_objects]
 bindings = [{ name = "ROOM", class_name = "Room" }]
