@@ -1,9 +1,9 @@
 # MAME in the browser
 
 [MAME](https://www.mamedev.org/)'s Namco System 12 and System 23 drivers (Tekken 3, Time Crisis
-II) and its Midway V-Unit driver (Cruis'n USA), with the other machines in those three driver
-files, built to WebAssembly behind the libretro API, so the bar's emulator worker runs them the
-way it runs the FBNeo cores and Supermodel. It
+II), its Midway V-Unit driver (Cruis'n USA) and its Sega ST-V driver (Tecmo World Cup '98), with
+the other machines in those four driver files, built to WebAssembly behind the libretro API, so
+the bar's emulator worker runs them the way it runs the FBNeo cores and Supermodel. It
 is the libretro fork of MAME ([libretro/mame](https://github.com/libretro/mame), MAME 0.289): its
 libretro OSD steps the machine one frame per `retro_run()` and returns (no threads, no
 coroutines), and its save states are MAME's own, written straight into the caller's buffer.
@@ -11,12 +11,13 @@ Time Crisis II also links two boards for its two-cabinet co-op, each board in it
 (below, "Linked cabinets").
 
 - `build.sh` fetches the pinned fork, applies `patches/`, runs MAME's own GENie build for
-  Emscripten (`TARGETOS=asmjs`, `OSD=retro`, `SUBTARGET=vab`, `SOURCES=` the three drivers;
-  makedep finds their devices and sibling files: midvunit_v.cpp, the DCS sound board, the ADC0844)
-  with the pinned emsdk, then links `dist/mame.mjs` + `dist/mame.wasm`
-  itself, exporting `exports.json` (the libretro API, as FBNeo's, and the link API). `EMSDK_DIR`
-  overrides where the emsdk is (default `emulator/.cache/emsdk`). `./mame/build.sh link` only
-  relinks.
+  Emscripten (`TARGETOS=asmjs`, `OSD=retro`, `SUBTARGET=vab`, `SOURCES=` the four drivers;
+  makedep finds their devices and sibling files: midvunit_v.cpp, the DCS sound board, the
+  ADC0844, the Saturn VDPs, SCU, SMPC and SCSP) with the pinned emsdk, then links `dist/mame.mjs`
+  + `dist/mame.wasm` itself, exporting `exports.json` (the libretro API, as FBNeo's, and the link
+  API). `EMSDK_DIR` overrides where the emsdk is (default `emulator/.cache/emsdk`).
+  `./mame/build.sh link` only relinks. The checkout's `.vab-patches` lists the patches applied
+  (name and checksum); a changed patch puts the checkout's files back and applies them all again.
 - `bench.mjs` times frames, save states and checks pictures, sound and determinism in Node,
   through `web/emulator/libretro.js`: `node mame/bench.mjs ~/Downloads/tekken3je1.zip`, or
   `GUN=1 node mame/bench.mjs ~/Downloads/timecrs2.zip` (`FRAMES`, `WARMUP`, `SHOT=frame.png`;
@@ -78,6 +79,47 @@ MAME picks the system from the zip's name and finds files by name or, failing th
   - MAME 0.289's TMS320C31 wants its internal boot loader ROM, `c31boot.bin` (MAME's `tms320c31`
     device set, assembled from TI's source), which the set doesn't have. Midway V-Unit never maps
     it (its C31 boots from the game's ROMs), so `patches/0007` makes it optional.
+- **Tecmo World Cup '98**: `twcup98` (Sega ST-V with a 315-5881 decryption chip). The
+  `twcup98.zip` we have is MAME's set with the ST-V BIOS files inside (18 files, CRCs matching),
+  so it is all that's needed. Two things kept MAME 0.289 from starting it, both in
+  `patches/0009`: its default ST-V BIOS, EPR-23603, is a newer dump than the sets that carry their
+  BIOS (the set's USA BIOS, EPR-17952A, is the game's default now, and the game is English with
+  it), and every ST-V machine has a billboard (the score display over a Versus City cabinet)
+  whose Z80 program, `epr-18022.ic2`, no game set carries (optional now; without it its Z80 is
+  stopped).
+
+## Tecmo World Cup '98 (Sega ST-V)
+
+Two SH-2s at 28.6 MHz, a 68000 and the SCSP for sound, VDP1 sprites and VDP2 layers; 352x224 in
+attract mode, 704x448 interlaced in a match, 59.765 Hz. Buttons A, B, C (Button 1-3: shoot, pass,
+the third), on Z X A; the cabinet's 4th button does nothing and isn't named. `lockstep`.
+
+- **Speed** (`patches/0009`): a match took 25 ms a frame in Chrome against a 16.73 ms budget.
+  ~60% of both SH-2s' instructions were three idle loops at the driver's own recompiler hints
+  (`sh2drc_add_pcflush`, kept now without the recompiler): the interpreter runs one pass there
+  and, if it wrote nothing, took no interrupt and left every register as it was, skips all but
+  the last pass of the timeslice. VDP2's window tests and colour offsets were worked out per
+  pixel; they are cached per line and per screen update. Both exact: every picture and the
+  whole state (but the hint list) the same as before over a 3600-frame match. Now 12.4-13 ms a
+  frame in Chrome (M1 Max), Node 15-16.
+- **Save states** (`patches/0010`): MAME saved little of the ST-V beyond memory and registers.
+  Now also VDP1's framebuffers and clip rectangles (and its post-load no longer swaps the shown
+  framebuffer), VDP2's modes and counters (a machine that didn't know them configured the screen
+  again and its timing moved) with the SH-2s' clock restored from the dot clock, the SMPC's
+  status bits, the I/O chip's latches, the backup RAM, the SCSP's envelope phases, the 315-5881's
+  stream, and, after a load, the selected cartridge is copied into the A-bus again (a loaded
+  machine read zeros from the cartridge a few seconds later). Two gaps were MAME's own and hit
+  every game here: the scheduler's interleave boosts, and a CPU access a wait state deferred to
+  the next timeslice (counted twice after a load). Every game's state layout changed with these:
+  start-up states are made again with the new core.
+- **System RAM** for the lockstep checkpoints is the high work RAM (`workram_h`), where the game
+  runs (`patches/0010`, libretro.cpp).
+- **Start-up state** `twcup98.state`: `BOOT=17 node emulator/snapshot.mjs mame/dist/mame.mjs
+  twcup98.zip twcup98.state 9`, past the ST-V boot screens in the attract mode with 9 credits.
+- **Known**: MAME marks the game not working: the goalkeeper sometimes keeps the ball for good, a
+  soft lock ([mametesters 09491](https://mametesters.org/view.php?id=9491), open, also without
+  the recompiler). Its INPs were recorded with the EPR-23603 BIOS, which our set doesn't have, so
+  they don't replay here; bots shooting low at the keeper (~3500 shots) didn't hit it.
 
 ## Measured
 

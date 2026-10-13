@@ -451,6 +451,49 @@ catalog entry existed when these assets were made: the eventual game entry shoul
 select `cabinets: ["srallyc"]`, independently of its ROM/core/network setup. No
 catalog/map edits, ROM downloads/uploads, commit or deployment are included.
 
+### Tecmo World Cup '98 — black ST-V conversion
+
+```sh
+python3 tools/art/cabinet_pipeline.py validate twcup98
+python3 tools/art/cabinet_pipeline.py build twcup98
+python3 -m unittest discover -s tools/art -p 'test_twcup98.py'
+```
+
+Review `art/previews/twcup98.png`: four **32×48** sprites in
+`assets/tiles/objects/cabinet_twcup98_<facing>.png`, seven editable layers per
+facing in `art/objects/cabinet_twcup98_<facing>/`, and the offline recipe
+`tools/art/recipes/twcup98.json`. The shared upright renderer now optionally models
+bat-top joystick grips; default ball-top geometry and existing exports are unchanged.
+
+The selected cabinet is a **black operator conversion**, not a claimed dedicated
+Tecmo factory cabinet: green camouflage deck, two black bat-top sticks, six
+physical yellow/blue/red actions and two photographed white Start buttons.
+The [Museum of the Game page](https://www.arcade-museum.com/Videogame/tecmo-world-cup-98)
+links the [cabinet listing](https://www.ebay.com/itm/225014542368) and
+[Japanese operator-art listing](https://www.ebay.com/itm/286690604544).
+Their public images were decoded and archived; the listing pages returned 403 and
+were not bypassed. The Japanese kit corroborates ST-V and three A/B/C actions but
+is research only, not mixed into the English-marquee conversion. Its action colors
+differ from the conversion, whose wiring cannot be inferred from cap colors.
+
+The [English Tecmo flyer back](https://flyers.arcade-museum.com/videogames/show/5595)
+supplies the sharp blue/white/red title as an explicit adaptation of the
+photo's glare-obscured marquee, and actual same-game field/player imagery for
+the display. This is **printed game imagery, not a local emulator capture**; the
+selected cabinet is powered off. Aspect is preserved, with 1.2× screen brightness
+only at sprite scale. The front flyer and original downloads remain archived.
+No unseen side decals are invented: unverified outer sides stay black.
+Shell/coin-door/rear details are simplified shared geometry. Photos and Tecmo
+artwork retain underlying rights; redistribution permission is unresolved.
+Exact URLs, SHA-256s, measured extractions and uncertainties are in the recipe.
+
+There is no `twcup98` game entry yet in this checkout. Its eventual integration
+should select `cabinets: ["twcup98"]`; this task does not invent a core/BIOS/ROM
+configuration. No map placement, ROM capture/download/upload, commit or deployment.
+Visual approval is still needed. Validation/build and the Tecmo-specific tests pass;
+the full art suite currently has four unrelated stale catalog assertions (Daytona,
+Namco, Virtua Striker and Virtua Tennis) that omit existing genre/wheel/options.
+
 ### Virtua Striker 2 '98 — Sega sports upright
 
 ```sh

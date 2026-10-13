@@ -50,7 +50,15 @@ def model(recipe):
         if kind == 'joystick':
             color = recipe.get('station_colors', [recipe['colors']['stick']] * len(recipe['stations']))[i]
             solids.append(base.Solid('stick', 10.4, 10.8, y - .2, y + .2, 17, 19.1))
-            solids.append(base.Ball((10.6, y, 19.4), .7, tuple(color)))
+            if recipe.get('joystick_grip') == 'bat':
+                # Tapered black handles on operator conversion panels, not balls.
+                solids.append(base.Solid('grip', 10.15, 11.05, y - .45, y + .45,
+                                         18.7, 20.5,
+                                         (((1, 0, -.15), 7.975), ((-1, 0, -.15), -13.225),
+                                          ((0, 1, -.15), y - 2.625), ((0, -1, -.15), -y - 2.625)),
+                                         color=tuple(color)))
+            else:
+                solids.append(base.Ball((10.6, y, 19.4), .7, tuple(color)))
         elif kind == 'mounted-guns':
             # Fixed-base machine guns point back toward the monitor, not ball-top sticks.
             solids.extend([
@@ -137,6 +145,8 @@ def paint(solid, p, n, tex, *, recipe):
     if part == 'neck':
         return 'body', colors['body'], False
     if part == 'button':
+        return 'controls', solid.color, False
+    if part == 'grip':
         return 'controls', solid.color, False
     if part == 'stick':
         return 'controls', (57, 57, 64), False

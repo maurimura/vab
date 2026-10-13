@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds MAME's Namco System 12 (Tekken 3), System 23 (Time Crisis II) and Midway V-Unit (Cruis'n
-# USA) drivers as a standalone Emscripten ES module that speaks the libretro API, so
+# Builds MAME's Namco System 12 (Tekken 3), System 23 (Time Crisis II), Midway V-Unit (Cruis'n
+# USA) and Sega ST-V (Tecmo World Cup '98) drivers as a standalone Emscripten ES module that
+# speaks the libretro API, so
 # web/emulator/libretro.js and worker.js drive it like the FBNeo cores (emulator/build.sh) and
 # Supermodel (supermodel/build.sh).
 #
@@ -27,10 +28,11 @@ MAME_COMMIT="9069f39340f2d2b1795df8e71bb1d3d0fbc76598" # 2026-09-24
 
 # The drivers in the core: Namco System 12 (Tekken 3, Soul Calibur, ...), System 23 / Super
 # System 23 (Time Crisis II, Motocross Go!, ...; its R4650 is MAME's MIPS III core, which brings
-# the DRC with its C backend: Emscripten builds have NOASM, so FORCE_DRC_C_BACKEND) and Midway
+# the DRC with its C backend: Emscripten builds have NOASM, so FORCE_DRC_C_BACKEND), Midway
 # V-Unit (Cruis'n USA, Cruis'n World, Off Road Challenge, War Gods: a TMS320C31, the DCS sound
-# board's ADSP-2105, an ADC0844 for the wheel and pedals; midvunit_v.cpp comes with it).
-SOURCES="src/mame/namco/namcos12.cpp,src/mame/namco/namcos23.cpp,src/mame/williams/midvunit.cpp"
+# board's ADSP-2105, an ADC0844 for the wheel and pedals; midvunit_v.cpp comes with it) and Sega
+# ST-V (Tecmo World Cup '98 and the other ST-V games: two SH-2s, the Saturn VDPs, SCU and SCSP).
+SOURCES="src/mame/namco/namcos12.cpp,src/mame/namco/namcos23.cpp,src/mame/williams/midvunit.cpp,src/mame/sega/stv.cpp"
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HERE="$ROOT/mame"
@@ -51,22 +53,42 @@ source "$EMSDK_DIR/emsdk_env.sh" >/dev/null 2>&1
 export EMSCRIPTEN="$EMSDK_DIR/upstream/emscripten"
 
 if [ "$STEP" = all ]; then
-  # 2. MAME at the pinned commit, with our patches (each applied once: a patch that reverses
-  #    cleanly is already in).
+  # 2. MAME at the pinned commit, with our patches, each applied once, in order. The checkout's
+  #    .vab-patches lists the ones in (name and checksum): when that's the start of our list only
+  #    the rest go in; otherwise (a patch changed, or one came before another) the checkout's
+  #    files are put back as they were and all of them go in. (Whether a patch reverses cleanly
+  #    can't tell: later patches edit lines earlier ones add.)
   if [ ! -d "$SRC/.git" ]; then
     git init -q "$SRC"
     git -C "$SRC" remote add origin "$MAME_REPO"
   fi
+  applied="$SRC/.vab-patches"
   if [ "$(git -C "$SRC" rev-parse HEAD 2>/dev/null)" != "$MAME_COMMIT" ]; then
     git -C "$SRC" fetch --depth 1 origin "$MAME_COMMIT"
     git -C "$SRC" checkout -q --force FETCH_HEAD # drops patches applied to the old commit
+    rm -f "$applied"
   fi
-  for patch in "$HERE"/patches/*.patch; do
-    [ -e "$patch" ] || continue
-    if ! git -C "$SRC" apply --reverse --check "$patch" 2>/dev/null; then
-      git -C "$SRC" apply "$patch"
-    fi
-  done
+  patches=("$HERE"/patches/*.patch)
+  want=""
+  for patch in "${patches[@]}"; do want+="$(basename "$patch") $(shasum "$patch" | cut -d' ' -f1)"$'\n'; done
+  have="$(cat "$applied" 2>/dev/null || true)"
+  [ -z "$have" ] || have+=$'\n'
+  if [ "${want#"$have"}" = "$want" ] && [ -n "$have$(git -C "$SRC" status --porcelain --untracked-files=no)" ]; then
+    echo "MAME's patches changed: putting the checkout back and applying them all"
+    git -C "$SRC" checkout -q --force HEAD -- .
+    rm -f "$applied"
+    for patch in "${patches[@]}"; do # files our patches create
+      awk '/^new file mode/ { new = 1 } /^\+\+\+ b\// { if (new) print substr($2, 3); new = 0 }' "$patch" |
+        while read -r file; do rm -f "$SRC/$file"; done
+    done
+    have=""
+  fi
+  rest="${want#"$have"}"
+  while read -r name _; do
+    [ -n "$name" ] || continue
+    git -C "$SRC" apply "$HERE/patches/$name"
+    grep "^$name " <<< "$want" >> "$applied"
+  done <<< "$rest"
 
   # 3. MAME's build: its own GENie (built natively), then every library for asmjs.
   #    CONFIG=libretro is the fork's configuration (retro OSD, no BGFX/MIDI); -fwasm-exceptions

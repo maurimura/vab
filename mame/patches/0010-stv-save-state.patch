@@ -1,0 +1,428 @@
+Save states for Sega ST-V (Tecmo World Cup '98) and two MAME core gaps they showed: a machine
+that loads a state goes on exactly as the one that saved it, whatever it ran before (another
+player joining, a watcher, a resync). Found by diffing whole states item by item (straight run,
+same machine after a load, a fresh machine after reset + load) and per-event logs.
+
+- VDP1 (saturn_v.cpp): the two framebuffers (shown and drawn), the end-of-list registers (LOPR,
+  COPR, EWDR) and the clip rectangles are saved; its post-load set the framebuffer
+  configuration from the registers, which also made framebuffer 0 the drawn one and 1 the shown
+  one: now it keeps the saved choice.
+- VDP2: the dot clock and TV standard (dotsel, pal), the latched H/V counters and their flags,
+  and the modes it last configured the screen and palette for (old_tvmd, old_crmd: a machine
+  that doesn't know them configures the screen again on its next frame and its timing moves).
+  After a load the SH-2s' clock follows the saved dot clock (dot_select_w sets it; device
+  clocks aren't in save states: a machine loading one went on at 320 dots' clock).
+- SMPC: INTBACK's status bits (the reset button's NMI enable, the dot clock) and the CD flag.
+- ST-V (stv.cpp): the I/O chip's latches (port D's read-back: the game sets the coin counters
+  and lockouts read-modify-write every frame; its mode, port G, the counters' bases, the serial
+  byte), the A-bus protection's enable and key, and the backup RAM (zeros at power-on, not NVRAM
+  on ST-V: the game keeps settings and play data there from the boot on).
+- The A-bus (stv.cpp): stv_select_game copies the selected game's cartridge (48 MB) into the
+  "abus" region the CPUs read it from, and memory regions aren't in states: a machine that loaded
+  a state (its bank number already the saved one) never copied it and read zeros from the
+  cartridge, which shows once the game streams data from it (through the 315-5881) a few seconds
+  later. After a load the saved selection's cartridge is copied in.
+- 315-5881 (315-5881_crypt.cpp): the rest of a stream's decryption and decompression
+  (first_read, buffer_bit/bit2, buffer2/2a, block_size/pos/numlines, done_compression) is saved,
+  and reset with the rest: a machine kept its own last stream's through a load and, most of
+  it, a reset.
+- SCSP: each slot's envelope phase (attack, decay 1/2, release; an int now, to be saveable) and
+  its last sample (interpolation). Without them the sound CPU drifted even in the same machine.
+- Scheduler (schedule.cpp): the active quanta (add_quantum's interleave boosts: twcup98 asks for
+  5 us slices for 400 us on every MINIT/SINIT) are saved and made again on load.
+- CPUs (devcpu.cpp, diexec.cpp): an access that a wait state deferred to the next timeslice
+  (access_before_delay) remembers that its delay was counted by a tag, a handler's address in
+  that machine, which no state carried: a machine loading a state taken with one pending counted
+  the delay again, one 68000 cycle behind from there. The state saves whether there is one, and
+  after a load the access being redone matches. Every CPU on the core gets these items, so every
+  game's state layout changes (start-up states must be made again).
+- libretro.cpp: RETRO_MEMORY_SYSTEM_RAM is the Saturn/ST-V high work RAM (workram_h), where the
+  game runs: the largest-RAM rule took the low one, the same size, which barely changes in a game,
+  so lockstep checkpoints couldn't see two machines drift apart.
+
+Verified (mame/.cache/checks): states taken in the menus and in a match replay byte-identical
+for 300 frames in the same machine, the same after a reset, and a fresh machine after reset +
+load with any history before it; pictures identical from the second frame (the frontend draws a
+fresh machine's first frame not at all, as always). emulator/netplay-check.mjs (real workers,
+LOCKSTEP=1, two players joining, playing and leaving, a watcher) stays in step, also at 60 ms
+one way with 25 ms jitter and 2% loss; before the A-bus and 315-5881 fixes the joiner drifted
+from the host about 5 s after every handover (found by replaying the host's whole life offline
+and bisecting it: the frame where the game selected its cartridge).
+
+diff --git a/src/devices/sound/scsp.cpp b/src/devices/sound/scsp.cpp
+--- a/src/devices/sound/scsp.cpp
++++ b/src/devices/sound/scsp.cpp
+@@ -216,6 +216,8 @@
+ 		save_item(NAME(m_Slots[slot].nxt_addr), slot);
+ 		save_item(NAME(m_Slots[slot].step), slot);
+ 		save_item(NAME(m_Slots[slot].EG.volume), slot);
++		save_item(NAME(m_Slots[slot].EG.state), slot); // attack, decay 1/2, release
++		save_item(NAME(m_Slots[slot].Prev), slot); // the last sample, for interpolation
+ 		save_item(NAME(m_Slots[slot].EG.step), slot);
+ 		save_item(NAME(m_Slots[slot].EG.AR), slot);
+ 		save_item(NAME(m_Slots[slot].EG.D1R), slot);
+diff --git a/src/devices/sound/scsp.h b/src/devices/sound/scsp.h
+--- a/src/devices/sound/scsp.h
++++ b/src/devices/sound/scsp.h
+@@ -63,7 +63,7 @@
+ 	struct SCSP_EG_t
+ 	{
+ 		int volume; //
+-		SCSP_STATE state;
++		int state; // SCSP_STATE (an int to be in save states)
+ 		int step;
+ 		//step vals
+ 		int AR;     //Attack
+diff --git a/src/emu/devcpu.cpp b/src/emu/devcpu.cpp
+--- a/src/emu/devcpu.cpp
++++ b/src/emu/devcpu.cpp
+@@ -72,9 +72,29 @@
+ 	return false;
+ }
+ 
++const char cpu_device::s_any_access = 0;
++
++void cpu_device::register_access_save_state()
++{
++	save_item(NAME(m_access_to_be_redone));
++	save_item(NAME(m_access_delay_charged));
++	machine().save().register_presave(save_prepost_delegate(FUNC(cpu_device::access_presave), this));
++	machine().save().register_postload(save_prepost_delegate(FUNC(cpu_device::access_postload), this));
++}
++
++void cpu_device::access_presave()
++{
++	m_access_delay_charged = m_access_before_delay_tag != nullptr;
++}
++
++void cpu_device::access_postload()
++{
++	m_access_before_delay_tag = m_access_delay_charged ? &s_any_access : nullptr;
++}
++
+ bool cpu_device::access_before_delay(u32 cycles, const void *tag) noexcept
+ {
+-	if(tag == m_access_before_delay_tag) {
++	if(tag == m_access_before_delay_tag || m_access_before_delay_tag == &s_any_access) {
+ 		m_access_before_delay_tag = nullptr;
+ 		return false;
+ 	}
+diff --git a/src/emu/devcpu.h b/src/emu/devcpu.h
+--- a/src/emu/devcpu.h
++++ b/src/emu/devcpu.h
+@@ -54,6 +54,10 @@
+ 	void defer_access() noexcept;
+ 	void retry_access() noexcept;
+ 
++	// save states: whether an access deferred to the next timeslice has had its delay already
++	// (device_execute_interface registers it for every CPU)
++	void register_access_save_state();
++
+ protected:
+ 	// construction/destruction
+ 	cpu_device(const machine_config &mconfig, device_type type, const char *tag, device_t *owner, u32 clock);
+@@ -64,6 +68,13 @@
+ 
+ 	bool m_access_to_be_redone;            // whether an access needs to be redone
+ 	const void *m_access_before_delay_tag; // if the tag matches on access_before_delay, consider the delay to have already happened
++
++	// In save states the tag (a handler's address, the machine's own) is only whether there is
++	// one; after a load the access being redone, whichever it is, matches.
++	bool m_access_delay_charged = false;
++	static const char s_any_access;
++	void access_presave();
++	void access_postload();
+ };
+ 
+ #endif // MAME_EMU_DEVCPU_H
+diff --git a/src/emu/diexec.cpp b/src/emu/diexec.cpp
+--- a/src/emu/diexec.cpp
++++ b/src/emu/diexec.cpp
+@@ -409,6 +409,10 @@
+ 	// fill in the input states and IRQ callback information
+ 	for (int line = 0; line < std::size(m_input); line++)
+ 		m_input[line].start(*this, line);
++
++	// a CPU's access deferred to the next timeslice, with its delay already counted
++	if (cpu_device *const cpu = dynamic_cast<cpu_device *>(&device()))
++		cpu->register_access_save_state();
+ }
+ 
+ 
+diff --git a/src/emu/schedule.cpp b/src/emu/schedule.cpp
+--- a/src/emu/schedule.cpp
++++ b/src/emu/schedule.cpp
+@@ -303,6 +303,11 @@
+ 
+ 	// register global states
+ 	machine.save().save_item(NAME(m_basetime));
++	machine.save().save_item(NAME(m_saved_quanta));
++	machine.save().save_item(NAME(m_saved_quantum_actual));
++	machine.save().save_item(NAME(m_saved_quantum_requested));
++	machine.save().save_item(NAME(m_saved_quantum_seconds));
++	machine.save().save_item(NAME(m_saved_quantum_attoseconds));
+ 	machine.save().register_presave(save_prepost_delegate(FUNC(device_scheduler::presave), this));
+ 	machine.save().register_postload(save_prepost_delegate(FUNC(device_scheduler::postload), this));
+ }
+@@ -681,6 +686,22 @@
+ 	// active, so two identical machines' states differ by when each one last saved
+ 	for (emu_timer *timer = m_inactive_timers; timer; timer = timer->m_next)
+ 		timer->m_index = 0;
++
++	// the active quanta, in the list's order (by requested duration)
++	m_saved_quanta = 0;
++	for (quantum_slot *quant = m_quantum_list.first(); quant && m_saved_quanta < SAVED_QUANTA; quant = quant->next())
++	{
++		m_saved_quantum_actual[m_saved_quanta] = quant->m_actual;
++		m_saved_quantum_requested[m_saved_quanta] = quant->m_requested;
++		m_saved_quantum_seconds[m_saved_quanta] = quant->m_expire.seconds();
++		m_saved_quantum_attoseconds[m_saved_quanta] = quant->m_expire.attoseconds();
++		m_saved_quanta++;
++	}
++	for (u32 i = m_saved_quanta; i < SAVED_QUANTA; i++)
++	{
++		m_saved_quantum_actual[i] = m_saved_quantum_requested[i] = m_saved_quantum_attoseconds[i] = 0;
++		m_saved_quantum_seconds[i] = 0;
++	}
+ #if VERBOSE
+ 	dump_timers();
+ #endif
+@@ -693,6 +714,20 @@
+ 
+ void device_scheduler::postload()
+ {
++	// the active quanta as saved
++	while (m_quantum_list.first())
++		m_quantum_allocator.reclaim(m_quantum_list.detach(*m_quantum_list.first()));
++	quantum_slot *last = nullptr;
++	for (u32 i = 0; i < std::min<u32>(m_saved_quanta, SAVED_QUANTA); i++)
++	{
++		quantum_slot &quant = *m_quantum_allocator.alloc();
++		quant.m_actual = m_saved_quantum_actual[i];
++		quant.m_requested = m_saved_quantum_requested[i];
++		quant.m_expire = attotime(m_saved_quantum_seconds[i], m_saved_quantum_attoseconds[i]);
++		m_quantum_list.insert_after(quant, last);
++		last = &quant;
++	}
++
+ 	// remove all timers and make a private list of permanent ones
+ 	emu_timer *private_list = nullptr;
+ 	while (m_inactive_timers)
+diff --git a/src/emu/schedule.h b/src/emu/schedule.h
+--- a/src/emu/schedule.h
++++ b/src/emu/schedule.h
+@@ -181,6 +181,15 @@
+ 	simple_list<quantum_slot>   m_quantum_list;             // list of active quanta
+ 	fixed_allocator<quantum_slot> m_quantum_allocator;      // allocator for quanta
+ 	attoseconds_t               m_quantum_minimum;          // duration of minimum quantum
++
++	// the active quanta in save states (presave copies the list here, postload makes it again):
++	// a machine that loads a state goes on with the interleave boosts the saving one had
++	static constexpr int SAVED_QUANTA = 16;
++	u32                         m_saved_quanta = 0;
++	attoseconds_t               m_saved_quantum_actual[SAVED_QUANTA]{};
++	attoseconds_t               m_saved_quantum_requested[SAVED_QUANTA]{};
++	s32                         m_saved_quantum_seconds[SAVED_QUANTA]{};
++	attoseconds_t               m_saved_quantum_attoseconds[SAVED_QUANTA]{};
+ };
+ 
+ 
+diff --git a/src/mame/sega/315-5881_crypt.cpp b/src/mame/sega/315-5881_crypt.cpp
+--- a/src/mame/sega/315-5881_crypt.cpp
++++ b/src/mame/sega/315-5881_crypt.cpp
+@@ -70,6 +70,17 @@
+ 	save_item(NAME(buffer_pos));
+ 	save_item(NAME(line_buffer_pos));
+ 	save_item(NAME(line_buffer_size));
++	// the rest of a stream's decryption and decompression, which a machine otherwise kept from
++	// its own last stream through a load (and a reset, for most of it)
++	save_item(NAME(first_read));
++	save_item(NAME(buffer_bit));
++	save_item(NAME(buffer_bit2));
++	save_item(NAME(buffer2));
++	save_item(NAME(buffer2a));
++	save_item(NAME(block_size));
++	save_item(NAME(block_pos));
++	save_item(NAME(block_numlines));
++	save_item(NAME(done_compression));
+ 
+ 	std::string skey = parameter("key");
+ 	if(!skey.empty())
+@@ -98,6 +109,13 @@
+ 	line_buffer_pos = 0;
+ 	line_buffer_size = 0;
+ 	buffer_bit = 0;
++	buffer_bit2 = 0;
++	buffer2[0] = buffer2[1] = 0;
++	buffer2a = 0;
++	block_size = 0;
++	block_pos = 0;
++	block_numlines = 0;
++	done_compression = 0;
+ }
+ 
+ /*************************************************
+diff --git a/src/mame/sega/saturn_v.cpp b/src/mame/sega/saturn_v.cpp
+--- a/src/mame/sega/saturn_v.cpp
++++ b/src/mame/sega/saturn_v.cpp
+@@ -2248,10 +2248,17 @@
+ 	int offset;
+ 	uint32_t data;
+ 
++	// The framebuffers' size from the registers, keeping which one is drawn and which shown
++	// (vdp1_set_framebuffer_config() starts a new configuration on 0 and 1).
++	const int current_display = m_vdp1.framebuffer_current_display;
++	const int current_draw = m_vdp1.framebuffer_current_draw;
+ 	m_vdp1.framebuffer_mode = -1;
+ 	m_vdp1.framebuffer_double_interlace = -1;
+ 
+ 	vdp1_set_framebuffer_config();
++	m_vdp1.framebuffer_current_display = current_display;
++	m_vdp1.framebuffer_current_draw = current_draw;
++	vdp1_prepare_framebuffers();
+ 
+ 	for (offset = 0; offset < 0x80000/4; offset++ )
+ 	{
+@@ -2301,6 +2308,21 @@
+ 	save_item(NAME(m_vdp1.framebuffer_clear_on_next_frame));
+ 	save_item(NAME(m_vdp1.local_x));
+ 	save_item(NAME(m_vdp1.local_y));
++	// the rest of what VDP1 carries from one frame to the next: the framebuffers (what's shown,
++	// what's being drawn), the end-of-list registers, the clip rectangles
++	save_pointer(NAME(m_vdp1.framebuffer[0]), 1024 * 256 * 2);
++	save_pointer(NAME(m_vdp1.framebuffer[1]), 1024 * 256 * 2);
++	save_item(NAME(m_vdp1.lopr));
++	save_item(NAME(m_vdp1.copr));
++	save_item(NAME(m_vdp1.ewdr));
++	save_item(NAME(m_vdp1.system_cliprect.min_x));
++	save_item(NAME(m_vdp1.system_cliprect.max_x));
++	save_item(NAME(m_vdp1.system_cliprect.min_y));
++	save_item(NAME(m_vdp1.system_cliprect.max_y));
++	save_item(NAME(m_vdp1.user_cliprect.min_x));
++	save_item(NAME(m_vdp1.user_cliprect.max_x));
++	save_item(NAME(m_vdp1.user_cliprect.min_y));
++	save_item(NAME(m_vdp1.user_cliprect.max_y));
+ 	machine().save().register_postload(save_prepost_delegate(FUNC(saturn_state::vdp1_state_save_postload), this));
+ 	return 0;
+ }
+@@ -8475,6 +8497,12 @@
+ 	vdp2_layer_data = _vdp2_layer_data();
+ 
+ 	refresh_palette_data();
++
++	// The SH-2s' clock goes with the dot clock (dot_select_w); device clocks aren't in save
++	// states, so a machine loading one would go on at its own (the 320 dots one after a reset).
++	const XTAL &xtal = m_vdp2.dotsel ? MASTER_CLOCK_352 : MASTER_CLOCK_320;
++	m_maincpu->set_unscaled_clock(xtal/2);
++	m_slave->set_unscaled_clock(xtal/2);
+ }
+ 
+ void saturn_state::vdp2_exit()
+@@ -8502,6 +8530,17 @@
+ 	save_pointer(NAME(m_vdp2_regs), 0x040000/2);
+ 	save_pointer(NAME(m_vdp2_vram), 0x100000/4);
+ 	save_pointer(NAME(m_vdp2_cram), 0x080000/4);
++	// VDP2's own state besides its registers: the dot clock and TV standard the SMPC set, the
++	// latched counters and their flags, and the last modes it configured the screen and the
++	// palette for (a machine that doesn't know them configures the screen again: its timing moves)
++	save_item(NAME(m_vdp2.dotsel));
++	save_item(NAME(m_vdp2.pal));
++	save_item(NAME(m_vdp2.h_count));
++	save_item(NAME(m_vdp2.v_count));
++	save_item(NAME(m_vdp2.exltfg));
++	save_item(NAME(m_vdp2.exsyfg));
++	save_item(NAME(m_vdp2.old_crmd));
++	save_item(NAME(m_vdp2.old_tvmd));
+ 	machine().save().register_postload(save_prepost_delegate(FUNC(saturn_state::vdp2_state_save_postload), this));
+ 
+ 	return 0;
+diff --git a/src/mame/sega/smpc.cpp b/src/mame/sega/smpc.cpp
+--- a/src/mame/sega/smpc.cpp
++++ b/src/mame/sega/smpc.cpp
+@@ -137,6 +137,10 @@
+ 	save_item(NAME(m_pmode));
+ 	save_item(NAME(m_rtc_data));
+ 	save_item(NAME(m_smem));
++	// INTBACK's status (the reset button's NMI enable, the dot clock) and the CD's flag
++	save_item(NAME(m_cd_sf));
++	save_item(NAME(m_NMI_reset));
++	save_item(NAME(m_cur_dotsel));
+ 
+ 	m_cmd_timer = timer_alloc(FUNC(smpc_hle_device::handle_command), this);
+ 	m_rtc_timer = timer_alloc(FUNC(smpc_hle_device::handle_rtc_increment), this);
+diff --git a/src/mame/sega/stv.cpp b/src/mame/sega/stv.cpp
+--- a/src/mame/sega/stv.cpp
++++ b/src/mame/sega/stv.cpp
+@@ -1062,6 +1062,16 @@
+ 	}
+ }
+ 
++void stv_state::stv_select_game_postload()
++{
++	// (none selected yet: the A-bus keeps what it has, as it would after a reset)
++	const uint8_t game = m_prev_gamebank_select;
++	if (game == 0xff)
++		return;
++	m_prev_gamebank_select = 0xff;
++	stv_select_game(game);
++}
++
+ uint8_t stv_state::pdr1_input_r()
+ {
+ 	return (m_pdr[0]->read() & 0x40) | 0x3f;
+@@ -1353,6 +1363,22 @@
+ 	save_item(NAME(m_mux_data));
+ 	save_item(NAME(m_scsp_last_line));
+ 	save_item(NAME(m_vdp2.odd));
++	// the I/O chip's latches: port D's read-back (the game sets the coin counters and lockouts
++	// read-modify-write), its mode, port G's select, the coin counters' bases, the serial byte;
++	// the A-bus protection's enable and key
++	save_item(NAME(m_system_output));
++	save_item(NAME(m_ioga_mode));
++	save_item(NAME(m_ioga_portg));
++	save_item(NAME(m_ioga_count));
++	save_item(NAME(m_serial_tx));
++	save_item(NAME(m_abus_protenable));
++	save_item(NAME(m_abus_protkey));
++	// the backup RAM (zeros at power-on, not NVRAM here): the game keeps its settings and play
++	// data there from the boot on
++	save_pointer(NAME(m_backupram), 0x8000);
++	// the A-bus holds a copy of the selected game's cartridge (stv_select_game), which no state
++	// carries: a machine that loads one copies the cartridge the state selected
++	machine().save().register_postload(save_prepost_delegate(FUNC(stv_state::stv_select_game_postload), this));
+ 
+ 	stv_register_protection_savestates();
+ }
+diff --git a/src/mame/sega/stv.h b/src/mame/sega/stv.h
+--- a/src/mame/sega/stv.h
++++ b/src/mame/sega/stv.h
+@@ -172,6 +172,7 @@
+ 	void pdr1_output_w(uint8_t data);
+ 	void pdr2_output_w(uint8_t data);
+ 	void stv_select_game(int gameno);
++	void stv_select_game_postload();
+ 	uint8_t     m_prev_gamebank_select = 0;
+ 
+ 	void sound_mem(address_map &map) ATTR_COLD;
+diff --git a/src/osd/libretro/libretro-internal/libretro.cpp b/src/osd/libretro/libretro-internal/libretro.cpp
+--- a/src/osd/libretro/libretro-internal/libretro.cpp
++++ b/src/osd/libretro/libretro-internal/libretro.cpp
+@@ -1267,10 +1267,18 @@
+       return;
+ 
+    ram_device *ram = cpu->subdevice<ram_device>("ram");
++   /* Sega Saturn / ST-V: the game runs from the high work RAM; the low one, as big, barely
++    * changes in a game (Tecmo World Cup '98), and the largest-RAM rule took it, the first */
++   memory_share *workram_h = machine->root_device().memshare("workram_h");
+    if (ram && ram->pointer() && ram->size())
+    {
+       system_ram_ptr = ram->pointer();
+       system_ram_size = ram->size();
++   }
++   else if (workram_h && workram_h->ptr() && workram_h->bytes())
++   {
++      system_ram_ptr = workram_h->ptr();
++      system_ram_size = workram_h->bytes();
+    }
+    else
+    {

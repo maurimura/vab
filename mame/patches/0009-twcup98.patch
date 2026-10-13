@@ -1,0 +1,697 @@
+Tecmo World Cup '98 (Sega ST-V, stv.cpp) at the arcade bar: it starts with the ROM sets that
+exist, and runs a match inside a frame on WebAssembly.
+
+- stv.cpp: twcup98's default BIOS is the USA one (EPR-17952A). MAME 0.289's default ST-V BIOS,
+  EPR-23603 (Japan 00/10/24), is a newer dump than the game sets that carry their BIOS files, so
+  MAME refused to start; the game is English with the USA BIOS (MAME testers report the game's
+  bugs the same with -bios us).
+- segabill.cpp: the Sega billboard (the score display above a Versus City cabinet, in every
+  ST-V machine) has its program ROM optional, zeros when missing; the sets don't carry its
+  device set (segabill.zip). Without a program its Z80 is stopped after the reset (it ran zeros,
+  ~2% of a frame), and nothing the game does depends on it.
+- SH-2 interpreter (sh2.cpp, sh.cpp): idle loops are skipped. The driver's pcflush addresses
+  (the recompiler's speedup hints, which MAME dropped when the recompiler is off: now kept) mark
+  where a game waits: Tecmo World Cup '98's master calls an empty hook and reads a RAM flag that
+  its vblank handler sets, its slave reads the FRT status until the master's MINIT sets the input
+  capture flag; ~60% of both CPUs' instructions. At such an address a pass of the loop runs as
+  usual; if it wrote no memory, took no interrupt and left every register as it was, every later
+  pass in the same timeslice is the same (nothing else runs meanwhile), so all but the last are
+  skipped with their cycles counted. The machine's state is the one the full loop gives:
+  verified byte-identical against the plain interpreter over a 3600-frame two-player match (whole
+  save state but the saved hint list, and every picture). Also, the interpreter fetches through
+  the opcode space's cache, as the recompiler does (the same words, without the dispatch).
+- VDP2 (saturn_v.cpp): caches for one screen update, where registers and VRAM are constant:
+  each window's coordinates for the last line asked, each line's window test as two intervals
+  (vdp2_window_process and the RBG windows did both windows' coordinates for every pixel), the
+  colour offsets as a table per channel; the rotation layer's copy keeps the blending and offsets
+  out of its pixel loop. Pictures byte-identical to before.
+
+- Controls (libretro.cpp, patches/0002's per-game names): the cabinet's own A, B, C on Button
+  1-3; a name "" leaves a button off the descriptors, and Button 4, which the game doesn't use,
+  has it.
+
+Measured in Chrome 154 (M1 Max, a match, 704x448): 25.1 -> 12.4 ms per frame (p50), budget 16.73.
+
+diff --git a/src/devices/cpu/sh/sh.cpp b/src/devices/cpu/sh/sh.cpp
+--- a/src/devices/cpu/sh/sh.cpp
++++ b/src/devices/cpu/sh/sh.cpp
+@@ -4104,8 +4104,8 @@
+ 
+ void sh_common_execution::sh2drc_add_pcflush(offs_t address)
+ {
+-	if (!allow_drc()) return;
+-
++	// Kept without the recompiler too: the SH-2 interpreter skips idle loops at these addresses
++	// (sh2_device::execute_run).
+ 	if (m_pcfsel < std::size(m_pcflushes))
+ 		m_pcflushes[m_pcfsel++] = address;
+ }
+diff --git a/src/devices/cpu/sh/sh2.cpp b/src/devices/cpu/sh/sh2.cpp
+--- a/src/devices/cpu/sh/sh2.cpp
++++ b/src/devices/cpu/sh/sh2.cpp
+@@ -157,6 +157,7 @@
+ 
+ void sh2_device::write_byte(offs_t offset, uint8_t data)
+ {
++	m_writes++;
+ 	if ((offset & 0xf0000000) == 0 || (offset & 0xf0000000) == 0x20000000)
+ 	{
+ 		m_program->write_byte(offset & m_am, data);
+@@ -168,6 +169,7 @@
+ 
+ void sh2_device::write_word(offs_t offset, uint16_t data)
+ {
++	m_writes++;
+ 	if ((offset & 0xf0000000) == 0 || (offset & 0xf0000000) == 0x20000000)
+ 	{
+ 		m_program->write_word(offset & m_am, data);
+@@ -179,6 +181,7 @@
+ 
+ void sh2_device::write_long(offs_t offset, uint32_t data)
+ {
++	m_writes++;
+ 	if ((offset & 0xf0000000) == 0 || (offset & 0xf0000000) == 0x20000000)
+ 	{
+ 		m_program->write_dword(offset & m_am, data);
+@@ -302,13 +305,52 @@
+ 		m_sh2_state->icount = 0;
+ 		return;
+ 	}
++
++	// Idle loops: at one of the driver's pcflush addresses (where its recompiler expects a game
++	// to wait), a pass of the loop is run as usual, from the address back to it. If it wrote no
++	// memory, took no interrupt and left every register as it found it, the pass is a fixed
++	// point: nothing else runs during this timeslice, so every later pass in it is the same. All
++	// of them but the last are then skipped, their cycles counted as run; the last runs as usual
++	// and ends the timeslice where it would have ended. The machine's state afterwards is the
++	// one the full loop gives (the loops these hints mark read RAM or side-effect-free registers).
++	m_idle_mask = 0;
++	for (int i = 0; i < m_pcfsel; i++)
++		m_idle_mask |= 1U << ((m_pcflushes[i] >> 1) & 31);
++	m_idle_probe = false;
+ 
+ 	do
+ 	{
+ 		debugger_instruction_hook(m_sh2_state->pc);
+ 
+-		const uint16_t opcode = m_decrypted_program->read_word(m_sh2_state->pc >= 0x40000000 ? m_sh2_state->pc : m_sh2_state->pc & m_am);
++		if (BIT(m_idle_mask, (m_sh2_state->pc >> 1) & 31) && !m_sh2_state->m_delay)
++		{
++			bool hint = false;
++			for (int i = 0; i < m_pcfsel && !hint; i++)
++				hint = m_pcflushes[i] == m_sh2_state->pc;
++			if (hint)
++			{
++				if (m_idle_probe && m_idle_regs.pc == m_sh2_state->pc)
++				{
++					const int cost = m_idle_icount - m_sh2_state->icount;
++					if (m_writes == m_idle_writes && !m_test_irq && cost > 0 && idle_snapshot() == m_idle_regs)
++						m_sh2_state->icount -= (m_sh2_state->icount - 1) / cost * cost;
++					m_idle_probe = false;
++				}
++				else
++				{
++					m_idle_probe = true;
++					m_idle_regs = idle_snapshot();
++					m_idle_icount = m_sh2_state->icount;
++					m_idle_writes = m_writes;
++				}
++			}
++		}
+ 
++		// The fetch through the opcode space's cache (a pointer for RAM and ROM), as the
++		// recompiler fetches: the same words as the space's read_word, without its dispatch.
++		const uint32_t fetch = m_sh2_state->pc >= 0x40000000 ? m_sh2_state->pc : m_sh2_state->pc & m_am;
++		const uint16_t opcode = m_cache32.read_word(fetch);
++
+ 		if (m_sh2_state->m_delay)
+ 		{
+ 			m_sh2_state->pc = m_sh2_state->m_delay;
+@@ -326,6 +368,23 @@
+ 		}
+ 		m_sh2_state->icount--;
+ 	} while (m_sh2_state->icount > 0);
++}
++
++sh2_device::idle_regs sh2_device::idle_snapshot() const
++{
++	idle_regs regs;
++	regs.pc = m_sh2_state->pc;
++	regs.pr = m_sh2_state->pr;
++	regs.sr = m_sh2_state->sr;
++	regs.mach = m_sh2_state->mach;
++	regs.macl = m_sh2_state->macl;
++	std::copy(std::begin(m_sh2_state->r), std::end(m_sh2_state->r), std::begin(regs.r));
++	regs.ea = m_sh2_state->ea;
++	regs.target = m_sh2_state->target;
++	regs.gbr = m_sh2_state->gbr;
++	regs.vbr = m_sh2_state->vbr;
++	regs.delay = m_sh2_state->m_delay;
++	return regs;
+ }
+ 
+ void sh2_device::init_drc_frontend()
+diff --git a/src/devices/cpu/sh/sh2.h b/src/devices/cpu/sh/sh2.h
+--- a/src/devices/cpu/sh/sh2.h
++++ b/src/devices/cpu/sh/sh2.h
+@@ -96,6 +96,22 @@
+ 
+ 	uint32_t m_cpu_off;
+ 	int8_t m_irq_line_state[17];
++
++	// Idle loops in the interpreter (see execute_run): the driver's pcflush addresses (its
++	// recompiler speedup hints), a pass probed there, and the memory writes counted meanwhile.
++	// Not in save states: a probe never outlives the timeslice it started in.
++	struct idle_regs
++	{
++		uint32_t pc, pr, sr, mach, macl, r[16], ea, target, gbr, vbr, delay;
++		bool operator==(const idle_regs &) const = default;
++	};
++	idle_regs idle_snapshot() const;
++	uint32_t m_idle_mask = 0;   // bit (pc >> 1) & 31 of each hint address
++	bool m_idle_probe = false;
++	int m_idle_icount = 0;
++	uint32_t m_idle_writes = 0;
++	uint32_t m_writes = 0;
++	idle_regs m_idle_regs{};
+ };
+ 
+ #endif // MAME_CPU_SH_SH2_H
+diff --git a/src/mame/sega/saturn_v.cpp b/src/mame/sega/saturn_v.cpp
+--- a/src/mame/sega/saturn_v.cpp
++++ b/src/mame/sega/saturn_v.cpp
+@@ -4685,9 +4685,41 @@
+ 	if(*g > 0xff)   { *g = 0xff; }
+ 	if(*b < 0)      { *b = 0; }
+ 	if(*b > 0xff)   { *b = 0xff; }
++}
++
++void saturn_state::vdp2_invalidate_render_caches()
++{
++	m_vdp2_window_line[0].y = m_vdp2_window_line[1].y = -1;
++	m_vdp2_layer_window.y = -1;
++	m_vdp2_color_offset_valid = false;
+ }
+ 
+ void saturn_state::vdp2_compute_color_offset_UINT32(rgb_t *rgb, int cor)
++{
++	const uint8_t (*table)[256] = vdp2_color_offset_table(cor);
++	*rgb = rgb_t(table[0][rgb->r()], table[1][rgb->g()], table[2][rgb->b()]);
++}
++
++const uint8_t (*saturn_state::vdp2_color_offset_table(int cor))[256]
++{
++	if (!m_vdp2_color_offset_valid)
++	{
++		// every value of every channel through the computation below, for both offsets
++		for (int c = 0; c < 2; c++)
++			for (int v = 0; v < 256; v++)
++			{
++				rgb_t pix(v, v, v);
++				vdp2_compute_color_offset_UINT32_slow(&pix, c ? 2 : 0);
++				m_vdp2_color_offset[c][0][v] = pix.r();
++				m_vdp2_color_offset[c][1][v] = pix.g();
++				m_vdp2_color_offset[c][2][v] = pix.b();
++			}
++		m_vdp2_color_offset_valid = true;
++	}
++	return m_vdp2_color_offset[cor ? 1 : 0];
++}
++
++void saturn_state::vdp2_compute_color_offset_UINT32_slow(rgb_t *rgb, int cor)
+ {
+ 	int _r = rgb->r();
+ 	int _g = rgb->g();
+@@ -6865,7 +6897,6 @@
+ 	int32_t coeff_table_val;
+ 	uint32_t address;
+ 	uint32_t *line;
+-	rgb_t pix;
+ 	//uint32_t coeff_line_color_screen_data;
+ 	int32_t clipxmask = 0, clipymask = 0;
+ 
+@@ -6984,6 +7015,36 @@
+ 	xp = mul_fixed32( RP.A, RP.px - RP.cx ) + mul_fixed32( RP.B, RP.py - RP.cy ) + mul_fixed32( RP.C, RP.pz - RP.cz ) + RP.cx + RP.mx;
+ 	yp = mul_fixed32( RP.D, RP.px - RP.cx ) + mul_fixed32( RP.E, RP.py - RP.cy ) + mul_fixed32( RP.F, RP.pz - RP.cz ) + RP.cy + RP.my;
+ 
++	// Constant while the layer is drawn, so out of the pixel loops (writes to the bitmap could
++	// alias the tilemap's fields, so the compiler reloads them otherwise): the blending, the
++	// colour offset (as tables), the windows (as each line's intervals).
++	const int transparency = current_tilemap.transparency;
++	const uint8_t fade_control = current_tilemap.fade_control;
++	const auto alpha = current_tilemap.alpha;
++	const uint8_t (*const color_offset)[256] = (fade_control & 1) ? vdp2_color_offset_table(fade_control & 2) : nullptr;
++	const auto put = [transparency, alpha, color_offset] (uint32_t &dst, rgb_t pix)
++	{
++		if (!(transparency & STV_TRANSPARENCY_NONE) && !(pix & 0xffffff))
++			return;
++		if (color_offset)
++			pix = rgb_t(color_offset[0][pix.r()], color_offset[1][pix.g()], color_offset[2][pix.b()]);
++		if (transparency & STV_TRANSPARENCY_ALPHA)
++			dst = alpha_blend_r32( dst, pix, alpha );
++		else if (transparency & STV_TRANSPARENCY_ADD_BLEND)
++			dst = add_blend_r32( dst, pix );
++		else
++			dst = pix;
++	};
++	// vdp2_roz_window(): RBG0's window control; vdp2_roz_mode3_window(): the rotation parameter
++	// window's, which picks parameter A or B
++	const uint8_t roz_logic = VDP2_R0LOG, roz_w0 = VDP2_R0W0E, roz_w1 = VDP2_R0W1E, roz_a0 = VDP2_R0W0A, roz_a1 = VDP2_R0W1A;
++	const uint8_t rp_logic = VDP2_RPLOG, rp_w0 = VDP2_RPW0E, rp_w1 = VDP2_RPW1E, rp_a0 = VDP2_RPW0A, rp_a1 = VDP2_RPW1A;
++	const bool roz_window = roz_w0 || roz_w1;
++	const bool mode3 = current_tilemap.roz_mode3;
++	const bool rp_window = rp_w0 || rp_w1;
++	const bool rot_parameter = iRP - 1;
++	vdp2_line_window roz_line, rp_line;
++
+ 	for (vcnt = cliprect.top(); vcnt <= cliprect.bottom(); vcnt++ )
+ 	{
+ 		/*xsp = RP.A * ( ( RP.xst + RP.dxst * (vcnt << 16) ) - RP.px ) +
+@@ -7076,52 +7137,27 @@
+ 			dxs = mul_fixed32( kx, mul_fixed32( dx, 1 << (16-hcnt_shift)));
+ 			dys = mul_fixed32( ky, mul_fixed32( dy, 1 << (16-hcnt_shift)));
+ 
++			if (roz_window)
++				vdp2_make_line_window(roz_line, vcnt, roz_logic, roz_w0, roz_w1, roz_a0, roz_a1);
++			if (mode3 && rp_window)
++				vdp2_make_line_window(rp_line, vcnt, rp_logic, rp_w0, rp_w1, rp_a0, rp_a1);
++
+ 			for (hcnt = cliprect.left(); hcnt <= cliprect.right(); xs+=dxs, ys+=dys, hcnt++ )
+ 			{
+ 				x = xs >> 16;
+ 				y = ys >> 16;
+ 
+ 				if ( x & clipxmask || y & clipymask ) continue;
+-				if ( vdp2_roz_window(hcnt, vcnt) == false )
++				if ( roz_window && !roz_line.pass(hcnt) )
+ 					continue;
+ 
+-				if ( current_tilemap.roz_mode3 == true )
++				if ( mode3 )
+ 				{
+-					if( vdp2_roz_mode3_window(hcnt, vcnt, iRP-1) == false )
++					if( (rp_window ? rp_line.pass(hcnt) != rot_parameter : !rot_parameter) == false )
+ 						continue;
+ 				}
+ 
+-				pix = roz_bitmap.pix(y & planerenderedsizey, x & planerenderedsizex);
+-				if (current_tilemap.transparency & STV_TRANSPARENCY_ALPHA)
+-				{
+-					if ((current_tilemap.transparency & STV_TRANSPARENCY_NONE) || (pix & 0xffffff))
+-					{
+-						if(current_tilemap.fade_control & 1)
+-							vdp2_compute_color_offset_UINT32(&pix,current_tilemap.fade_control & 2);
+-
+-						line[hcnt] = alpha_blend_r32( line[hcnt], pix, current_tilemap.alpha );
+-					}
+-				}
+-				else if (current_tilemap.transparency & STV_TRANSPARENCY_ADD_BLEND)
+-				{
+-					if ((current_tilemap.transparency & STV_TRANSPARENCY_NONE) || (pix & 0xffffff))
+-					{
+-						if(current_tilemap.fade_control & 1)
+-							vdp2_compute_color_offset_UINT32(&pix,current_tilemap.fade_control & 2);
+-
+-						line[hcnt] = add_blend_r32( line[hcnt], pix );
+-					}
+-				}
+-				else
+-				{
+-					if ((current_tilemap.transparency & STV_TRANSPARENCY_NONE) || (pix & 0xffffff))
+-					{
+-						if(current_tilemap.fade_control & 1)
+-							vdp2_compute_color_offset_UINT32(&pix,current_tilemap.fade_control & 2);
+-
+-						line[hcnt] = pix;
+-					}
+-				}
++				put(line[hcnt], roz_bitmap.pix(y & planerenderedsizey, x & planerenderedsizex));
+ 			}
+ 		}
+ 		else
+@@ -7195,105 +7231,12 @@
+ 
+ 				if ( x & clipxmask || y & clipymask ) continue;
+ 
+-				pix = roz_bitmap.pix(y & planerenderedsizey, x & planerenderedsizex);
+-				if (current_tilemap.transparency & STV_TRANSPARENCY_ALPHA)
+-				{
+-					if ((current_tilemap.transparency & STV_TRANSPARENCY_NONE) || (pix & 0xffffff))
+-					{
+-						if(current_tilemap.fade_control & 1)
+-							vdp2_compute_color_offset_UINT32(&pix,current_tilemap.fade_control & 2);
+-
+-						line[hcnt] = alpha_blend_r32( line[hcnt], pix, current_tilemap.alpha );
+-					}
+-				}
+-				else if (current_tilemap.transparency & STV_TRANSPARENCY_ADD_BLEND)
+-				{
+-					if ((current_tilemap.transparency & STV_TRANSPARENCY_NONE) || (pix & 0xffffff))
+-					{
+-						if(current_tilemap.fade_control & 1)
+-							vdp2_compute_color_offset_UINT32(&pix,current_tilemap.fade_control & 2);
+-
+-						line[hcnt] = add_blend_r32( line[hcnt], pix );
+-					}
+-				}
+-				else
+-				{
+-					if ((current_tilemap.transparency & STV_TRANSPARENCY_NONE) || (pix & 0xffffff))
+-					{
+-						if(current_tilemap.fade_control & 1)
+-							vdp2_compute_color_offset_UINT32(&pix,current_tilemap.fade_control & 2);
+-
+-						line[hcnt] = pix;
+-					}
+-				}
++				put(line[hcnt], roz_bitmap.pix(y & planerenderedsizey, x & planerenderedsizex));
+ 			}
+ 		}
+ 	}
+ }
+ 
+-inline bool saturn_state::vdp2_roz_window(int x, int y)
+-{
+-	int s_x=0,e_x=0,s_y=0,e_y=0;
+-	int w0_pix, w1_pix;
+-	uint8_t logic = VDP2_R0LOG;
+-	uint8_t w0_enable = VDP2_R0W0E;
+-	uint8_t w1_enable = VDP2_R0W1E;
+-	uint8_t w0_area = VDP2_R0W0A;
+-	uint8_t w1_area = VDP2_R0W1A;
+-
+-	if (w0_enable == 0 &&
+-		w1_enable == 0)
+-		return true;
+-
+-	vdp2_get_window0_coordinates(&s_x, &e_x, &s_y, &e_y, y);
+-	w0_pix = get_roz_window_pixel(s_x,e_x,s_y,e_y,x,y,w0_enable, w0_area);
+-
+-	vdp2_get_window1_coordinates(&s_x, &e_x, &s_y, &e_y, y);
+-	w1_pix = get_roz_window_pixel(s_x,e_x,s_y,e_y,x,y,w1_enable, w1_area);
+-
+-	return (logic & 1 ? (w0_pix | w1_pix) : (w0_pix & w1_pix));
+-}
+-
+-inline bool saturn_state::vdp2_roz_mode3_window(int x, int y, int rot_parameter)
+-{
+-	int s_x=0,e_x=0,s_y=0,e_y=0;
+-	int w0_pix, w1_pix;
+-	uint8_t logic = VDP2_RPLOG;
+-	uint8_t w0_enable = VDP2_RPW0E;
+-	uint8_t w1_enable = VDP2_RPW1E;
+-	uint8_t w0_area = VDP2_RPW0A;
+-	uint8_t w1_area = VDP2_RPW1A;
+-
+-	if (w0_enable == 0 &&
+-		w1_enable == 0)
+-		return rot_parameter ^ 1;
+-
+-	vdp2_get_window0_coordinates(&s_x, &e_x, &s_y, &e_y, y);
+-	w0_pix = get_roz_window_pixel(s_x,e_x,s_y,e_y,x,y,w0_enable, w0_area);
+-
+-	vdp2_get_window1_coordinates(&s_x, &e_x, &s_y, &e_y, y);
+-	w1_pix = get_roz_window_pixel(s_x,e_x,s_y,e_y,x,y,w1_enable, w1_area);
+-
+-	return (logic & 1 ? (w0_pix | w1_pix) : (w0_pix & w1_pix)) ^ rot_parameter;
+-}
+-
+-inline int saturn_state::get_roz_window_pixel(int s_x,int e_x,int s_y,int e_y,int x, int y,uint8_t winenable, uint8_t winarea)
+-{
+-	int res;
+-
+-	res = 1;
+-	if(winenable)
+-	{
+-		if(winarea)
+-			res = (y >= s_y && y <= e_y && x >= s_x && x <= e_x);
+-		else
+-			res = (y >= s_y && y <= e_y && x >= s_x && x <= e_x) ^ 1;
+-	}
+-
+-	return res;
+-}
+-
+-
+ void saturn_state::vdp2_draw_NBG0(bitmap_rgb32 &bitmap, const rectangle &cliprect)
+ {
+ 	uint32_t base_mask;
+@@ -8692,6 +8635,21 @@
+ 
+ void saturn_state::vdp2_get_window0_coordinates(int *s_x, int *e_x, int *s_y, int *e_y, int y)
+ {
++	vdp2_window_line &line = m_vdp2_window_line[0];
++	if (line.y == y)
++	{
++		*s_x = line.s_x;
++		*e_x = line.e_x;
++		*s_y = line.s_y;
++		*e_y = line.e_y;
++		return;
++	}
++	vdp2_get_window0_line(s_x, e_x, s_y, e_y, y);
++	line = vdp2_window_line{ y, *s_x, *e_x, *s_y, *e_y };
++}
++
++void saturn_state::vdp2_get_window0_line(int *s_x, int *e_x, int *s_y, int *e_y, int y)
++{
+ 	/*W0*/
+ 	switch(VDP2_LSMD & 3)
+ 	{
+@@ -8752,6 +8710,21 @@
+ 
+ void saturn_state::vdp2_get_window1_coordinates(int *s_x, int *e_x, int *s_y, int *e_y, int y)
+ {
++	vdp2_window_line &line = m_vdp2_window_line[1];
++	if (line.y == y)
++	{
++		*s_x = line.s_x;
++		*e_x = line.e_x;
++		*s_y = line.s_y;
++		*e_y = line.e_y;
++		return;
++	}
++	vdp2_get_window1_line(s_x, e_x, s_y, e_y, y);
++	line = vdp2_window_line{ y, *s_x, *e_x, *s_y, *e_y };
++}
++
++void saturn_state::vdp2_get_window1_line(int *s_x, int *e_x, int *s_y, int *e_y, int y)
++{
+ 	/*W1*/
+ 	switch(VDP2_LSMD & 3)
+ 	{
+@@ -8826,22 +8799,37 @@
+ 	return res;
+ }
+ 
+-inline int saturn_state::vdp2_window_process(int x,int y)
++void saturn_state::vdp2_make_line_window(vdp2_line_window &w, int y, uint8_t logic, uint8_t en0, uint8_t en1, uint8_t a0, uint8_t a1)
+ {
+ 	int s_x=0,e_x=0,s_y=0,e_y=0;
+-	int w0_pix, w1_pix;
+-
+-	if (current_tilemap.window_control.enabled[0] == 0 &&
+-		current_tilemap.window_control.enabled[1] == 0)
+-		return 1;
+-
++	w.y = y;
++	w.logic = logic;
++	w.enabled[0] = en0;
++	w.enabled[1] = en1;
++	w.area[0] = a0;
++	w.area[1] = a1;
+ 	vdp2_get_window0_coordinates(&s_x, &e_x, &s_y, &e_y, y);
+-	w0_pix = get_window_pixel(s_x,e_x,s_y,e_y,x,y,0);
+-
++	w.in_y[0] = y >= s_y && y <= e_y;
++	w.s_x[0] = s_x;
++	w.e_x[0] = e_x;
+ 	vdp2_get_window1_coordinates(&s_x, &e_x, &s_y, &e_y, y);
+-	w1_pix = get_window_pixel(s_x,e_x,s_y,e_y,x,y,1);
++	w.in_y[1] = y >= s_y && y <= e_y;
++	w.s_x[1] = s_x;
++	w.e_x[1] = e_x;
++}
+ 
+-	return current_tilemap.window_control.logic & 1 ? (w0_pix | w1_pix) : (w0_pix & w1_pix);
++inline int saturn_state::vdp2_window_process(int x,int y)
++{
++	const auto &control = current_tilemap.window_control;
++	if (control.enabled[0] == 0 &&
++		control.enabled[1] == 0)
++		return 1;
++
++	// get_window_pixel() for both windows, combined by the logic: per line, then per pixel
++	vdp2_line_window &w = m_vdp2_layer_window;
++	if (!w.matches(y, control.logic, control.enabled[0], control.enabled[1], control.area[0], control.area[1]))
++		vdp2_make_line_window(w, y, control.logic, control.enabled[0], control.enabled[1], control.area[0], control.area[1]);
++	return w.pass(x);
+ }
+ 
+ /* TODO: remove this crap. */
+@@ -9412,6 +9400,7 @@
+ 
+ uint32_t saturn_state::screen_update_vdp2(screen_device &screen, bitmap_rgb32 &bitmap, const rectangle &cliprect)
+ {
++	vdp2_invalidate_render_caches();
+ 	vdp2_fade_effects();
+ 
+ 	vdp2_draw_back(m_tmpbitmap,cliprect);
+@@ -9437,6 +9426,7 @@
+ 	}
+ 
+ 	copybitmap(bitmap, m_tmpbitmap, 0, 0, 0, 0, cliprect);
++	vdp2_invalidate_render_caches();
+ 
+ 	#if 0
+ 	/* Do NOT remove me, used to test video code performance. */
+diff --git a/src/mame/sega/saturn.h b/src/mame/sega/saturn.h
+--- a/src/mame/sega/saturn.h
++++ b/src/mame/sega/saturn.h
+@@ -286,6 +286,8 @@
+ 	void refresh_palette_data();
+ 	inline int vdp2_window_process(int x,int y);
+ 	void vdp2_get_window0_coordinates(int *s_x, int *e_x, int *s_y, int *e_y, int y);
++	void vdp2_get_window0_line(int *s_x, int *e_x, int *s_y, int *e_y, int y);
++	void vdp2_get_window1_line(int *s_x, int *e_x, int *s_y, int *e_y, int y);
+ 	void vdp2_get_window1_coordinates(int *s_x, int *e_x, int *s_y, int *e_y, int y);
+ 	int get_window_pixel(int s_x,int e_x,int s_y,int e_y,int x, int y,uint8_t win_num);
+ 	int vdp2_apply_window_on_layer(rectangle &cliprect);
+@@ -311,9 +313,6 @@
+ 	void vdp2_check_tilemap_with_linescroll(bitmap_rgb32 &bitmap, const rectangle &cliprect);
+ 	void vdp2_check_tilemap(bitmap_rgb32 &bitmap, const rectangle &cliprect);
+ 	void vdp2_copy_roz_bitmap(bitmap_rgb32 &bitmap, bitmap_rgb32 &roz_bitmap, const rectangle &cliprect, int iRP, int planesizex, int planesizey, int planerenderedsizex, int planerenderedsizey);
+-	inline bool vdp2_roz_window(int x, int y);
+-	inline bool vdp2_roz_mode3_window(int x, int y, int rot_parameter);
+-	inline int get_roz_window_pixel(int s_x,int e_x,int s_y,int e_y,int x, int y,uint8_t winenable,uint8_t winarea);
+ 	void vdp2_fill_rotation_parameter_table(uint8_t rot_parameter);
+ 	uint8_t vdp2_check_vram_cycle_pattern_registers(uint8_t access_command_pnmdr, uint8_t access_command_cpdr, uint8_t bitmap_enable);
+ 	uint8_t vdp2_is_rotation_applied();
+@@ -324,6 +323,38 @@
+ 	void vdp2_fade_effects();
+ 	void vdp2_compute_color_offset(int *r, int *g, int *b, int cor);
+ 	void vdp2_compute_color_offset_UINT32(rgb_t *rgb, int cor);
++	void vdp2_compute_color_offset_UINT32_slow(rgb_t *rgb, int cor);
++	// Caches for one screen update (VDP2 registers and VRAM don't change during it), invalidated
++	// at its start and end: each window's coordinates for the last line asked (the per-pixel
++	// window tests ask for every pixel of a line), and the colour offsets as tables per channel.
++	struct vdp2_window_line { int y = -1, s_x = 0, e_x = 0, s_y = 0, e_y = 0; };
++	vdp2_window_line m_vdp2_window_line[2];
++	bool m_vdp2_color_offset_valid = false;
++	uint8_t m_vdp2_color_offset[2][3][256];
++	void vdp2_invalidate_render_caches();
++	const uint8_t (*vdp2_color_offset_table(int cor))[256];
++	// One line's window test, as vdp2_window_process and the RBG window tests make it: each
++	// window's interval on the line (the coordinates above), for one window control setting.
++	struct vdp2_line_window
++	{
++		int y = -1;
++		uint8_t logic = 0, enabled[2]{}, area[2]{};
++		bool in_y[2]{};
++		int s_x[2]{}, e_x[2]{};
++		bool pass(int x) const
++		{
++			bool w[2];
++			for (int i = 0; i < 2; i++)
++				w[i] = !enabled[i] || ((in_y[i] && x >= s_x[i] && x <= e_x[i]) == (area[i] != 0));
++			return (logic & 1) ? (w[0] || w[1]) : (w[0] && w[1]);
++		}
++		bool matches(int line, uint8_t lg, uint8_t e0, uint8_t e1, uint8_t a0, uint8_t a1) const
++		{
++			return y == line && logic == lg && enabled[0] == e0 && enabled[1] == e1 && area[0] == a0 && area[1] == a1;
++		}
++	};
++	vdp2_line_window m_vdp2_layer_window; // vdp2_window_process's (the current layer's control)
++	void vdp2_make_line_window(vdp2_line_window &w, int y, uint8_t logic, uint8_t en0, uint8_t en1, uint8_t a0, uint8_t a1);
+ 	void vdp2_check_fade_control_for_layer();
+ 
+ 	void vdp2_draw_line(bitmap_rgb32 &bitmap, const rectangle &cliprect);
+diff --git a/src/mame/sega/segabill.cpp b/src/mame/sega/segabill.cpp
+--- a/src/mame/sega/segabill.cpp
++++ b/src/mame/sega/segabill.cpp
+@@ -62,7 +62,9 @@
+ #include "segabill.h"
+ #include "cpu/z80/z80.h"
+ 
++#include <algorithm>
+ 
++
+ //**************************************************************************
+ //  DEVICE DEFINITIONS
+ //**************************************************************************
+@@ -132,9 +134,11 @@
+ //  rom_region - device-specific ROM region
+ //-------------------------------------------------
+ 
++// The arcade bar draws no billboard, and the ST-V game sets it has don't carry this device set
++// (segabill.zip): optional, zeros when missing, and then its Z80 is stopped (device_reset).
+ ROM_START( billboard )
+-	ROM_REGION(0x10000, "billcpu", 0)
+-	ROM_LOAD("epr-18022.ic2", 0x00000, 0x10000, CRC(0ca70f80) SHA1(edf5ade72d9fa2f4d5f83f9f89e6cecfadd77f56))
++	ROM_REGION(0x10000, "billcpu", ROMREGION_ERASE00)
++	ROM_LOAD_OPTIONAL("epr-18022.ic2", 0x00000, 0x10000, CRC(0ca70f80) SHA1(edf5ade72d9fa2f4d5f83f9f89e6cecfadd77f56))
+ ROM_END
+ 
+ const tiny_rom_entry *sega_billboard_device::device_rom_region() const
+@@ -201,7 +205,16 @@
+ 	m_cmd = 0xff;
+ }
+ 
++void sega_billboard_device::device_reset_after_children()
++{
++	// No program (the optional ROM is missing): don't spend time running zeros. After the
++	// children: the Z80's own reset resumes it.
++	memory_region *const rom = memregion("billcpu");
++	if (std::all_of(rom->base(), rom->base() + rom->bytes(), [] (u8 b) { return b == 0; }))
++		m_billcpu->suspend(SUSPEND_REASON_DISABLE, true);
++}
+ 
++
+ //**************************************************************************
+ //  INTERFACE
+ //**************************************************************************
+diff --git a/src/mame/sega/segabill.h b/src/mame/sega/segabill.h
+--- a/src/mame/sega/segabill.h
++++ b/src/mame/sega/segabill.h
+@@ -33,6 +33,7 @@
+ 	// device-level overrides
+ 	virtual void device_start() override ATTR_COLD;
+ 	virtual void device_reset() override ATTR_COLD;
++	virtual void device_reset_after_children() override ATTR_COLD;
+ 	virtual const tiny_rom_entry *device_rom_region() const override ATTR_COLD;
+ 	virtual ioport_constructor device_input_ports() const override ATTR_COLD;
+ 	virtual void device_add_mconfig(machine_config &config) override ATTR_COLD;
+diff --git a/src/mame/sega/stv.cpp b/src/mame/sega/stv.cpp
+--- a/src/mame/sega/stv.cpp
++++ b/src/mame/sega/stv.cpp
+@@ -2677,6 +2677,9 @@
+ 
+ ROM_START( twcup98 )
+ 	STV_BIOS
++	// The default BIOS (EPR-23603, Japan 00/10/24) is a newer dump than the sets that carry this
++	// game's BIOS files; the USA one (EPR-17952A) is in them, and the game is English with it.
++	ROM_DEFAULT_BIOS( "us" )
+ 
+ 	ROM_REGION32_BE( 0x3000000, "cart", ROMREGION_ERASE00 ) /* SH2 code */
+ 	ROM_LOAD16_BYTE( "epr20819.24",    0x0000001, 0x0100000, CRC(d930dfc8) SHA1(f66cc955181720661a0334fe67fa5750ddf9758b) ) // tested as IC13
+diff --git a/src/osd/libretro/libretro-internal/libretro.cpp b/src/osd/libretro/libretro-internal/libretro.cpp
+--- a/src/osd/libretro/libretro-internal/libretro.cpp
++++ b/src/osd/libretro/libretro-internal/libretro.cpp
+@@ -972,6 +972,8 @@
+ } game_button_names[] =
+ {
+    { "tekken3", { "Left Punch", "Right Punch", "Left Kick", "Right Kick", NULL, NULL } },
++   /* the cabinet's own labels; "" for a button the game doesn't use */
++   { "twcup98", { "A", "B", "C", "", NULL, NULL } },
+ };
+ 
+ static void retro_set_game_descriptors(running_machine &machine)
+@@ -1023,6 +1025,8 @@
+             const int n = type - IPT_BUTTON1;
+             id = button_mapping[n];
+             order = 10 + n;
++            if (names && names[n] && !*names[n])
++               continue; /* a button the game doesn't use */
+             if (specific)
+                label = specific;
+             else if (names && names[n])
