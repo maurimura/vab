@@ -48,6 +48,11 @@ def load_recipe(name):
     kind = recipe.get('control_kind', 'joystick')
     if kind not in ('joystick', 'buttons', 'mounted-guns', 'holstered-guns', 'wheel'):
         raise ValueError('Invalid physical control kind')
+    grip = recipe.get('joystick_grip', 'ball')
+    if grip not in ('ball', 'bat'):
+        raise ValueError('Invalid joystick grip')
+    if grip == 'bat' and (kind != 'joystick' or recipe['renderer'] != 'upright'):
+        raise ValueError('Bat grips require the upright joystick renderer')
     if kind == 'holstered-guns':
         if recipe['renderer'] != 'twin-gun' or recipe.get('control_stations') != 2:
             raise ValueError('Holstered guns require the reviewed two-station twin renderer')
@@ -191,6 +196,10 @@ def prepare(recipe):
     buttons = sum(s.part == 'button' and isinstance(s, base.Solid) for s in solids)
     kind = recipe.get('control_kind', 'joystick')
     expected_sticks = stations if kind == 'joystick' else 0
+    bat_grips = recipe.get('joystick_grip') == 'bat'
+    expected_balls = 0 if bat_grips else expected_sticks
+    grips = sum(s.part == 'grip' for s in solids)
+    expected_grips = expected_sticks if bat_grips else 0
     guns = sum(s.part == 'gun' for s in solids)
     expected_guns = stations if kind in ('mounted-guns', 'holstered-guns') else 0
     wheels = sum(s.part == 'wheel' for s in solids)
@@ -198,7 +207,8 @@ def prepare(recipe):
     pedals = sum(s.part == 'pedal' for s in solids)
     driving = stations if kind == 'wheel' else 0
     expected_pedals = 2 * driving if kind == 'wheel' else recipe.get('pedals', 0)
-    if (sticks != expected_sticks or balls != sticks or guns != expected_guns
+    if (sticks != expected_sticks or balls != expected_balls or grips != expected_grips
+            or guns != expected_guns
             or wheels != driving or shifters != driving or pedals != expected_pedals
             or buttons != stations * recipe['buttons_per_player']):
         raise ValueError('Physical controls disagree with the recipe')

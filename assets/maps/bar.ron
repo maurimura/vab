@@ -5803,6 +5803,12 @@
         ),
         (
             x: -8,
+            y: 13,
+            tile: "objects/cabinet_twcup98_down_right",
+            game: Some("twcup98"),
+        ),
+        (
+            x: -8,
             y: 7,
             tile: "objects/cabinet_vtennis_down_right",
             game: Some("vtennisg"),

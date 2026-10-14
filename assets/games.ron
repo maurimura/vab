@@ -57,5 +57,6 @@
     (rom: "vtennisg", core: "flycast", title: "Virtua Tennis", genre: Some(Sports), lockstep: true, files: ["vtennisg/gds-0011.chd"], options: {"vab_warmup": "300"}, cabinets: ["vtennis"]),
     (rom: "outrun", core: "outrun", title: "Out Run", genre: Some(Racing), players: 1, wheel: Some((lock: 0.4, back: 0.15, curve: 1.0, span: (10600, 23500))), cabinets: ["outrun"]),
     (rom: "crusnusa41", core: "mame", title: "Cruis'n USA", genre: Some(Racing), players: 1, wheel: Some((lock: 0.4, back: 0.15, curve: 1.0, span: (5200, 28900))), cabinets: ["crusnusa"]),
+    (rom: "twcup98", core: "mame", title: "Tecmo World Cup '98", genre: Some(Sports), lockstep: true, cabinets: ["twcup98"]),
     (rom: "srallyc", core: "srally", title: "Sega Rally Championship", genre: Some(Racing), lockstep: true, players: 1, options: {"steer": "wheel"}, wheel: Some((lock: 0.4, back: 0.15, curve: 1.0)), cabinets: ["srallyc"]),
 ]

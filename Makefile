@@ -67,9 +67,10 @@ supermodel:
 supermodel-remote:
 	$(MAKE) upload-supermodel R2_TARGET=--remote
 
-# The MAME core (Namco System 12 and System 23, Midway V-Unit: Tekken 3, Time Crisis II, Cruis'n
-# USA) -> mame/dist/, then into local R2 (served at /mame/*), like Supermodel above. mame-remote
-# uploads to production.
+# The MAME core (Namco System 12 and System 23, Midway V-Unit, Sega ST-V: Tekken 3, Time Crisis
+# II, Cruis'n USA, Tecmo World Cup '98) -> mame/dist/, then into local R2 (served at /mame/*),
+# like Supermodel above. mame-remote uploads to production (remake the games' start-up states
+# with the new core first: a state only loads into the build that made it).
 mame:
 	./mame/build.sh
 	$(MAKE) upload-mame R2_TARGET=--local

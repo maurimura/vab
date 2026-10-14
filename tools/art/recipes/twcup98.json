@@ -1,0 +1,117 @@
+{
+  "version": 1,
+  "skin": "twcup98",
+  "rom": "twcup98",
+  "title": "TECMO WORLD CUP '98 / BLACK CONVERSION",
+  "variant": "Documented black operator conversion upright with green camouflage deck, two black bat-top sticks and yellow/blue/red actions. Glare-obscured marquee title is adapted from the English Tecmo flyer; no factory-dedicated cabinet or unseen side print is claimed.",
+  "renderer": "upright",
+  "shell": "upright",
+  "size": [32, 48],
+  "players": 2,
+  "control_stations": 2,
+  "buttons_per_player": 3,
+  "joystick_grip": "bat",
+  "stations": [10.5, 5.5],
+  "buttons": [
+    {"name": "Left action cap (yellow)", "position": [11, -1.0], "color": [241, 210, 26]},
+    {"name": "Middle action cap (blue)", "position": [11.7, -1.6], "color": [25, 135, 222]},
+    {"name": "Right action cap (red)", "position": [12.4, -2.1], "color": [231, 39, 48]}
+  ],
+  "game_actions": ["A: Shoot / sliding tackle", "B: Pass / shoulder tackle", "C: Lob / team marking"],
+  "colors": {
+    "body": [25, 28, 31],
+    "side": [25, 28, 31],
+    "trim": [39, 42, 45],
+    "stick": [20, 23, 25],
+    "bezel": [12, 15, 18],
+    "deck": [25, 28, 31],
+    "back": [25, 28, 31]
+  },
+  "preview_note": "32 x 48 | black ST-V conversion / camo deck / 2 bat sticks + 6 actions | flyer title and game screen",
+  "hardware": "Tecmo 1998 Sega ST-V cartridge / JAMMA operator kit, two-player simultaneous soccer. Hardware corroboration: https://www.arcade-museum.com/Videogame/tecmo-world-cup-98 and https://github.com/mamedev/mame/blob/master/src/mame/sega/stv.cpp (twcup98, ST-V controls). No ROM, core, BIOS or seat configuration changed by this art recipe.",
+  "sources": {
+    "cabinet": {
+      "file": "cabinet.jpg",
+      "page_url": "https://www.ebay.com/itm/225014542368",
+      "discovery_url": "https://www.arcade-museum.com/Videogame/tecmo-world-cup-98",
+      "image_url": "https://i.ebayimg.com/images/g/jeUAAOSwsh1imRPA/s-l1600.jpg",
+      "kind": "cabinet-photo-unverified",
+      "rights": "Photographer/seller unknown; Tecmo title artwork and underlying generic operator overlay rights retained. Public listing image is not permission to redistribute; print authenticity and restoration status unknown.",
+      "purpose": "Museum-linked listing titled TECMO WORLD CUP 98 ARCADE MACHINE by TECMO 1998: corroborates black stepped upright, black edging, green camouflage deck, black bat-top sticks, two sets of yellow/blue/red actions, two photographed white Start caps and coin-door front. Powered-off display is NOT used as game imagery.",
+      "sha256": "bfc3e5a98b29170f59dab4a098cc19d832673c1d25d8e9da03bf7572da9bed65",
+      "download_sha256": "bfc3e5a98b29170f59dab4a098cc19d832673c1d25d8e9da03bf7572da9bed65",
+      "download_size": [807, 1600],
+      "processing": "Original JPEG retained; measured deck corners rectified and BOX filtered only when building textures. Listing page returned HTTP 403 and was not bypassed; title/image association comes from the accessible Museum of the Game page. Seller identity and further cabinet angles could not be verified."
+    },
+    "flyer": {
+      "file": "flyer.png",
+      "page_url": "https://www.arcadeartwork.org/picture.php?/88640",
+      "image_url": "https://www.arcadeartwork.org/action.php?id=88640&part=e&download",
+      "kind": "original-print-scan",
+      "rights": "Original-design English promotional artwork copyright Tecmo Ltd. 1998. Third-party archive, not a publisher-hosted master or redistribution authorization; scan author/restoration status unknown.",
+      "purpose": "Research-only English front flyer establishes exact 1998 title, Tecmo identity and player imagery. Promotional illustration is not substituted for an unseen side decal.",
+      "sha256": "68ecbc69b431cddbfb77b091484d61cd5e6b26ffeb454a1d407db199abeea1da",
+      "download_sha256": "68ecbc69b431cddbfb77b091484d61cd5e6b26ffeb454a1d407db199abeea1da",
+      "download_size": [850, 1203],
+      "processing": "Unmodified original download; archive item 139023 was checked but duplicates this front, not the back."
+    },
+    "flyer_back": {
+      "file": "flyer-back.jpg",
+      "page_url": "https://flyers.arcade-museum.com/videogames/show/5595",
+      "image_url": "https://flyers.arcade-museum.com/videogame-flyers/5/tecmo-world-cup-98-05588-02.jpg",
+      "kind": "original-print-scan",
+      "rights": "Printed game imagery/logo copyright Tecmo Ltd. 1998. Museum archive hosting is not publisher authorization; scan author and redistribution permission unknown.",
+      "purpose": "Sharp English blue/white/red title replaces the selected cabinet's heavily reflected marquee as a disclosed adaptation. Bottom-left screenshot supplies actual Tecmo World Cup '98 field/player imagery; not a local emulator capture, synthetic field or another game.",
+      "sha256": "a091ef0b67b61b86a8d7aa878f3b28e2e491c91ea97596ebb785a157c64a2455",
+      "download_sha256": "a091ef0b67b61b86a8d7aa878f3b28e2e491c91ea97596ebb785a157c64a2455",
+      "download_size": [850, 1203],
+      "processing": "Original JPEG retained. Title/screen cropped inside printed edges, aspect-preserving contain fit and BOX filtering; screen-only brightness 1.2x."
+    },
+    "operator_art": {
+      "file": "operator-art.jpg",
+      "page_url": "https://www.ebay.com/itm/286690604544",
+      "discovery_url": "https://www.arcade-museum.com/Videogame/tecmo-world-cup-98",
+      "image_url": "https://i.ebayimg.com/images/g/rNAAAeSwdy5oaU7Z/s-l1600.jpg",
+      "kind": "operator-art-photo-unverified",
+      "rights": "Printed Japanese Tecmo operator artwork copyright Tecmo Ltd. 1998; photograph author unknown. Original versus reproduction and redistribution authorization unverified.",
+      "purpose": "Research only: Museum-linked listing 1998 TECMO WORLD CUP 98 JP ARTWORKS shows ST-V logo, eight-way lever and three A/B/C actions (Shoot, Pass, Lob and defense alternatives), plus manual and sixteen-team strip. Japanese kit is not silently mixed into the selected English-marquee camo conversion.",
+      "sha256": "0318b6cde805b476baef8b1090ea8fd6320b65f40322fbc2c996d7f4dc4264fa",
+      "download_sha256": "0318b6cde805b476baef8b1090ea8fd6320b65f40322fbc2c996d7f4dc4264fa",
+      "download_size": [1571, 1088],
+      "processing": "Original JPEG retained without resizing. Listing page returned HTTP 403; not bypassed. Public museum-linked image used for visual control corroboration only."
+    }
+  },
+  "textures": {
+    "marquee": {
+      "source": "flyer_back",
+      "crop": [373, 34, 775, 220],
+      "size": [16, 6],
+      "fit": "contain",
+      "background": [12, 15, 18]
+    },
+    "controls": {
+      "source": "cabinet",
+      "quad": [[122, 838], [654, 844], [677, 934], [102, 935]],
+      "rectified_size": [192, 96],
+      "size": [16, 9]
+    },
+    "screen": {
+      "source": "flyer_back",
+      "crop": [52, 916, 265, 1065],
+      "size": [12, 9],
+      "fit": "contain",
+      "background": [0, 0, 0],
+      "brightness": 1.2
+    }
+  },
+  "uncertainties": [
+    "ST-V is cartridge/kit hardware; this is a photographed operator conversion, not a claimed unique factory-dedicated Tecmo cabinet. Exact shell maker and region remain unknown.",
+    "The accessible front photo shows black edge/inner sides but no full outer side or rear. Those remain plain black with simplified generic service details, not inferred unseen prints. No suitable full side photograph or authenticated operator marquee master was located within bounded research.",
+    "The English flyer's title is adapted into the conventional marquee area because the photographed title/instruction band has heavy glare. The photographed lower marquee instructions are not fabricated; neither the promotional soccer player nor Japanese team strip is used as invented side art.",
+    "Two bat-top sticks and six yellow/blue/red physical action caps follow the photograph. Two white Start buttons remain in the photographed panel texture. The instruction card's Japanese blue/red/yellow A/B/C diagram differs from the conversion cap order; wiring/action-to-color on the conversion cannot be verified, so physical colors are not claimed as action bindings.",
+    "The cabinet screen is powered off. The display texture is actual same-game imagery cropped from the English flyer back, not a fresh local-ROM capture. Flyer printing limits fine detail; aspect is preserved and brightness boosted only at sprite scale.",
+    "Shared upright geometry, bat-handle taper and coin/rear service details are pixel-scale approximations rather than factory dimensions. The photograph's three coin windows are simplified by the shared two-slot door.",
+    "Both eBay listing pages returned 403; no challenge bypass was attempted. Public image URLs and title association are recorded from the accessible Museum of the Game page. Photos/printed artwork retain underlying rights; permission for redistribution is unresolved.",
+    "No twcup98 catalog entry existed when art was started. Integration should select cabinets: [\"twcup98\"] once its ROM/core configuration is ready. No game configuration is invented, and no map, ROM, upload or deployment is part of this art task."
+  ]
+}
